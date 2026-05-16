@@ -69,6 +69,7 @@ def generate_c(program: "Program") -> str:
     # ——— 输出头部 + 类型定义 ———
     _lines.append('#include <stdio.h>')
     _lines.append('#include <stdlib.h>')
+    _lines.append('#include <string.h>')
     _lines.append('')
     _lines.append('typedef struct { const char* _ptr; long long _len; } str;')
     _lines.append('')
@@ -93,6 +94,11 @@ def generate_c(program: "Program") -> str:
     _lines.append('    fclose(fp);')
     _lines.append('}')
     _lines.append('')
+    _lines.append('static int __nc_str_eq(str a, str b) {')
+    _lines.append('    if (a._len != b._len) return 0;')
+    _lines.append('    return strncmp(a._ptr, b._ptr, a._len) == 0;')
+    _lines.append('}')
+    _lines.append('')
 
     for s in structs:
         fields_c = '; '.join(f'{_type_to_c(t)} {n}' for n, t in s.fields) + ';'
@@ -115,7 +121,13 @@ def generate_c(program: "Program") -> str:
         if isinstance(node, Identifier):
             return node.name
         if isinstance(node, BinaryOp):
-            return f'({gen_expr(node.left)} {node.op} {gen_expr(node.right)})'
+            left_c = gen_expr(node.left)
+            right_c = gen_expr(node.right)
+            if node.op in ("==", "!=") and getattr(node.left, "type", "") == "str":
+                if node.op == "==":
+                    return f'__nc_str_eq({left_c}, {right_c})'
+                return f'!__nc_str_eq({left_c}, {right_c})'
+            return f'({left_c} {node.op} {right_c})'
         if isinstance(node, UnaryOp):
             return f'({node.op}{gen_expr(node.operand)})'
         if isinstance(node, EnumRef):
