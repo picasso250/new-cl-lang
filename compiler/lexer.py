@@ -16,6 +16,7 @@ class TokenKind(Enum):
     FUN = auto()
     RETURN = auto()
     STRUCT = auto()
+    ENUM = auto()
     # 运算符
     PLUS = auto()
     MINUS = auto()
@@ -40,6 +41,7 @@ class TokenKind(Enum):
     SEMI = auto()
     COMMA = auto()
     COLON = auto()
+    COLONCOLON = auto()
     DOT = auto()
     EOF = auto()
 
@@ -59,6 +61,7 @@ KEYWORDS = {
     "fun": TokenKind.FUN,
     "return": TokenKind.RETURN,
     "struct": TokenKind.STRUCT,
+    "enum": TokenKind.ENUM,
 }
 
 
@@ -127,6 +130,8 @@ def lex(source: str):
                 yield Token(TokenKind.AND, "&&", i); i += 2; continue
             if two == "||":
                 yield Token(TokenKind.OR, "||", i); i += 2; continue
+            if two == "::":
+                yield Token(TokenKind.COLONCOLON, "::", i); i += 2; continue
 
         # 单字符符号
         if ch == "+":

@@ -76,6 +76,27 @@ class StructDecl(Node):
         return f"Struct({self.name} {{ {fs} }})"
 
 
+class EnumDecl(Node):
+    """enum Name { A, B, C } —— 纯标签，无变体数据。"""
+    def __init__(self, name: str, variants: list[str]):
+        self.name = name
+        self.variants = variants
+
+    def __repr__(self):
+        vs = ', '.join(self.variants)
+        return f"Enum({self.name} {{ {vs} }})"
+
+
+class EnumRef(Node):
+    """Color::Red"""
+    def __init__(self, enum_name: str, variant: str):
+        self.enum_name = enum_name
+        self.variant = variant
+
+    def __repr__(self):
+        return f"EnumRef({self.enum_name}::{self.variant})"
+
+
 class StructLiteral(Node):
     """Name { field: value, ... }"""
     def __init__(self, name: str, fields: list):

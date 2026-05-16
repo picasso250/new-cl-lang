@@ -35,6 +35,12 @@ class SymbolTable:
             raise NameError(f"Variable '{name}' already declared in this scope")
         self._scopes[-1][name] = Symbol(name, nc_type, self._level, is_mut)
 
+    def declare_global(self, name: str, nc_type: str):
+        """类型定义统一入全局层（struct/enum），不随作用域弹出。"""
+        if name in self._scopes[0]:
+            raise NameError(f"'{name}' already declared globally")
+        self._scopes[0][name] = Symbol(name, nc_type, 0)
+
     def lookup(self, name: str) -> Symbol:
         for scope in reversed(self._scopes):
             if name in scope:
@@ -60,7 +66,7 @@ def build_symbol_table(program: "Program") -> SymbolTable:
     from compiler.ast import (
         Program, VariableDeclaration, ExpressionStatement,
         Assignment, Block, If, While, FunctionDeclaration, Return,
-        StructDecl,
+        StructDecl, EnumDecl,
         BinaryOp, UnaryOp, FunctionCall,
     )
     table = SymbolTable()
@@ -75,8 +81,10 @@ def build_symbol_table(program: "Program") -> SymbolTable:
                 walk_stmts(stmt.body.statements)
                 table.pop_scope()
             elif isinstance(stmt, StructDecl):
-                table.declare(stmt.name, "struct")
+                table.declare_global(stmt.name, "struct")
                 table.declare_struct(stmt.name, stmt.fields)
+            elif isinstance(stmt, EnumDecl):
+                table.declare_global(stmt.name, "enum")
             elif isinstance(stmt, (If, While, Block)):
                 _descend_stmt(stmt)
             elif isinstance(stmt, ExpressionStatement):

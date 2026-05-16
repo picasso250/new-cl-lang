@@ -10,6 +10,7 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
         Program, VariableDeclaration, ExpressionStatement,
         Assignment, Block, If, While, FunctionDeclaration, Return,
         StructDecl, StructLiteral, FieldAccess,
+        EnumDecl, EnumRef,
         IntegerLiteral, StringLiteral, BinaryOp, UnaryOp, FunctionCall, Identifier,
     )
 
@@ -36,6 +37,10 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
                 node.type = sym.nc_type
             except NameError:
                 node.type = "void"
+        elif isinstance(node, EnumRef):
+            # 验证 enum 类型存在
+            symtab.lookup(node.enum_name)
+            node.type = node.enum_name
         elif isinstance(node, StructLiteral):
             node.type = node.name  # 类型名即 struct 名
             for _fname, fval in node.fields:
@@ -80,6 +85,8 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
                 if stmt.expr:
                     walk_expr(stmt.expr)
             elif isinstance(stmt, StructDecl):
+                pass  # 已在 Pass 1 注册
+            elif isinstance(stmt, EnumDecl):
                 pass  # 已在 Pass 1 注册
             elif isinstance(stmt, Block):
                 symtab.push_scope()

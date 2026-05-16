@@ -58,6 +58,8 @@ class Parser:
             return self._parse_return()
         if t.kind == TokenKind.STRUCT:
             return self._parse_struct()
+        if t.kind == TokenKind.ENUM:
+            return self._parse_enum()
         if t.kind == TokenKind.IDENT:
             return self._parse_ident_stmt()
 
@@ -152,6 +154,21 @@ class Parser:
                 fields.append((fname, ftype))
         self.expect(TokenKind.RBRACE)
         stmt = StructDecl(name, fields)
+        self.match(TokenKind.SEMI)
+        return stmt
+
+    def _parse_enum(self):
+        self.advance()  # 吞 enum
+        name = self.expect(TokenKind.IDENT).value
+        self.expect(TokenKind.LBRACE)
+        variants = []
+        if self.peek().kind != TokenKind.RBRACE:
+            variants.append(self.expect(TokenKind.IDENT).value)
+            while self.peek().kind == TokenKind.COMMA:
+                self.advance()
+                variants.append(self.expect(TokenKind.IDENT).value)
+        self.expect(TokenKind.RBRACE)
+        stmt = EnumDecl(name, variants)
         self.match(TokenKind.SEMI)
         return stmt
 
@@ -256,6 +273,11 @@ class Parser:
 
         if t.kind == TokenKind.IDENT:
             name = self.advance().value
+            # EnumRef: Name::Variant
+            if self.peek().kind == TokenKind.COLONCOLON:
+                self.advance()
+                variant = self.expect(TokenKind.IDENT).value
+                return EnumRef(name, variant)
             # 函数调用
             if self.peek().kind == TokenKind.LPAREN:
                 self.advance()

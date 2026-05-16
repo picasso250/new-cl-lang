@@ -18,7 +18,7 @@ def _type_to_c(nc_type: str) -> str:
 
 
 def generate_c(program: "Program") -> str:
-    from compiler.ast import FunctionDeclaration, StructDecl, Block, If, While
+    from compiler.ast import FunctionDeclaration, StructDecl, EnumDecl, Block, If, While
 
     lines = [
         '#include <stdio.h>',
@@ -26,8 +26,9 @@ def generate_c(program: "Program") -> str:
         '',
     ]
 
-    # 收集 struct 定义（提升到文件作用域）
+    # 收集 struct/enum 定义（提升到文件作用域）
     structs = []
+    enums = []
     other_funcs = []
     main_func = None
     top_stmts = []
@@ -37,6 +38,8 @@ def generate_c(program: "Program") -> str:
         for s in stmts:
             if isinstance(s, StructDecl):
                 structs.append(s)
+            elif isinstance(s, EnumDecl):
+                enums.append(s)
             elif isinstance(s, FunctionDeclaration):
                 if s.name == "main":
                     main_func = s
@@ -64,6 +67,13 @@ def generate_c(program: "Program") -> str:
         fields_c = '; '.join(f'{_type_to_c(t)} {n}' for n, t in s.fields) + ';'
         lines.append(f'typedef struct {{ {fields_c} }} {s.name};')
     if structs:
+        lines.append('')
+
+    # 输出 enum
+    for e in enums:
+        vs = ', '.join(f'{e.name.upper()}_{v.upper()}' for v in e.variants)
+        lines.append(f'typedef enum {{ {vs} }} {e.name};')
+    if enums:
         lines.append('')
 
     # 输出非 main 函数
@@ -106,12 +116,14 @@ def _gen_function(lines: list, func):
 def _gen_stmt(lines: list, stmt, indent: int):
     from compiler.ast import (
         VariableDeclaration, ExpressionStatement, Assignment,
-        Block, If, While, Return, StructDecl,
+        Block, If, While, Return, StructDecl, EnumDecl,
     )
     pad = '    ' * indent
 
     if isinstance(stmt, StructDecl):
         pass  # struct 已在文件作用域生成
+    elif isinstance(stmt, EnumDecl):
+        pass  # enum 已在文件作用域生成
 
     elif isinstance(stmt, VariableDeclaration):
         c_type = _type_to_c(stmt.type)
@@ -172,7 +184,7 @@ def _gen_expr_stmt(lines: list, expr, indent: int):
 def _gen_expr(node) -> str:
     from compiler.ast import (
         IntegerLiteral, StringLiteral, Identifier,
-        BinaryOp, UnaryOp, FunctionCall, StructLiteral, FieldAccess,
+        BinaryOp, UnaryOp, EnumRef, FunctionCall, StructLiteral, FieldAccess,
     )
 
     if isinstance(node, IntegerLiteral):
@@ -191,6 +203,9 @@ def _gen_expr(node) -> str:
 
     if isinstance(node, UnaryOp):
         return f'({node.op}{_gen_expr(node.operand)})'
+
+    if isinstance(node, EnumRef):
+        return f'{node.enum_name.upper()}_{node.variant.upper()}'
 
     if isinstance(node, FunctionCall):
         args = ', '.join(_gen_expr(a) for a in node.args)
