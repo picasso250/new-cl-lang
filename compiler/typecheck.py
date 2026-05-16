@@ -12,7 +12,7 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
         StructDecl, StructLiteral, FieldAccess,
         EnumDecl, EnumRef, Switch,
         IntegerLiteral, StringLiteral, BinaryOp, UnaryOp, FunctionCall, Identifier,
-        ArrayLiteral, IndexAccess,
+        ArrayLiteral, IndexAccess, SliceExpr
     )
 
     def walk_expr(node):
@@ -59,6 +59,13 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
             walk_expr(node.obj)
             walk_expr(node.index)
             node.type = node.obj.type
+        elif isinstance(node, SliceExpr):
+            walk_expr(node.array)
+            if node.start:
+                walk_expr(node.start)
+            if node.end:
+                walk_expr(node.end)
+            node.type = node.array.type
 
     def walk_stmts(stmts: list):
         for stmt in stmts:

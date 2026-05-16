@@ -164,6 +164,19 @@ class IndexAccess(Node):
         return f"Index({self.obj}[{self.index}])"
 
 
+class SliceExpr(Node):
+    """arr[start:end]"""
+    def __init__(self, array, start, end):
+        self.array = array
+        self.start = start  # None 表示 [:end]
+        self.end = end      # None 表示 [start:]
+
+    def __repr__(self):
+        s = str(self.start) if self.start else ""
+        e = str(self.end) if self.end else ""
+        return f"Slice({self.array}[{s}:{e}])"
+
+
 class FunctionDeclaration(Node):
     """fun name(params): return_type { body }"""
     def __init__(self, name: str, params: list, return_type: str | None, body: Block):

@@ -273,9 +273,19 @@ class Parser:
                 expr = FieldAccess(expr, field)
             elif self.peek().kind == TokenKind.LBRACKET:
                 self.advance()
-                idx = self.parse_expression()
-                self.expect(TokenKind.RBRACKET)
-                expr = IndexAccess(expr, idx)
+                first = self.parse_expression()
+                # arr[start:end] 切片 vs arr[idx] 索引
+                if self.peek().kind == TokenKind.COLON:
+                    self.advance()
+                    if self.peek().kind == TokenKind.RBRACKET:
+                        end = None
+                    else:
+                        end = self.parse_expression()
+                    self.expect(TokenKind.RBRACKET)
+                    expr = SliceExpr(expr, first, end)
+                else:
+                    self.expect(TokenKind.RBRACKET)
+                    expr = IndexAccess(expr, first)
             else:
                 break
         return expr
