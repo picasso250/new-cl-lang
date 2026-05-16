@@ -37,6 +37,7 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
             if isinstance(stmt, VariableDeclaration):
                 walk_expr(stmt.initializer)
                 stmt.type = stmt.initializer.type
+                symtab.declare(stmt.name, stmt.type, stmt.mut)
             elif isinstance(stmt, ExpressionStatement):
                 walk_expr(stmt.expr)
             elif isinstance(stmt, Assignment):

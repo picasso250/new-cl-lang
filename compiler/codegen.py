@@ -1,6 +1,7 @@
 """
 代码生成 —— Pass 3：按序遍历 Typed AST，就地生成 C 代码。
-函数定义在 main 之前，顶层语句包在 main 中。
+`fun main()` 映射为 C 的 `int main(void)`，其他函数正常生成。
+无 `fun main()` 时退化为隐式 main 包裹顶层语句。
 """
 
 NC_TO_C = {
@@ -20,18 +21,46 @@ def generate_c(program: "Program") -> str:
         '',
     ]
 
-    # 函数定义放在 main 之前
-    functions = [s for s in program.statements if isinstance(s, FunctionDeclaration)]
-    for func in functions:
+    # 分离 main 函数、其他函数、顶层语句
+    main_func = None
+    other_funcs = []
+    top_stmts = []
+
+    for stmt in program.statements:
+        if isinstance(stmt, FunctionDeclaration):
+            if stmt.name == "main":
+                main_func = stmt
+            else:
+                other_funcs.append(stmt)
+        else:
+            top_stmts.append(stmt)
+
+    # 先输出其他函数
+    for func in other_funcs:
         _gen_function(lines, func)
 
-    # 其余语句包在 main 中
-    body_stmts = [s for s in program.statements if not isinstance(s, FunctionDeclaration)]
-    lines.append('int main(void) {')
-    for stmt in body_stmts:
-        _gen_stmt(lines, stmt, indent=1)
-    lines.append('    return 0;')
-    lines.append('}')
+    # 生成 main
+    if main_func:
+        # 使用 NC 的 fun main() 作为入口
+        lines.append('int main(void) {')
+        for stmt in main_func.body.statements:
+            _gen_stmt(lines, stmt, indent=1)
+        lines.append('    return 0;')
+        lines.append('}')
+
+        # main 之外的顶层语句？放 main 之前（不太寻常但合法）
+        for stmt in top_stmts:
+            lines.append(f'# warning: top-level statement outside main')
+    elif top_stmts:
+        # 无 main，隐式包裹顶层语句
+        lines.append('int main(void) {')
+        for stmt in top_stmts:
+            _gen_stmt(lines, stmt, indent=1)
+        lines.append('    return 0;')
+        lines.append('}')
+    else:
+        # 无入口点
+        lines.append('int main(void) { return 0; }')
 
     return '\n'.join(lines)
 

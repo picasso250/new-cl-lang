@@ -36,5 +36,9 @@
   - 四模块：lexer / parser / ast / codegen（C 后端）
   - case_001~006：print + 算术运算符 +-*/% 全通
   - case_007：let 变量声明 + 标识符引用，引入语句/表达式分离
+  - case_008~010：多变量、mut、变量表达式
+  - case_011：if/else + 比较运算符 + 块结构 + 嵌套作用域
+  - case_012：while 循环
+  - case_013：fun 函数定义 + return + 多参数 + 返回类型
   - parser 含标准递归下降优先级（additive / multiplicative / primary）
 - `已处理/` → `processed/`

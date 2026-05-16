@@ -1,2 +1,3 @@
 # STDOUT: 42
-fun greet() { print(42) }; greet()
+fun greet() { print(42) }
+fun main() { greet() }

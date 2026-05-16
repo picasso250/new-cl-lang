@@ -1,2 +1,2 @@
 # STDOUT: 6
-print(10-4)
+fun main() { print(10-4) }

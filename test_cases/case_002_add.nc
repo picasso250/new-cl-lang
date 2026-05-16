@@ -1,2 +1,2 @@
 # STDOUT: 8
-print(5+3)
+fun main() { print(5+3) }

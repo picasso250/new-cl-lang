@@ -1,2 +1,2 @@
 # STDOUT: 5
-print(20/4)
+fun main() { print(20/4) }

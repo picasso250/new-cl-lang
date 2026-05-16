@@ -1,2 +1,2 @@
 # STDOUT: 1
-print(10%3)
+fun main() { print(10%3) }

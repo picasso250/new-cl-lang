@@ -1,2 +1,2 @@
 # STDOUT: 20
-let x = 10; let y = x * 2; print(y)
+fun main() { let x = 10; let y = x * 2; print(y) }

@@ -1,2 +1,2 @@
 # STDOUT: 21
-print(3*7)
+fun main() { print(3*7) }
