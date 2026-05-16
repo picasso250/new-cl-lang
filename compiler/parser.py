@@ -46,44 +46,28 @@ class Parser:
     def parse_statement(self):
         t = self.peek()
 
-        # let 声明
         if t.kind == TokenKind.LET:
             return self._parse_let()
-
-        # if 语句
         if t.kind == TokenKind.IF:
             return self._parse_if()
-
-        # while 语句
         if t.kind == TokenKind.WHILE:
             return self._parse_while()
-
-        # fun 定义
         if t.kind == TokenKind.FUN:
             return self._parse_function()
-
-        # return 语句
         if t.kind == TokenKind.RETURN:
-            self.advance()
-            expr = None
-            if self.peek().kind != TokenKind.SEMI and self.peek().kind != TokenKind.RBRACE:
-                expr = self.parse_expression()
-            stmt = Return(expr)
-            self.match(TokenKind.SEMI)
-            return stmt
-
-        # 标识符开头的语句：赋值 或 表达式语句
+            return self._parse_return()
+        if t.kind == TokenKind.STRUCT:
+            return self._parse_struct()
         if t.kind == TokenKind.IDENT:
             return self._parse_ident_stmt()
 
-        # 其他表达式语句
         expr = self.parse_expression()
         stmt = ExpressionStatement(expr)
         self.match(TokenKind.SEMI)
         return stmt
 
     def _parse_let(self):
-        self.advance()  # 吞 let
+        self.advance()
         mut = self.match(TokenKind.IDENT) and self.tokens[self.pos - 1].value == "mut"
         if mut:
             name = self.expect(TokenKind.IDENT).value
@@ -96,34 +80,32 @@ class Parser:
         return stmt
 
     def _parse_if(self):
-        self.advance()  # 吞 if
+        self.advance()
         condition = self.parse_expression()
         then_block = self._parse_block()
         else_block = None
         if self.peek().kind == TokenKind.ELSE:
             self.advance()
-            # else 后可接 if（else if）或 {
             if self.peek().kind == TokenKind.IF:
                 else_block = Block([self._parse_if()])
             else:
                 else_block = self._parse_block()
-        self.match(TokenKind.SEMI)  # if 后可选的 ;
+        self.match(TokenKind.SEMI)
         return If(condition, then_block, else_block)
 
     def _parse_while(self):
-        self.advance()  # 吞 while
+        self.advance()
         condition = self.parse_expression()
         body = self._parse_block()
         self.match(TokenKind.SEMI)
         return While(condition, body)
 
     def _parse_function(self):
-        self.advance()  # 吞 fun
+        self.advance()
         name = self.expect(TokenKind.IDENT).value
         self.expect(TokenKind.LPAREN)
         params = []
         if self.peek().kind != TokenKind.RPAREN:
-            # param: name: type
             pname = self.expect(TokenKind.IDENT).value
             self.expect(TokenKind.COLON)
             ptype = self.expect(TokenKind.IDENT).value
@@ -135,7 +117,6 @@ class Parser:
                 ptype = self.expect(TokenKind.IDENT).value
                 params.append((pname, ptype))
         self.expect(TokenKind.RPAREN)
-        # 可选返回类型
         return_type = None
         if self.peek().kind == TokenKind.COLON:
             self.advance()
@@ -143,6 +124,36 @@ class Parser:
         body = self._parse_block()
         self.match(TokenKind.SEMI)
         return FunctionDeclaration(name, params, return_type, body)
+
+    def _parse_return(self):
+        self.advance()
+        expr = None
+        if self.peek().kind != TokenKind.SEMI and self.peek().kind != TokenKind.RBRACE:
+            expr = self.parse_expression()
+        stmt = Return(expr)
+        self.match(TokenKind.SEMI)
+        return stmt
+
+    def _parse_struct(self):
+        self.advance()  # 吞 struct
+        name = self.expect(TokenKind.IDENT).value
+        self.expect(TokenKind.LBRACE)
+        fields = []
+        if self.peek().kind != TokenKind.RBRACE:
+            fname = self.expect(TokenKind.IDENT).value
+            self.expect(TokenKind.COLON)
+            ftype = self.expect(TokenKind.IDENT).value
+            fields.append((fname, ftype))
+            while self.peek().kind == TokenKind.COMMA:
+                self.advance()
+                fname = self.expect(TokenKind.IDENT).value
+                self.expect(TokenKind.COLON)
+                ftype = self.expect(TokenKind.IDENT).value
+                fields.append((fname, ftype))
+        self.expect(TokenKind.RBRACE)
+        stmt = StructDecl(name, fields)
+        self.match(TokenKind.SEMI)
+        return stmt
 
     def _parse_block(self):
         self.expect(TokenKind.LBRACE)
@@ -156,8 +167,8 @@ class Parser:
         t = self.peek()
         name = t.value
         if self.pos + 1 < len(self.tokens) and self.tokens[self.pos + 1].kind == TokenKind.EQ:
-            self.advance()  # 吞 ident
-            self.advance()  # 吞 =
+            self.advance()
+            self.advance()
             expr = self.parse_expression()
             stmt = Assignment(name, expr)
         else:
@@ -166,7 +177,7 @@ class Parser:
         self.match(TokenKind.SEMI)
         return stmt
 
-    # ========== 表达式（含比较级） ==========
+    # ========== 表达式 ==========
 
     def parse_expression(self):
         return self.parse_comparison()
@@ -189,12 +200,24 @@ class Parser:
         return left
 
     def parse_multiplicative(self):
-        left = self.parse_primary()
+        left = self.parse_postfix()
         while self.peek().kind in (TokenKind.STAR, TokenKind.SLASH, TokenKind.PERCENT):
             op = self.advance().value
-            right = self.parse_primary()
+            right = self.parse_postfix()
             left = BinaryOp(left, op, right)
         return left
+
+    def parse_postfix(self):
+        """处理 .field 和 (args) 后缀。"""
+        expr = self.parse_primary()
+        while True:
+            if self.peek().kind == TokenKind.DOT:
+                self.advance()
+                field = self.expect(TokenKind.IDENT).value
+                expr = FieldAccess(expr, field)
+            else:
+                break
+        return expr
 
     def parse_primary(self):
         t = self.peek()
@@ -209,8 +232,9 @@ class Parser:
 
         if t.kind == TokenKind.IDENT:
             name = self.advance().value
+            # 函数调用
             if self.peek().kind == TokenKind.LPAREN:
-                self.advance()  # 吞 (
+                self.advance()
                 args = []
                 if self.peek().kind != TokenKind.RPAREN:
                     args.append(self.parse_expression())
@@ -219,6 +243,23 @@ class Parser:
                         args.append(self.parse_expression())
                 self.expect(TokenKind.RPAREN)
                 return FunctionCall(name, args)
+            # struct 字面量: Name { ... }
+            if self.peek().kind == TokenKind.LBRACE:
+                self.advance()
+                fields = []
+                if self.peek().kind != TokenKind.RBRACE:
+                    fname = self.expect(TokenKind.IDENT).value
+                    self.expect(TokenKind.COLON)
+                    fval = self.parse_expression()
+                    fields.append((fname, fval))
+                    while self.peek().kind == TokenKind.COMMA:
+                        self.advance()
+                        fname = self.expect(TokenKind.IDENT).value
+                        self.expect(TokenKind.COLON)
+                        fval = self.parse_expression()
+                        fields.append((fname, fval))
+                self.expect(TokenKind.RBRACE)
+                return StructLiteral(name, fields)
             return Identifier(name)
 
         if t.kind == TokenKind.LPAREN:

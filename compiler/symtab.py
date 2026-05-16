@@ -20,6 +20,7 @@ class SymbolTable:
     def __init__(self):
         self._scopes: list[dict[str, Symbol]] = [{}]  # 栈式作用域
         self._level = 0
+        self._structs: dict[str, dict[str, str]] = {}  # struct名 → {字段: 类型}
 
     def push_scope(self):
         self._scopes.append({})
@@ -40,6 +41,14 @@ class SymbolTable:
                 return scope[name]
         raise NameError(f"Variable '{name}' not found")
 
+    def declare_struct(self, name: str, fields: list[tuple[str, str]]):
+        self._structs[name] = {fname: ftype for fname, ftype in fields}
+
+    def lookup_struct(self, name: str) -> dict[str, str]:
+        if name not in self._structs:
+            raise NameError(f"Struct '{name}' not found")
+        return self._structs[name]
+
     def __repr__(self):
         return f"SymbolTable({self._scopes})"
 
@@ -49,6 +58,7 @@ def build_symbol_table(program: "Program") -> SymbolTable:
     from compiler.ast import (
         Program, VariableDeclaration, ExpressionStatement,
         Assignment, Block, If, While, FunctionDeclaration, Return,
+        StructDecl,
     )
     table = SymbolTable()
 
@@ -82,6 +92,9 @@ def build_symbol_table(program: "Program") -> SymbolTable:
             elif isinstance(stmt, Return):
                 if stmt.expr:
                     walk_expr(stmt.expr)
+            elif isinstance(stmt, StructDecl):
+                table.declare(stmt.name, "struct")
+                table.declare_struct(stmt.name, stmt.fields)
             elif isinstance(stmt, ExpressionStatement):
                 walk_expr(stmt.expr)
             elif isinstance(stmt, Assignment):

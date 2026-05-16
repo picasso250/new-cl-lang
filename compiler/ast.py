@@ -65,6 +65,38 @@ class While(Node):
         return f"While({self.condition} {self.body})"
 
 
+class StructDecl(Node):
+    """struct Name { field: type, ... }"""
+    def __init__(self, name: str, fields: list):
+        self.name = name
+        self.fields = fields  # [(name, type), ...]
+
+    def __repr__(self):
+        fs = ', '.join(f'{n}: {t}' for n, t in self.fields)
+        return f"Struct({self.name} {{ {fs} }})"
+
+
+class StructLiteral(Node):
+    """Name { field: value, ... }"""
+    def __init__(self, name: str, fields: list):
+        self.name = name
+        self.fields = fields  # [(name, expr), ...]
+
+    def __repr__(self):
+        fs = ', '.join(f'{n}: {v}' for n, v in self.fields)
+        return f"StructLit({self.name} {{ {fs} }})"
+
+
+class FieldAccess(Node):
+    """expr.field"""
+    def __init__(self, obj, field: str):
+        self.obj = obj
+        self.field = field
+
+    def __repr__(self):
+        return f"Field({self.obj}.{self.field})"
+
+
 class FunctionDeclaration(Node):
     """fun name(params): return_type { body }"""
     def __init__(self, name: str, params: list, return_type: str | None, body: Block):

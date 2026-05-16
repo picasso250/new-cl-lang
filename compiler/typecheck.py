@@ -9,6 +9,7 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
     from compiler.ast import (
         Program, VariableDeclaration, ExpressionStatement,
         Assignment, Block, If, While, FunctionDeclaration, Return,
+        StructDecl, StructLiteral, FieldAccess,
         IntegerLiteral, StringLiteral, BinaryOp, FunctionCall, Identifier,
     )
 
@@ -27,12 +28,20 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
         elif isinstance(node, FunctionCall):
             for arg in node.args:
                 walk_expr(arg)
-            # 查符号表中函数名对应的返回类型
             try:
                 sym = symtab.lookup(node.name)
                 node.type = sym.nc_type
             except NameError:
-                node.type = "void"  # 内置函数（如 print）
+                node.type = "void"
+        elif isinstance(node, StructLiteral):
+            node.type = node.name  # 类型名即 struct 名
+            for _fname, fval in node.fields:
+                walk_expr(fval)
+        elif isinstance(node, FieldAccess):
+            walk_expr(node.obj)
+            obj_type = node.obj.type
+            fields = symtab.lookup_struct(obj_type)
+            node.type = fields.get(node.field, "i32")
 
     def walk_stmts(stmts: list):
         for stmt in stmts:
@@ -61,13 +70,14 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
             elif isinstance(stmt, FunctionDeclaration):
                 symtab.push_scope()
                 for pname, _ptype in stmt.params:
-                    # 参数已在 symtab 中，重新声明到当前作用域
                     symtab.declare(pname, _ptype)
                 walk_stmts(stmt.body.statements)
                 symtab.pop_scope()
             elif isinstance(stmt, Return):
                 if stmt.expr:
                     walk_expr(stmt.expr)
+            elif isinstance(stmt, StructDecl):
+                pass  # 已在 Pass 1 注册
             elif isinstance(stmt, Block):
                 symtab.push_scope()
                 walk_stmts(stmt.statements)
