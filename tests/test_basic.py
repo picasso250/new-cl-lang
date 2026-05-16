@@ -59,9 +59,14 @@ if __name__ == "__main__":
         else:
             print(f"output: {repr(actual)}")
     else:
+        passed = 0
+        failed = 0
         for fname, source, expected in _discover_cases():
             actual = _compile_and_run(source)
-            status = "PASS" if actual == expected else "FAIL"
-            if status == "FAIL":
-                print(f"{status} {fname}: expected {repr(expected)}, got {repr(actual)}")
-        print("done.")
+            if actual == expected:
+                print(f"  PASS  {fname}")
+                passed += 1
+            else:
+                print(f"  FAIL  {fname}: expected {repr(expected)}, got {repr(actual)}")
+                failed += 1
+        print(f"\n{passed} passed, {failed} failed.")
