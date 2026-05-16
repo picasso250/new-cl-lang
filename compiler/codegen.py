@@ -1,52 +1,71 @@
-"""代码生成 —— AST → C 源码。"""
+"""
+代码生成 —— Pass 3：按序遍历 Typed AST，就地生成 C 代码。
+单遍递归，声明在哪就在哪出码，不做提升。
+"""
 
-from compiler.ast import *
+NC_TO_C = {
+    "i32": "int",
+    "i64": "long long",
+    "u32": "unsigned int",
+    "u64": "unsigned long long",
+    "f32": "float",
+    "f64": "double",
+    "bool": "int",
+    "void": "void",
+}
 
 
-def generate_c(program: Program) -> str:
-    lines = []
-    lines.append('#include <stdio.h>')
-    lines.append('#include <stdlib.h>')
-    lines.append('')
-    lines.append('int main(void) {')
-
-    # 收集所有 let 声明的变量名/类型（用于代码生成时的符号表）
-    vartypes = {}  # name → c_type
+def generate_c(program: "Program") -> str:
+    lines = [
+        '#include <stdio.h>',
+        '#include <stdlib.h>',
+        '',
+        'int main(void) {',
+    ]
     for stmt in program.statements:
-        if isinstance(stmt, VariableDeclaration):
-            # 目前所有变量推断为 int
-            vartypes[stmt.name] = "int"
-            init_c = _generate_expr(stmt.initializer)
-            lines.append(f'    int {stmt.name} = {init_c};')
-            if stmt.mut:
-                pass  # C 中所有变量默认可变，无需特殊处理
-
-    # 生成语句体（跳过声明，已在上方处理）
-    for stmt in program.statements:
-        if isinstance(stmt, VariableDeclaration):
-            continue  # 已处理
-        elif isinstance(stmt, ExpressionStatement):
-            _gen_expr_stmt(lines, stmt.expr)
-        elif isinstance(stmt, Assignment):
-            lines.append(f'    {stmt.name} = {_generate_expr(stmt.expr)};')
-
+        _gen_stmt(lines, stmt, indent=1)
     lines.append('    return 0;')
     lines.append('}')
     return '\n'.join(lines)
 
 
-def _gen_expr_stmt(lines: list, expr):
-    """生成表达式语句的 C 代码。"""
+def _gen_stmt(lines: list, stmt, indent: int):
+    """就地生成一条语句的 C 代码。"""
+    from compiler.ast import VariableDeclaration, ExpressionStatement, Assignment
+    pad = '    ' * indent
+
+    if isinstance(stmt, VariableDeclaration):
+        c_type = NC_TO_C.get(stmt.type, "int")
+        init_c = _gen_expr(stmt.initializer)
+        lines.append(f'{pad}{c_type} {stmt.name} = {init_c};')
+
+    elif isinstance(stmt, Assignment):
+        lines.append(f'{pad}{stmt.name} = {_gen_expr(stmt.expr)};')
+
+    elif isinstance(stmt, ExpressionStatement):
+        _gen_expr_stmt(lines, stmt.expr, indent)
+
+    else:
+        raise NotImplementedError(f"codegen for {type(stmt).__name__}")
+
+
+def _gen_expr_stmt(lines: list, expr, indent: int):
+    """生成表达式语句（如 print 调用）。"""
+    from compiler.ast import FunctionCall
+    pad = '    ' * indent
+
     if isinstance(expr, FunctionCall) and expr.name == "print":
         arg = expr.args[0]
-        # 判断参数类型：整数用 %d，字符串用 %s
-        arg_c = _generate_expr(arg)
-        lines.append(f'    printf("%d\\n", {arg_c});')
+        fmt = "%d" if getattr(arg, "type", "i32") in ("i32", "i64", "u32", "u64", "bool") else "%s"
+        lines.append(f'{pad}printf("{fmt}\\n", {_gen_expr(arg)});')
     else:
-        lines.append(f'    {_generate_expr(expr)};')
+        lines.append(f'{pad}{_gen_expr(expr)};')
 
 
-def _generate_expr(node: Node) -> str:
+def _gen_expr(node) -> str:
+    """生成表达式的 C 代码。"""
+    from compiler.ast import IntegerLiteral, Identifier, BinaryOp, FunctionCall
+
     if isinstance(node, IntegerLiteral):
         return str(node.value)
 
@@ -54,12 +73,12 @@ def _generate_expr(node: Node) -> str:
         return node.name
 
     if isinstance(node, BinaryOp):
-        left = _generate_expr(node.left)
-        right = _generate_expr(node.right)
+        left = _gen_expr(node.left)
+        right = _gen_expr(node.right)
         return f'({left} {node.op} {right})'
 
     if isinstance(node, FunctionCall):
-        args = ', '.join(_generate_expr(a) for a in node.args)
+        args = ', '.join(_gen_expr(a) for a in node.args)
         return f'{node.name}({args})'
 
-    raise NotImplementedError(f"Codegen not implemented for {type(node).__name__}")
+    raise NotImplementedError(f"codegen expr for {type(node).__name__}")
