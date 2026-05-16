@@ -1,7 +1,8 @@
 """
 代码生成 —— Pass 3：按序遍历 Typed AST，就地生成 C 代码。
 struct/enum 定义提升到文件作用域，fun main() 映射为 int main(void)。
-所有生成函数内闭于 generate_c，共享 _lines 和 _slice_vars。
+str 是胖指针 {_ptr, _len}，打印用 %.*s。
+所有生成函数内闭于 generate_c。
 """
 
 NC_TO_C = {
@@ -9,7 +10,7 @@ NC_TO_C = {
     "u32": "unsigned int", "u64": "unsigned long long",
     "f32": "float", "f64": "double",
     "bool": "int", "void": "void",
-    "str": "const char*",
+    "str": "str",  # 指 typedef str，非 const char*
 }
 
 
@@ -69,6 +70,8 @@ def generate_c(program: "Program") -> str:
     _lines.append('#include <stdio.h>')
     _lines.append('#include <stdlib.h>')
     _lines.append('')
+    _lines.append('typedef struct { const char* _ptr; long long _len; } str;')
+    _lines.append('')
 
     for s in structs:
         fields_c = '; '.join(f'{_type_to_c(t)} {n}' for n, t in s.fields) + ';'
@@ -87,7 +90,7 @@ def generate_c(program: "Program") -> str:
         if isinstance(node, IntegerLiteral):
             return str(node.value)
         if isinstance(node, StringLiteral):
-            return f'"{node.value}"'
+            return f'(str){{\"{node.value}\", {len(node.value)}}}'
         if isinstance(node, Identifier):
             return node.name
         if isinstance(node, BinaryOp):
@@ -117,8 +120,11 @@ def generate_c(program: "Program") -> str:
         if isinstance(expr, FunctionCall) and expr.name == "print":
             arg = expr.args[0]
             arg_type = getattr(arg, "type", "i32")
-            fmt = "%s" if arg_type == "str" else "%d"
-            _lines.append(f'{pad}printf("{fmt}\\n", {gen_expr(arg)});')
+            if arg_type == "str":
+                arg_c = gen_expr(arg)
+                _lines.append(f'{pad}printf("%.*s\\n", (int)({arg_c})._len, ({arg_c})._ptr);')
+            else:
+                _lines.append(f'{pad}printf("%d\\n", {gen_expr(arg)});')
         else:
             _lines.append(f'{pad}{gen_expr(expr)};')
 
