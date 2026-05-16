@@ -12,6 +12,8 @@ class TokenKind(Enum):
     IF = auto()
     ELSE = auto()
     WHILE = auto()
+    FUN = auto()
+    RETURN = auto()
     # 运算符
     PLUS = auto()
     MINUS = auto()
@@ -31,6 +33,8 @@ class TokenKind(Enum):
     LBRACE = auto()
     RBRACE = auto()
     SEMI = auto()
+    COMMA = auto()
+    COLON = auto()
     EOF = auto()
 
 
@@ -46,6 +50,8 @@ KEYWORDS = {
     "if": TokenKind.IF,
     "else": TokenKind.ELSE,
     "while": TokenKind.WHILE,
+    "fun": TokenKind.FUN,
+    "return": TokenKind.RETURN,
 }
 
 
@@ -125,6 +131,10 @@ def lex(source: str):
             yield Token(TokenKind.RBRACE, "}", i); i += 1; continue
         if ch == ";":
             yield Token(TokenKind.SEMI, ";", i); i += 1; continue
+        if ch == ",":
+            yield Token(TokenKind.COMMA, ",", i); i += 1; continue
+        if ch == ":":
+            yield Token(TokenKind.COLON, ":", i); i += 1; continue
 
         raise SyntaxError(f"Unexpected character '{ch}' at position {i}")
 

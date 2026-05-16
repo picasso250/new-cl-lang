@@ -48,7 +48,7 @@ def build_symbol_table(program: "Program") -> SymbolTable:
     """Pass 1: 遍历 Program，建立符号表（支持嵌套作用域）。"""
     from compiler.ast import (
         Program, VariableDeclaration, ExpressionStatement,
-        Assignment, Block, If, While,
+        Assignment, Block, If, While, FunctionDeclaration, Return,
     )
     table = SymbolTable()
 
@@ -70,6 +70,18 @@ def build_symbol_table(program: "Program") -> SymbolTable:
                 table.push_scope()
                 walk_stmts(stmt.body.statements)
                 table.pop_scope()
+            elif isinstance(stmt, FunctionDeclaration):
+                # 函数名注册到外层作用域
+                table.declare(stmt.name, stmt.return_type or "void")
+                table.push_scope()
+                # 参数也注册
+                for pname, ptype in stmt.params:
+                    table.declare(pname, ptype)
+                walk_stmts(stmt.body.statements)
+                table.pop_scope()
+            elif isinstance(stmt, Return):
+                if stmt.expr:
+                    walk_expr(stmt.expr)
             elif isinstance(stmt, ExpressionStatement):
                 walk_expr(stmt.expr)
             elif isinstance(stmt, Assignment):

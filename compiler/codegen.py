@@ -1,5 +1,6 @@
 """
 代码生成 —— Pass 3：按序遍历 Typed AST，就地生成 C 代码。
+函数定义在 main 之前，顶层语句包在 main 中。
 """
 
 NC_TO_C = {
@@ -11,23 +12,46 @@ NC_TO_C = {
 
 
 def generate_c(program: "Program") -> str:
+    from compiler.ast import FunctionDeclaration
+
     lines = [
         '#include <stdio.h>',
         '#include <stdlib.h>',
         '',
-        'int main(void) {',
     ]
-    for stmt in program.statements:
+
+    # 函数定义放在 main 之前
+    functions = [s for s in program.statements if isinstance(s, FunctionDeclaration)]
+    for func in functions:
+        _gen_function(lines, func)
+
+    # 其余语句包在 main 中
+    body_stmts = [s for s in program.statements if not isinstance(s, FunctionDeclaration)]
+    lines.append('int main(void) {')
+    for stmt in body_stmts:
         _gen_stmt(lines, stmt, indent=1)
     lines.append('    return 0;')
     lines.append('}')
+
     return '\n'.join(lines)
+
+
+def _gen_function(lines: list, func):
+    from compiler.ast import FunctionDeclaration
+    c_ret = NC_TO_C.get(func.return_type, "void")
+    params_c = ', '.join(f'{NC_TO_C.get(t, "int")} {n}' for n, t in func.params)
+    if not params_c:
+        params_c = "void"
+    lines.append(f'{c_ret} {func.name}({params_c}) {{')
+    for stmt in func.body.statements:
+        _gen_stmt(lines, stmt, indent=1)
+    lines.append('}')
 
 
 def _gen_stmt(lines: list, stmt, indent: int):
     from compiler.ast import (
         VariableDeclaration, ExpressionStatement, Assignment,
-        Block, If, While,
+        Block, If, While, Return,
     )
     pad = '    ' * indent
 
@@ -60,6 +84,12 @@ def _gen_stmt(lines: list, stmt, indent: int):
             _gen_stmt(lines, s, indent + 1)
         lines.append(f'{pad}}}')
 
+    elif isinstance(stmt, Return):
+        if stmt.expr:
+            lines.append(f'{pad}return {_gen_expr(stmt.expr)};')
+        else:
+            lines.append(f'{pad}return;')
+
     elif isinstance(stmt, Block):
         for s in stmt.statements:
             _gen_stmt(lines, s, indent)
@@ -74,7 +104,8 @@ def _gen_expr_stmt(lines: list, expr, indent: int):
 
     if isinstance(expr, FunctionCall) and expr.name == "print":
         arg = expr.args[0]
-        fmt = "%d" if getattr(arg, "type", "i32") in ("i32", "i64", "u32", "u64", "bool") else "%s"
+        arg_type = getattr(arg, "type", "i32")
+        fmt = "%s" if arg_type == "str" else "%d"
         lines.append(f'{pad}printf("{fmt}\\n", {_gen_expr(arg)});')
     else:
         lines.append(f'{pad}{_gen_expr(expr)};')

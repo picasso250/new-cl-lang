@@ -58,6 +58,20 @@ class Parser:
         if t.kind == TokenKind.WHILE:
             return self._parse_while()
 
+        # fun 定义
+        if t.kind == TokenKind.FUN:
+            return self._parse_function()
+
+        # return 语句
+        if t.kind == TokenKind.RETURN:
+            self.advance()
+            expr = None
+            if self.peek().kind != TokenKind.SEMI and self.peek().kind != TokenKind.RBRACE:
+                expr = self.parse_expression()
+            stmt = Return(expr)
+            self.match(TokenKind.SEMI)
+            return stmt
+
         # 标识符开头的语句：赋值 或 表达式语句
         if t.kind == TokenKind.IDENT:
             return self._parse_ident_stmt()
@@ -102,6 +116,33 @@ class Parser:
         body = self._parse_block()
         self.match(TokenKind.SEMI)
         return While(condition, body)
+
+    def _parse_function(self):
+        self.advance()  # 吞 fun
+        name = self.expect(TokenKind.IDENT).value
+        self.expect(TokenKind.LPAREN)
+        params = []
+        if self.peek().kind != TokenKind.RPAREN:
+            # param: name: type
+            pname = self.expect(TokenKind.IDENT).value
+            self.expect(TokenKind.COLON)
+            ptype = self.expect(TokenKind.IDENT).value
+            params.append((pname, ptype))
+            while self.peek().kind == TokenKind.COMMA:
+                self.advance()
+                pname = self.expect(TokenKind.IDENT).value
+                self.expect(TokenKind.COLON)
+                ptype = self.expect(TokenKind.IDENT).value
+                params.append((pname, ptype))
+        self.expect(TokenKind.RPAREN)
+        # 可选返回类型
+        return_type = None
+        if self.peek().kind == TokenKind.COLON:
+            self.advance()
+            return_type = self.expect(TokenKind.IDENT).value
+        body = self._parse_block()
+        self.match(TokenKind.SEMI)
+        return FunctionDeclaration(name, params, return_type, body)
 
     def _parse_block(self):
         self.expect(TokenKind.LBRACE)
@@ -169,6 +210,9 @@ class Parser:
                 args = []
                 if self.peek().kind != TokenKind.RPAREN:
                     args.append(self.parse_expression())
+                    while self.peek().kind == TokenKind.COMMA:
+                        self.advance()
+                        args.append(self.parse_expression())
                 self.expect(TokenKind.RPAREN)
                 return FunctionCall(name, args)
             return Identifier(name)

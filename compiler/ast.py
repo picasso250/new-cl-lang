@@ -65,6 +65,29 @@ class While(Node):
         return f"While({self.condition} {self.body})"
 
 
+class FunctionDeclaration(Node):
+    """fun name(params): return_type { body }"""
+    def __init__(self, name: str, params: list, return_type: str | None, body: Block):
+        self.name = name
+        self.params = params   # [(name, type), ...]
+        self.return_type = return_type  # None = void
+        self.body = body
+
+    def __repr__(self):
+        p = ', '.join(f'{n}: {t}' for n, t in self.params)
+        r = f': {self.return_type}' if self.return_type else ''
+        return f"Fun({self.name}({p}){r} {self.body})"
+
+
+class Return(Node):
+    """return expr;"""
+    def __init__(self, expr = None):
+        self.expr = expr
+
+    def __repr__(self):
+        return f"Return({self.expr})"
+
+
 class If(Node):
     """if expr { block } [else { block }]"""
     def __init__(self, condition, then_block: Block, else_block: Block | None = None):
