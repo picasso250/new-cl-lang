@@ -101,6 +101,15 @@ def generate_c(program: "Program") -> str:
     _lines.append('    return strncmp(a._ptr, b._ptr, a._len) == 0;')
     _lines.append('}')
     _lines.append('')
+    _lines.append('static str __nc_str_cat(str a, str b) {')
+    _lines.append('    char* buf = (char*)malloc(a._len + b._len + 1);')
+    _lines.append('    memcpy(buf, a._ptr, a._len);')
+    _lines.append('    memcpy(buf + a._len, b._ptr, b._len);')
+    _lines.append('    buf[a._len + b._len] = 0;')
+    _lines.append('    str r = {(const char*)buf, a._len + b._len};')
+    _lines.append('    return r;')
+    _lines.append('}')
+    _lines.append('')
     _lines.append('typedef struct { int* _ptr; long long _len; long long _cap; } _slice_int;')
     _lines.append('')
     _lines.append('static _slice_int __nc_append_int(_slice_int s, int elem) {')
@@ -142,6 +151,8 @@ def generate_c(program: "Program") -> str:
                 if node.op == "==":
                     return f'__nc_str_eq({left_c}, {right_c})'
                 return f'!__nc_str_eq({left_c}, {right_c})'
+            if node.op == "+" and getattr(node.left, "type", "") == "str":
+                return f'__nc_str_cat({left_c}, {right_c})'
             return f'({left_c} {node.op} {right_c})'
         if isinstance(node, UnaryOp):
             return f'({node.op}{gen_expr(node.operand)})'
@@ -205,12 +216,20 @@ def generate_c(program: "Program") -> str:
                 _lines.append(f'{pad}{c_et} {stmt.name}[{arr.length}] = {{{elems}}};')
             elif isinstance(stmt.initializer, SliceExpr):
                 se = stmt.initializer
-                c_et = _type_to_c(stmt.type)
-                arr_c = gen_expr(se.array)
-                start_c = gen_expr(se.start) if se.start else '0'
-                end_c = gen_expr(se.end) if se.end else '0'
-                _lines.append(f'{pad}_slice_int {stmt.name} = {{{arr_c} + {start_c}, {end_c} - {start_c}, {end_c} - {start_c}}};')
-                _slice_vars[stmt.name] = True
+                # str 切片 → str struct
+                if getattr(se.array, "type", "") == "str":
+                    arr_c = gen_expr(se.array)
+                    start_c = gen_expr(se.start) if se.start else '0'
+                    end_c = gen_expr(se.end) if se.end else f'{arr_c}._len'
+                    _lines.append(f'{pad}str {stmt.name} = (str){{{arr_c}._ptr + {start_c}, {end_c} - {start_c}}};')
+                    _slice_vars[stmt.name] = True
+                else:
+                    c_et = _type_to_c(stmt.type)
+                    arr_c = gen_expr(se.array)
+                    start_c = gen_expr(se.start) if se.start else '0'
+                    end_c = gen_expr(se.end) if se.end else '0'
+                    _lines.append(f'{pad}_slice_int {stmt.name} = {{{arr_c} + {start_c}, {end_c} - {start_c}, {end_c} - {start_c}}};')
+                    _slice_vars[stmt.name] = True
             else:
                 c_t = _type_to_c(stmt.type)
                 init_c = gen_expr(stmt.initializer)
