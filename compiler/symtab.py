@@ -66,8 +66,9 @@ def build_symbol_table(program: "Program") -> SymbolTable:
     from compiler.ast import (
         Program, VariableDeclaration, ExpressionStatement,
         Assignment, Block, If, While, FunctionDeclaration, Return,
-        StructDecl, EnumDecl,
+        StructDecl, EnumDecl, Switch,
         BinaryOp, UnaryOp, FunctionCall,
+        ArrayLiteral, IndexAccess,
     )
     table = SymbolTable()
 
@@ -85,7 +86,7 @@ def build_symbol_table(program: "Program") -> SymbolTable:
                 table.declare_struct(stmt.name, stmt.fields)
             elif isinstance(stmt, EnumDecl):
                 table.declare_global(stmt.name, "enum")
-            elif isinstance(stmt, (If, While, Block)):
+            elif isinstance(stmt, (If, While, Block, Switch)):
                 _descend_stmt(stmt)
             elif isinstance(stmt, ExpressionStatement):
                 _walk_expr(stmt.expr)
@@ -97,7 +98,12 @@ def build_symbol_table(program: "Program") -> SymbolTable:
             # VariableDeclaration: 跳过 —— Pass 2 负责
 
     def _descend_stmt(stmt):
-        if isinstance(stmt, If):
+        if isinstance(stmt, Switch):
+            _walk_expr(stmt.scrutinee)
+            for case_val, case_stmt in stmt.cases:
+                _walk_expr(case_val)
+                walk_stmts([case_stmt])
+        elif isinstance(stmt, If):
             _walk_expr(stmt.condition)
             table.push_scope()
             walk_stmts(stmt.then_block.statements)
@@ -125,6 +131,12 @@ def build_symbol_table(program: "Program") -> SymbolTable:
         elif isinstance(node, FunctionCall):
             for arg in node.args:
                 _walk_expr(arg)
+        elif isinstance(node, ArrayLiteral):
+            for elem in node.elements:
+                _walk_expr(elem)
+        elif isinstance(node, IndexAccess):
+            _walk_expr(node.obj)
+            _walk_expr(node.index)
 
     walk_stmts(program.statements)
     return table

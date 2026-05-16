@@ -18,7 +18,7 @@ def _type_to_c(nc_type: str) -> str:
 
 
 def generate_c(program: "Program") -> str:
-    from compiler.ast import FunctionDeclaration, StructDecl, EnumDecl, Block, If, While
+    from compiler.ast import FunctionDeclaration, StructDecl, EnumDecl, Switch, Block, If, While
 
     lines = [
         '#include <stdio.h>',
@@ -54,6 +54,9 @@ def generate_c(program: "Program") -> str:
                     collect(s.else_block.statements)
             elif isinstance(s, While):
                 collect(s.body.statements)
+            elif isinstance(s, Switch):
+                for _cv, cs in s.cases:
+                    collect([cs])
 
     collect(program.statements)
 
@@ -116,7 +119,8 @@ def _gen_function(lines: list, func):
 def _gen_stmt(lines: list, stmt, indent: int):
     from compiler.ast import (
         VariableDeclaration, ExpressionStatement, Assignment,
-        Block, If, While, Return, StructDecl, EnumDecl,
+        Block, If, While, Return, StructDecl, EnumDecl, Switch,
+        ArrayLiteral,
     )
     pad = '    ' * indent
 
@@ -126,9 +130,16 @@ def _gen_stmt(lines: list, stmt, indent: int):
         pass  # enum 已在文件作用域生成
 
     elif isinstance(stmt, VariableDeclaration):
-        c_type = _type_to_c(stmt.type)
-        init_c = _gen_expr(stmt.initializer)
-        lines.append(f'{pad}{c_type} {stmt.name} = {init_c};')
+        # 数组字面量 → C 数组声明语法
+        if isinstance(stmt.initializer, ArrayLiteral):
+            arr = stmt.initializer
+            c_etype = _type_to_c(arr.elem_type)
+            elems = ', '.join(_gen_expr(e) for e in arr.elements)
+            lines.append(f'{pad}{c_etype} {stmt.name}[{arr.length}] = {{{elems}}};')
+        else:
+            c_type = _type_to_c(stmt.type)
+            init_c = _gen_expr(stmt.initializer)
+            lines.append(f'{pad}{c_type} {stmt.name} = {init_c};')
 
     elif isinstance(stmt, Assignment):
         lines.append(f'{pad}{stmt.name} = {_gen_expr(stmt.expr)};')
@@ -152,6 +163,16 @@ def _gen_stmt(lines: list, stmt, indent: int):
         lines.append(f'{pad}while ({cond_c}) {{')
         for s in stmt.body.statements:
             _gen_stmt(lines, s, indent + 1)
+        lines.append(f'{pad}}}')
+
+    elif isinstance(stmt, Switch):
+        scrut_c = _gen_expr(stmt.scrutinee)
+        lines.append(f'{pad}switch ({scrut_c}) {{')
+        for case_val, case_stmt in stmt.cases:
+            val_c = _gen_expr(case_val)
+            lines.append(f'{pad}    case {val_c}:')
+            _gen_stmt(lines, case_stmt, indent + 2)
+            lines.append(f'{pad}        break;')
         lines.append(f'{pad}}}')
 
     elif isinstance(stmt, Return):
@@ -185,6 +206,7 @@ def _gen_expr(node) -> str:
     from compiler.ast import (
         IntegerLiteral, StringLiteral, Identifier,
         BinaryOp, UnaryOp, EnumRef, FunctionCall, StructLiteral, FieldAccess,
+        IndexAccess,
     )
 
     if isinstance(node, IntegerLiteral):
@@ -217,5 +239,8 @@ def _gen_expr(node) -> str:
 
     if isinstance(node, FieldAccess):
         return f'{_gen_expr(node.obj)}.{node.field}'
+
+    if isinstance(node, IndexAccess):
+        return f'{_gen_expr(node.obj)}[{_gen_expr(node.index)}]'
 
     raise NotImplementedError(f"codegen expr for {type(node).__name__}")

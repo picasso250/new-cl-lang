@@ -10,8 +10,9 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
         Program, VariableDeclaration, ExpressionStatement,
         Assignment, Block, If, While, FunctionDeclaration, Return,
         StructDecl, StructLiteral, FieldAccess,
-        EnumDecl, EnumRef,
+        EnumDecl, EnumRef, Switch,
         IntegerLiteral, StringLiteral, BinaryOp, UnaryOp, FunctionCall, Identifier,
+        ArrayLiteral, IndexAccess,
     )
 
     def walk_expr(node):
@@ -50,6 +51,14 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
             obj_type = node.obj.type
             fields = symtab.lookup_struct(obj_type)
             node.type = fields.get(node.field, "i32")
+        elif isinstance(node, ArrayLiteral):
+            for elem in node.elements:
+                walk_expr(elem)
+            node.type = node.elem_type if node.elements else "i32"
+        elif isinstance(node, IndexAccess):
+            walk_expr(node.obj)
+            walk_expr(node.index)
+            node.type = node.obj.type
 
     def walk_stmts(stmts: list):
         for stmt in stmts:
@@ -88,6 +97,11 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
                 pass  # 已在 Pass 1 注册
             elif isinstance(stmt, EnumDecl):
                 pass  # 已在 Pass 1 注册
+            elif isinstance(stmt, Switch):
+                walk_expr(stmt.scrutinee)
+                for case_val, case_stmt in stmt.cases:
+                    walk_expr(case_val)
+                    walk_stmts([case_stmt])
             elif isinstance(stmt, Block):
                 symtab.push_scope()
                 walk_stmts(stmt.statements)

@@ -79,7 +79,7 @@ rune                        # 单个 Unicode 码点
 void                        # 空
 *T                          # 指针（可为 nil，nil deref = panic）
 []T                         # 切片（动态数组）
-[T; N]                      # 定长数组
+[N]T                        # 定长数组
 ```
 
 ### 4.2 运行时布局
@@ -88,7 +88,7 @@ void                        # 空
 |------|-----------|
 | `str` | `{ u8* ptr; u64 len }` |
 | `[]T` | `{ T* ptr; u64 len; u64 cap }` |
-| `[T; N]` | 内联在 struct/栈中，如 C 数组 |
+| `[N]T` | 内联在 struct/栈中，如 C 数组 |
 | `*T` | 单个指针（可为 nil） |
 | 接口值 | `{ type* vtable; void* data }` 胖指针 |
 

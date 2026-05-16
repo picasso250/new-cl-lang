@@ -60,6 +60,8 @@ class Parser:
             return self._parse_struct()
         if t.kind == TokenKind.ENUM:
             return self._parse_enum()
+        if t.kind == TokenKind.SWITCH:
+            return self._parse_switch()
         if t.kind == TokenKind.IDENT:
             return self._parse_ident_stmt()
 
@@ -172,6 +174,19 @@ class Parser:
         self.match(TokenKind.SEMI)
         return stmt
 
+    def _parse_switch(self):
+        self.advance()  # 吞 switch
+        scrutinee = self.parse_expression()
+        self.expect(TokenKind.LBRACE)
+        cases = []
+        while self.peek().kind != TokenKind.RBRACE:
+            case_val = self.parse_expression()
+            self.expect(TokenKind.ARROW)
+            case_stmt = self.parse_statement()
+            cases.append((case_val, case_stmt))
+        self.expect(TokenKind.RBRACE)
+        return Switch(scrutinee, cases)
+
     def _parse_block(self):
         self.expect(TokenKind.LBRACE)
         stmts = []
@@ -249,13 +264,18 @@ class Parser:
         return self.parse_postfix()
 
     def parse_postfix(self):
-        """处理 .field 和 (args) 后缀。"""
+        """处理 .field、(args)、[idx] 后缀。"""
         expr = self.parse_primary()
         while True:
             if self.peek().kind == TokenKind.DOT:
                 self.advance()
                 field = self.expect(TokenKind.IDENT).value
                 expr = FieldAccess(expr, field)
+            elif self.peek().kind == TokenKind.LBRACKET:
+                self.advance()
+                idx = self.parse_expression()
+                self.expect(TokenKind.RBRACKET)
+                expr = IndexAccess(expr, idx)
             else:
                 break
         return expr
@@ -318,6 +338,22 @@ class Parser:
                     self.expect(TokenKind.RBRACE)
                     return StructLiteral(name, fields)
             return Identifier(name)
+
+        if t.kind == TokenKind.LBRACKET:
+            # [N]T { e1, e2, ... } 数组字面量
+            self.advance()  # 吞 [
+            length = self.expect(TokenKind.INTEGER).value
+            self.expect(TokenKind.RBRACKET)
+            elem_type = self.expect(TokenKind.IDENT).value
+            self.expect(TokenKind.LBRACE)
+            elements = []
+            if self.peek().kind != TokenKind.RBRACE:
+                elements.append(self.parse_expression())
+                while self.peek().kind == TokenKind.COMMA:
+                    self.advance()
+                    elements.append(self.parse_expression())
+            self.expect(TokenKind.RBRACE)
+            return ArrayLiteral(length, elem_type, elements)
 
         if t.kind == TokenKind.LPAREN:
             self.advance()

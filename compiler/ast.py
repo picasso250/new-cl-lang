@@ -65,6 +65,17 @@ class While(Node):
         return f"While({self.condition} {self.body})"
 
 
+class Switch(Node):
+    """switch expr { case -> stmt; ... }"""
+    def __init__(self, scrutinee, cases: list):
+        self.scrutinee = scrutinee
+        self.cases = cases  # [(value_expr, statement), ...]
+
+    def __repr__(self):
+        cs = ', '.join(f"{v} -> {s}" for v, s in self.cases)
+        return f"Switch({self.scrutinee} {{ {cs} }})"
+
+
 class StructDecl(Node):
     """struct Name { field: type, ... }"""
     def __init__(self, name: str, fields: list):
@@ -116,6 +127,41 @@ class FieldAccess(Node):
 
     def __repr__(self):
         return f"Field({self.obj}.{self.field})"
+
+
+class ArrayType:
+    """非 AST 节点，仅供类型描述：[N]elem_type"""
+    def __init__(self, length: int, elem_type: str):
+        self.length = length
+        self.elem_type = elem_type
+
+    def __repr__(self):
+        return f"[{self.length}]{self.elem_type}"
+
+    def __str__(self):
+        return self.__repr__()
+
+
+class ArrayLiteral(Node):
+    """[N]T { e1, e2, ... }"""
+    def __init__(self, length: int, elem_type: str, elements: list):
+        self.length = length
+        self.elem_type = elem_type
+        self.elements = elements
+
+    def __repr__(self):
+        es = ', '.join(str(e) for e in self.elements)
+        return f"ArrayLit([{self.length}]{self.elem_type} {{ {es} }})"
+
+
+class IndexAccess(Node):
+    """expr[index]"""
+    def __init__(self, obj, index):
+        self.obj = obj
+        self.index = index
+
+    def __repr__(self):
+        return f"Index({self.obj}[{self.index}])"
 
 
 class FunctionDeclaration(Node):
