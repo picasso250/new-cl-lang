@@ -1,40 +1,44 @@
-# nc_compiler.nc —— 自举编译器
-# 简化：去括号，= 直出 = 
-
-fun is_digit(ch: i32): i32 {
-    if 48 <= ch && ch <= 57 { return 1 }
-    return 0
-}
-
-fun is_alpha(ch: i32): i32 {
-    if (65 <= ch && ch <= 90) || (97 <= ch && ch <= 122) { return 1 }
-    return 0
-}
+# nc_compiler.nc —— nc0 自举编译器
+# + fun 关键字：生成 C 函数签名
 
 fun main() {
-    let src = "let mut i = 0; while i < 3 { print(i); i = i + 1; }"
+    let src = "fun main() { print(42); }"
     let mut i = 0
-    let mut out = "#include <stdio.h>\nint main(void) {\n"
+    let mut out = "#include <stdio.h>\n"
     let mut after_if = 0
+    let mut in_params = 0
 
     while i < src._len {
         let ch = src[i]
 
         if ch == 32 || ch == 10 || ch == 9 || ch == 13 {
             i = i + 1
-        } else if is_digit(ch) {
+        } else if 48 <= ch && ch <= 57 {
             let start = i
-            while i < src._len && is_digit(src[i]) {
-                i = i + 1
-            }
+            while i < src._len && 48 <= src[i] && src[i] <= 57 { i = i + 1 }
             out = out + src[start:i]
-        } else if is_alpha(ch) {
+        } else if (65 <= ch && ch <= 90) || (97 <= ch && ch <= 122) || ch == 95 {
             let start = i
-            while i < src._len && is_alpha(src[i]) {
+            while i < src._len && ((65 <= src[i] && src[i] <= 90) || (97 <= src[i] && src[i] <= 122) || src[i] == 95 || (48 <= src[i] && src[i] <= 57)) {
                 i = i + 1
             }
             let word = src[start:i]
-            if word == "let" {
+            if word == "fun" {
+                # 读取函数名
+                while i < src._len && (src[i] == 32 || src[i] == 9 || src[i] == 10) { i = i + 1 }
+                let fnstart = i
+                while i < src._len && ((65 <= src[i] && src[i] <= 90) || (97 <= src[i] && src[i] <= 122) || src[i] == 95 || (48 <= src[i] && src[i] <= 57)) { i = i + 1 }
+                let fnname = src[fnstart:i]
+                # 跳过参数列表到 {
+                while i < src._len && src[i] != 123 { i = i + 1 }
+                i = i + 1  # 跳过 {
+                if fnname == "main" {
+                    out = out + "int main(void) {\n"
+                } else {
+                    out = out + "int " + fnname + "(int ch) {\n"
+                }
+                after_if = 0
+            } else if word == "let" {
                 out = out + "    int "
                 after_if = 0
             } else if word == "mut" {
@@ -50,6 +54,9 @@ fun main() {
             } else if word == "while" {
                 out = out + "    while ("
                 after_if = 1
+            } else if word == "return" {
+                out = out + "    return "
+                after_if = 0
             } else {
                 out = out + word
             }
@@ -59,13 +66,6 @@ fun main() {
                 i = i + 2
             } else {
                 out = out + " = "
-                i = i + 1
-            }
-        } else if ch == 33 {
-            if i + 1 < src._len && src[i+1] == 61 {
-                out = out + " != "
-                i = i + 2
-            } else {
                 i = i + 1
             }
         } else if ch == 60 {
@@ -103,10 +103,21 @@ fun main() {
         } else if ch == 41 {
             out = out + ")"
             i = i + 1
+        } else if ch == 46 {
+            out = out + "."
+            i = i + 1
+        } else if ch == 91 {
+            out = out + "["
+            i = i + 1
+        } else if ch == 93 {
+            out = out + "]"
+            i = i + 1
+        } else if ch == 58 {
+            out = out + ":"
+            i = i + 1
         } else {
             i = i + 1
         }
     }
-    out = out + "    return 0;\n}\n"
     write_file("out.c", out)
 }
