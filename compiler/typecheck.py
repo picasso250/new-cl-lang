@@ -12,7 +12,7 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
         StructDecl, StructLiteral, FieldAccess,
         EnumDecl, EnumRef, Switch, ForIn,
         IntegerLiteral, StringLiteral, BinaryOp, UnaryOp, FunctionCall, Identifier,
-        ArrayLiteral, IndexAccess, SliceExpr, MethodCall, TryCatch, Throw, Defer
+        ArrayLiteral, IndexAccess, SliceExpr, MethodCall, TryCatch, Throw, Defer, Break
     )
 
     def walk_expr(node):
@@ -65,6 +65,9 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
                 node.type = "void"
                 return
             if node.name == "gc_live":
+                node.type = "i32"
+                return
+            if node.name == "len":
                 node.type = "i32"
                 return
             try:
@@ -190,6 +193,8 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
                 walk_expr(stmt.expr)
             elif isinstance(stmt, Defer):
                 walk_stmts(stmt.body.statements)
+            elif isinstance(stmt, Break):
+                pass
             elif isinstance(stmt, Block):
                 symtab.push_scope()
                 walk_stmts(stmt.statements)

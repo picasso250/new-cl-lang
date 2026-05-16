@@ -21,6 +21,7 @@ class TokenKind(Enum):
     SWITCH = auto()
     FOR = auto()
     IN = auto()
+    BREAK = auto()
     NEW = auto()
     TRY = auto()
     CATCH = auto()
@@ -78,6 +79,7 @@ KEYWORDS = {
     "switch": TokenKind.SWITCH,
     "for": TokenKind.FOR,
     "in": TokenKind.IN,
+    "break": TokenKind.BREAK,
     "new": TokenKind.NEW,
     "try": TokenKind.TRY,
     "catch": TokenKind.CATCH,

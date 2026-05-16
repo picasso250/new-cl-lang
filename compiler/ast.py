@@ -76,6 +76,12 @@ class Switch(Node):
         return f"Switch({self.scrutinee} {{ {cs} }})"
 
 
+class Break(Node):
+    """break;"""
+    def __repr__(self):
+        return "Break"
+
+
 class ForIn(Node):
     """for index, value in iterable { body }
        或  for i in start..end { body }"""

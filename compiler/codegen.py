@@ -27,7 +27,7 @@ def generate_c(program: "Program") -> str:
         Return, SliceExpr, ArrayLiteral, FunctionCall,
         IntegerLiteral, StringLiteral, Identifier, BinaryOp, UnaryOp,
         EnumRef, StructLiteral, FieldAccess, IndexAccess, SliceExpr, MethodCall,
-        TryCatch, Throw, Defer
+        TryCatch, Throw, Defer, Break
     )
 
     _lines = []
@@ -345,6 +345,14 @@ def generate_c(program: "Program") -> str:
                 m_c = gen_expr(node.args[0])
                 k_c = gen_expr(node.args[1])
                 return f'__nc_map_has(&{m_c}, {k_c})'
+            if node.name == "len":
+                arg_c = gen_expr(node.args[0])
+                arg_t = getattr(node.args[0], "type", "str")
+                if arg_t == "str":
+                    return f'(int)({arg_c})._len'
+                if arg_t == "nc_map":
+                    return f'(int)({arg_c}).len'
+                return f'(int)({arg_c})._len'
             if node.name == "str":
                 arg_c = gen_expr(node.args[0])
                 arg_t = getattr(node.args[0], "type", "i32")
@@ -577,10 +585,12 @@ def generate_c(program: "Program") -> str:
             _lines.append(f'{pad}__nc_throw({ex_c});')
             return
         if isinstance(stmt, Defer):
-            # defer 语句：编译到当前作用域结束时执行
-            # 简化：跳过 — 后续再处理
             for s in stmt.body.statements:
                 gen_stmt(s, indent)
+            return
+        if isinstance(stmt, Break):
+            pad = '    ' * indent
+            _lines.append(f'{pad}break;')
             return
         raise NotImplementedError(f"gen_stmt: {type(stmt).__name__}")
 

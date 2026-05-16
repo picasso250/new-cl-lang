@@ -70,6 +70,10 @@ class Parser:
             return self._parse_throw()
         if t.kind == TokenKind.DEFER:
             return self._parse_defer()
+        if t.kind == TokenKind.BREAK:
+            self.advance()
+            self.match(TokenKind.SEMI)
+            return Break()
         if t.kind == TokenKind.IDENT:
             return self._parse_ident_stmt()
 
