@@ -40,6 +40,9 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
             if node.name == "write_file":
                 node.type = "void"
                 return
+            if node.name == "append":
+                node.type = node.args[0].type if node.args else "i32"
+                return
             try:
                 sym = symtab.lookup(node.name)
                 node.type = sym.nc_type

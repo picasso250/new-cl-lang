@@ -99,6 +99,19 @@ def generate_c(program: "Program") -> str:
     _lines.append('    return strncmp(a._ptr, b._ptr, a._len) == 0;')
     _lines.append('}')
     _lines.append('')
+    _lines.append('typedef struct { int* _ptr; long long _len; long long _cap; } _slice_int;')
+    _lines.append('')
+    _lines.append('static _slice_int __nc_append_int(_slice_int s, int elem) {')
+    _lines.append('    if (s._len >= s._cap) {')
+    _lines.append('        long long nc = s._cap ? s._cap * 2 : 4;')
+    _lines.append('        int* np = (int*)malloc(nc * sizeof(int));')
+    _lines.append('        for (long long i = 0; i < s._len; i++) np[i] = s._ptr[i];')
+    _lines.append('        s._ptr = np; s._cap = nc;')
+    _lines.append('    }')
+    _lines.append('    s._ptr[s._len++] = elem;')
+    _lines.append('    return s;')
+    _lines.append('}')
+    _lines.append('')
 
     for s in structs:
         fields_c = '; '.join(f'{_type_to_c(t)} {n}' for n, t in s.fields) + ';'
@@ -139,6 +152,10 @@ def generate_c(program: "Program") -> str:
                     return f'__nc_read_file("{arg.value}")'
                 arg_c = gen_expr(arg)
                 return f'__nc_read_file({arg_c}._ptr)'
+            if node.name == "append":
+                slice_c = gen_expr(node.args[0])
+                elem_c = gen_expr(node.args[1])
+                return f'__nc_append_int({slice_c}, {elem_c})'
             args = ', '.join(gen_expr(a) for a in node.args)
             return f'{node.name}({args})'
         if isinstance(node, StructLiteral):
@@ -190,7 +207,7 @@ def generate_c(program: "Program") -> str:
                 arr_c = gen_expr(se.array)
                 start_c = gen_expr(se.start) if se.start else '0'
                 end_c = gen_expr(se.end) if se.end else '0'
-                _lines.append(f'{pad}struct {{ {c_et}* _ptr; long long _len; }} {stmt.name} = {{{arr_c} + {start_c}, {end_c} - {start_c}}};')
+                _lines.append(f'{pad}_slice_int {stmt.name} = {{{arr_c} + {start_c}, {end_c} - {start_c}, {end_c} - {start_c}}};')
                 _slice_vars[stmt.name] = True
             else:
                 c_t = _type_to_c(stmt.type)
