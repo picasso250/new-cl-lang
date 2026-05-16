@@ -61,6 +61,9 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
             if node.name == "i32":
                 node.type = "i32"
                 return
+            if node.name == "gc_collect":
+                node.type = "void"
+                return
             try:
                 sym = symtab.lookup(node.name)
                 node.type = sym.nc_type

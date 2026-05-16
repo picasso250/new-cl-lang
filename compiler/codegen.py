@@ -29,6 +29,7 @@ def generate_c(program: "Program") -> str:
 
     _lines = []
     _slice_vars = {}
+    _gc_vars = {}  # 变量名 → 类型 (str/nc_map) 用于 GC 根追踪
 
     # ——— 收集类型定义 ———
     structs = []
@@ -72,6 +73,53 @@ def generate_c(program: "Program") -> str:
     _lines.append('#include <stdio.h>')
     _lines.append('#include <stdlib.h>')
     _lines.append('#include <string.h>')
+    _lines.append('#include <stdint.h>')
+    _lines.append('')
+    _lines.append('// === nc_gc.h inline ===')
+    _lines.append('typedef struct _nc_record { void* ptr; size_t size; uint8_t marked; struct _nc_record* next; } nc_record_t;')
+    _lines.append('static nc_record_t* __nc_gc_registry = NULL;')
+    _lines.append('static struct { void* ptr; int active; } __nc_gc_roots[256];')
+    _lines.append('static size_t __nc_gc_root_n = 0;')
+    _lines.append('static nc_record_t* __nc_gc_gray[4096];')
+    _lines.append('static size_t __nc_gc_gray_top = 0;')
+    _lines.append('static int __nc_gc_is_heap(void* c) {')
+    _lines.append('    if (!c) return 0;')
+    _lines.append('    uintptr_t a = (uintptr_t)c;')
+    _lines.append('    for (nc_record_t* r = __nc_gc_registry; r; r = r->next)')
+    _lines.append('        if (a >= (uintptr_t)r->ptr && a < (uintptr_t)r->ptr + r->size) return 1;')
+    _lines.append('    return 0; }')
+    _lines.append('static nc_record_t* __nc_gc_find(void* p) {')
+    _lines.append('    for (nc_record_t* r = __nc_gc_registry; r; r = r->next)')
+    _lines.append('        if (p >= r->ptr && (uintptr_t)p < (uintptr_t)r->ptr + r->size) return r;')
+    _lines.append('    return NULL; }')
+    _lines.append('static void __nc_gc_mark_gray(void* p) {')
+    _lines.append('    nc_record_t* r = __nc_gc_find(p);')
+    _lines.append('    if (r && r->marked == 0) { r->marked = 1; if (__nc_gc_gray_top < 4096) __nc_gc_gray[__nc_gc_gray_top++] = r; } }')
+    _lines.append('static void __nc_gc_scan(nc_record_t* r) {')
+    _lines.append('    size_t n = r->size / sizeof(void*); void** w = (void**)r->ptr;')
+    _lines.append('    for (size_t i = 0; i < n; i++) if (w[i]) __nc_gc_mark_gray(w[i]); }')
+    _lines.append('static void* __nc_gc_alloc(size_t sz) {')
+    _lines.append('    void* p = calloc(1, sz); if (!p) return NULL;')
+    _lines.append('    nc_record_t* rec = (nc_record_t*)malloc(sizeof(nc_record_t));')
+    _lines.append('    rec->ptr = p; rec->size = sz; rec->marked = 0;')
+    _lines.append('    rec->next = __nc_gc_registry; __nc_gc_registry = rec; return p; }')
+    _lines.append('static int __nc_gc_push_root(void* p) {')
+    _lines.append('    if (!p || !__nc_gc_is_heap(p)) return -1;')
+    _lines.append('    if (__nc_gc_root_n >= 256) return -1;')
+    _lines.append('    __nc_gc_roots[__nc_gc_root_n].ptr = p;')
+    _lines.append('    __nc_gc_roots[__nc_gc_root_n].active = 1;')
+    _lines.append('    return (int)__nc_gc_root_n++; }')
+    _lines.append('static void __nc_gc_pop_root(void) { if (__nc_gc_root_n > 0) __nc_gc_root_n--; }')
+    _lines.append('static void __nc_gc_drop_root(int h) { if (h>=0 && h<(int)__nc_gc_root_n) __nc_gc_roots[h].active=0; }')
+    _lines.append('static void __nc_gc_collect(void) {')
+    _lines.append('    for (size_t i = 0; i < __nc_gc_root_n; i++) if (__nc_gc_roots[i].active) __nc_gc_mark_gray(__nc_gc_roots[i].ptr);')
+    _lines.append('    while (__nc_gc_gray_top > 0) { nc_record_t* r = __nc_gc_gray[--__nc_gc_gray_top]; __nc_gc_scan(r); r->marked = 2; }')
+    _lines.append('    nc_record_t** prev = &__nc_gc_registry; nc_record_t* c = __nc_gc_registry;')
+    _lines.append('    while (c) { if (c->marked == 0) { *prev = c->next; free(c->ptr); nc_record_t* d=c; c=c->next; free(d); }')
+    _lines.append('        else { c->marked = 0; prev = &c->next; c = c->next; } }')
+    _lines.append('    __nc_gc_gray_top = 0;')
+    _lines.append('    size_t w = 0; for (size_t i = 0; i < __nc_gc_root_n; i++) if (__nc_gc_roots[i].active) __nc_gc_roots[w++] = __nc_gc_roots[i];')
+    _lines.append('    __nc_gc_root_n = w; }')
     _lines.append('')
     _lines.append('typedef struct { const char* _ptr; long long _len; } str;')
     _lines.append('')
@@ -81,7 +129,7 @@ def generate_c(program: "Program") -> str:
     _lines.append('    fseek(fp, 0, SEEK_END);')
     _lines.append('    long long sz = ftell(fp);')
     _lines.append('    fseek(fp, 0, SEEK_SET);')
-    _lines.append('    char* buf = (char*)malloc(sz + 1);')
+    _lines.append('    char* buf = (char*)__nc_gc_alloc(sz + 1);')
     _lines.append('    fread(buf, 1, sz, fp);')
     _lines.append('    buf[sz] = 0;')
     _lines.append('    fclose(fp);')
@@ -102,7 +150,7 @@ def generate_c(program: "Program") -> str:
     _lines.append('}')
     _lines.append('')
     _lines.append('static str __nc_str_cat(str a, str b) {')
-    _lines.append('    char* buf = (char*)malloc(a._len + b._len + 1);')
+    _lines.append('    char* buf = (char*)__nc_gc_alloc(a._len + b._len + 1);')
     _lines.append('    memcpy(buf, a._ptr, a._len);')
     _lines.append('    memcpy(buf + a._len, b._ptr, b._len);')
     _lines.append('    buf[a._len + b._len] = 0;')
@@ -115,7 +163,7 @@ def generate_c(program: "Program") -> str:
     _lines.append('static _slice_int __nc_append_int(_slice_int s, int elem) {')
     _lines.append('    if (s._len >= s._cap) {')
     _lines.append('        long long nc = s._cap ? s._cap * 2 : 4;')
-    _lines.append('        int* np = (int*)malloc(nc * sizeof(int));')
+    _lines.append('        int* np = (int*)__nc_gc_alloc(nc * sizeof(int));')
     _lines.append('        for (long long i = 0; i < s._len; i++) np[i] = s._ptr[i];')
     _lines.append('        s._ptr = np; s._cap = nc;')
     _lines.append('    }')
@@ -144,7 +192,7 @@ def generate_c(program: "Program") -> str:
     _lines.append('')
     _lines.append('static void __nc_map_init(nc_map* m) {')
     _lines.append('    m->cap = 16; m->len = 0; m->tombstones = 0;')
-    _lines.append('    m->entries = (nc_entry*)calloc(16, sizeof(nc_entry));')
+    _lines.append('    m->entries = (nc_entry*)__nc_gc_alloc(16 * sizeof(nc_entry));')
     _lines.append('}')
     _lines.append('')
     _lines.append('static void __nc_map_free(nc_map* m) {')
@@ -154,7 +202,7 @@ def generate_c(program: "Program") -> str:
     _lines.append('static void __nc_map_rehash(nc_map* m) {')
     _lines.append('    long long oc = m->cap; nc_entry* old = m->entries;')
     _lines.append('    m->cap *= 2; m->len = 0; m->tombstones = 0;')
-    _lines.append('    m->entries = (nc_entry*)calloc((size_t)m->cap, sizeof(nc_entry));')
+    _lines.append('    m->entries = (nc_entry*)__nc_gc_alloc((size_t)m->cap * sizeof(nc_entry));')
     _lines.append('    for (long long i = 0; i < oc; i++) {')
     _lines.append('        if (old[i].state == 1) {')
     _lines.append('            long long idx = __nc_map_hash(old[i].key, m->cap);')
@@ -202,12 +250,16 @@ def generate_c(program: "Program") -> str:
     _lines.append('    nc_val v; return __nc_map_get(m, key, &v); }')
     _lines.append('')
     _lines.append('static str __nc_i32_to_str(int n) {')
-    _lines.append('    char* buf = (char*)malloc(24);')
+    _lines.append('    char* buf = (char*)__nc_gc_alloc(24);')
     _lines.append('    int len = sprintf(buf, "%d", n);')
     _lines.append('    return (str){buf, len}; }')
     _lines.append('')
     _lines.append('static int __nc_str_to_i32(str s) {')
     _lines.append('    return atoi(s._ptr); }')
+    _lines.append('')
+
+    _lines.append('static void __nc_gc_init(void) {')
+    _lines.append('    __nc_gc_registry = NULL; __nc_gc_root_n = 0; __nc_gc_gray_top = 0; }')
     _lines.append('')
 
     for e in enums:
@@ -311,6 +363,9 @@ def generate_c(program: "Program") -> str:
 
     def gen_expr_stmt(expr, indent=0):
         pad = '    ' * indent
+        if isinstance(expr, FunctionCall) and expr.name == "gc_collect":
+            _lines.append(f'{pad}__nc_gc_collect();')
+            return
         if isinstance(expr, FunctionCall) and expr.name == "write_file":
             path = expr.args[0]
             content = expr.args[1]
@@ -348,6 +403,8 @@ def generate_c(program: "Program") -> str:
                     end_c = gen_expr(se.end) if se.end else f'{arr_c}._len'
                     _lines.append(f'{pad}str {stmt.name} = (str){{{arr_c}._ptr + {start_c}, {end_c} - {start_c}}};')
                     _slice_vars[stmt.name] = True
+                    _gc_vars[stmt.name] = "str"
+                    _lines.append(f'{pad}__nc_gc_push_root((void*){stmt.name}._ptr);')
                 else:
                     c_et = _type_to_c(stmt.type)
                     arr_c = gen_expr(se.array)
@@ -360,12 +417,27 @@ def generate_c(program: "Program") -> str:
                 init_c = gen_expr(stmt.initializer)
                 if stmt.type == "nc_map":
                     _lines.append(f'{pad}{c_t} {stmt.name}; __nc_map_init(&{stmt.name});')
+                    _gc_vars[stmt.name] = "nc_map"
                 else:
                     _lines.append(f'{pad}{c_t} {stmt.name} = {init_c};')
+                    if stmt.type == "str":
+                        _gc_vars[stmt.name] = "str"
+                # GC 根追踪
+                if stmt.type == "nc_map" and stmt.name not in _slice_vars:
+                    _lines.append(f'{pad}__nc_gc_push_root((void*){stmt.name}.entries);')
+                elif stmt.type == "str" and stmt.name not in _slice_vars:
+                    _lines.append(f'{pad}__nc_gc_push_root((void*){stmt.name}._ptr);')
             return
         if isinstance(stmt, Assignment):
             if isinstance(stmt.target, Identifier):
                 _lines.append(f'{pad}{stmt.target.name} = {gen_expr(stmt.expr)};')
+                # GC 根刷新
+                if stmt.target.name in _gc_vars:
+                    var_t = _gc_vars[stmt.target.name]
+                    if var_t == "nc_map":
+                        _lines.append(f'{pad}__nc_gc_push_root((void*){stmt.target.name}.entries);')
+                    else:
+                        _lines.append(f'{pad}__nc_gc_push_root((void*){stmt.target.name}._ptr);')
             elif isinstance(stmt.target, IndexAccess):
                 obj_c = gen_expr(stmt.target.obj)
                 idx_c = gen_expr(stmt.target.index)
@@ -447,6 +519,7 @@ def generate_c(program: "Program") -> str:
 
     if main_func:
         _lines.append('int main(void) {')
+        _lines.append('    __nc_gc_init();')
         for s in main_func.body.statements:
             gen_stmt(s)
         _lines.append('    return 0;')
