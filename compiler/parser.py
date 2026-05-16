@@ -360,6 +360,10 @@ class Parser:
             self.advance()
             return IntegerLiteral(t.value)
 
+        if t.kind == TokenKind.CHAR:
+            self.advance()
+            return IntegerLiteral(t.value)
+
         if t.kind == TokenKind.NEW:
             self.advance()
             name = self.expect(TokenKind.IDENT).value

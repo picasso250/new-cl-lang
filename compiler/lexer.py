@@ -7,6 +7,7 @@ from enum import Enum, auto
 class TokenKind(Enum):
     INTEGER = auto()
     STRING = auto()
+    CHAR = auto()
     IDENT = auto()
     # 关键字
     LET = auto()
@@ -113,32 +114,47 @@ def lex(source: str):
 
         # 字符串
         if ch == '"':
-            i += 1  # 跳过开引号
+            i += 1
             chars = []
             while i < n and source[i] != '"':
                 if source[i] == '\\' and i + 1 < n:
                     ec = source[i + 1]
-                    if ec == 'n':
-                        chars.append('\n')
-                    elif ec == 't':
-                        chars.append('\t')
-                    elif ec == 'r':
-                        chars.append('\r')
-                    elif ec == '\\':
-                        chars.append('\\')
-                    elif ec == '"':
-                        chars.append('"')
-                    else:
-                        chars.append(source[i])
-                        chars.append(ec)
+                    if ec == 'n': chars.append('\n')
+                    elif ec == 't': chars.append('\t')
+                    elif ec == 'r': chars.append('\r')
+                    elif ec == '\\': chars.append('\\')
+                    elif ec == '"': chars.append('"')
+                    else: chars.append(source[i]); chars.append(ec)
                     i += 2
                 else:
                     chars.append(source[i])
                     i += 1
             value = ''.join(chars)
             if i < n:
-                i += 1  # 跳过闭引号
+                i += 1
             yield Token(TokenKind.STRING, value, i - len(value) - 2)
+            continue
+
+        # 字符字面量
+        if ch == "'":
+            i += 1
+            if i >= n: raise SyntaxError(f"Unterminated char literal at {i}")
+            if source[i] == '\\' and i + 1 < n:
+                ec = source[i + 1]
+                if ec == 'n': val = 10
+                elif ec == 't': val = 9
+                elif ec == 'r': val = 13
+                elif ec == '\\': val = 92
+                elif ec == "'" : val = 39
+                elif ec == '"': val = 34
+                else: val = ord(ec)
+                i += 2
+            else:
+                val = ord(source[i])
+                i += 1
+            if i >= n or source[i] != "'": raise SyntaxError(f"Unterminated char literal at {i}")
+            i += 1
+            yield Token(TokenKind.CHAR, val, i - 3)
             continue
         if ch.isalpha() or ch == "_":
             start = i
