@@ -199,6 +199,10 @@ class Parser:
     def parse_primary(self):
         t = self.peek()
 
+        if t.kind == TokenKind.STRING:
+            self.advance()
+            return StringLiteral(t.value)
+
         if t.kind == TokenKind.INTEGER:
             self.advance()
             return IntegerLiteral(t.value)

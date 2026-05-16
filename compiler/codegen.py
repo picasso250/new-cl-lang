@@ -9,6 +9,7 @@ NC_TO_C = {
     "u32": "unsigned int", "u64": "unsigned long long",
     "f32": "float", "f64": "double",
     "bool": "int", "void": "void",
+    "str": "const char*",
 }
 
 
@@ -141,10 +142,13 @@ def _gen_expr_stmt(lines: list, expr, indent: int):
 
 
 def _gen_expr(node) -> str:
-    from compiler.ast import IntegerLiteral, Identifier, BinaryOp, FunctionCall
+    from compiler.ast import IntegerLiteral, StringLiteral, Identifier, BinaryOp, FunctionCall
 
     if isinstance(node, IntegerLiteral):
         return str(node.value)
+
+    if isinstance(node, StringLiteral):
+        return f'"{node.value}"'
 
     if isinstance(node, Identifier):
         return node.name

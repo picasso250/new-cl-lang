@@ -9,12 +9,14 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
     from compiler.ast import (
         Program, VariableDeclaration, ExpressionStatement,
         Assignment, Block, If, While, FunctionDeclaration, Return,
-        IntegerLiteral, BinaryOp, FunctionCall, Identifier,
+        IntegerLiteral, StringLiteral, BinaryOp, FunctionCall, Identifier,
     )
 
     def walk_expr(node):
         if isinstance(node, IntegerLiteral):
             node.type = "i32"
+        elif isinstance(node, StringLiteral):
+            node.type = "str"
         elif isinstance(node, Identifier):
             sym = symtab.lookup(node.name)
             node.type = sym.nc_type

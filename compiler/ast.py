@@ -102,6 +102,14 @@ class If(Node):
 
 # ===== 表达式 =====
 
+class StringLiteral(Node):
+    def __init__(self, value: str):
+        self.value = value
+
+    def __repr__(self):
+        return f'String("{self.value}")'
+
+
 class IntegerLiteral(Node):
     def __init__(self, value: int):
         self.value = value

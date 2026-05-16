@@ -6,6 +6,7 @@ from enum import Enum, auto
 
 class TokenKind(Enum):
     INTEGER = auto()
+    STRING = auto()
     IDENT = auto()
     # 关键字
     LET = auto()
@@ -82,7 +83,20 @@ def lex(source: str):
             yield Token(TokenKind.INTEGER, int(source[start:i]), start)
             continue
 
-        # 标识符 / 关键字
+        # 字符串
+        if ch == '"':
+            i += 1  # 跳过开引号
+            start = i
+            while i < n and source[i] != '"':
+                if source[i] == '\\' and i + 1 < n:
+                    i += 2  # 跳过转义
+                else:
+                    i += 1
+            value = source[start:i]
+            if i < n:
+                i += 1  # 跳过闭引号
+            yield Token(TokenKind.STRING, value, start - 1)
+            continue
         if ch.isalpha() or ch == "_":
             start = i
             while i < n and (source[i].isalnum() or source[i] == "_"):
