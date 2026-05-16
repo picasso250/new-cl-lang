@@ -68,7 +68,10 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
         elif isinstance(node, IndexAccess):
             walk_expr(node.obj)
             walk_expr(node.index)
-            node.type = node.obj.type
+            if node.obj.type == "str":
+                node.type = "i32"
+            else:
+                node.type = node.obj.type
         elif isinstance(node, SliceExpr):
             walk_expr(node.array)
             if node.start:

@@ -24,7 +24,7 @@ def generate_c(program: "Program") -> str:
         VariableDeclaration, ExpressionStatement, Assignment,
         Return, SliceExpr, ArrayLiteral, FunctionCall,
         IntegerLiteral, StringLiteral, Identifier, BinaryOp, UnaryOp,
-        EnumRef, StructLiteral, FieldAccess, IndexAccess,
+        EnumRef, StructLiteral, FieldAccess, IndexAccess, SliceExpr,
     )
 
     _lines = []
@@ -182,7 +182,17 @@ def generate_c(program: "Program") -> str:
             idx_c = gen_expr(node.index)
             if isinstance(node.obj, Identifier) and node.obj.name in _slice_vars:
                 return f'{obj_c}._ptr[{idx_c}]'
+            if getattr(node.obj, "type", "") == "str":
+                return f'(int)(unsigned char)(({obj_c})._ptr[{idx_c}])'
             return f'{obj_c}[{idx_c}]'
+
+        if isinstance(node, SliceExpr):
+            arr_c = gen_expr(node.array)
+            start_c = gen_expr(node.start) if node.start else '0'
+            end_c = gen_expr(node.end) if node.end else f'{arr_c}._len'
+            if getattr(node.array, "type", "") == "str":
+                return f'(str){{{arr_c}._ptr + {start_c}, {end_c} - {start_c}}}'
+            return f'({arr_c} + {start_c})'
         raise NotImplementedError(f"gen_expr: {type(node).__name__}")
 
     def gen_expr_stmt(expr, indent=0):
