@@ -300,6 +300,14 @@ def generate_c(program: "Program") -> str:
             return
         raise NotImplementedError(f"gen_stmt: {type(stmt).__name__}")
 
+    # ——— 前向声明（支持互递归） ———
+    for func in other_funcs:
+        c_ret = _type_to_c(func.return_type or "void")
+        params_c = ', '.join(f'{_type_to_c(t)} {n}' for n, t in func.params) or "void"
+        _lines.append(f'{c_ret} {func.name}({params_c});')
+    if other_funcs:
+        _lines.append('')
+
     # ——— 输出函数 ———
     for func in other_funcs:
         c_ret = _type_to_c(func.return_type or "void")
