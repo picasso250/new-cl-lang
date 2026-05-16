@@ -1,6 +1,6 @@
 """
-符号表 —— Pass 1：遍历 AST，收集所有声明。
-支持嵌套作用域（Block / If 引入新作用域）。
+符号表 —— Pass 1：遍历 AST，仅收集声明（函数签名 + struct 定义）。
+不管变量声明（那是 Pass 2 的事）。各司其职，不跨界。
 """
 
 
@@ -18,7 +18,7 @@ class Symbol:
 
 class SymbolTable:
     def __init__(self):
-        self._scopes: list[dict[str, Symbol]] = [{}]  # 栈式作用域
+        self._scopes: list[dict[str, Symbol]] = [{}]
         self._level = 0
         self._structs: dict[str, dict[str, str]] = {}  # struct名 → {字段: 类型}
 
@@ -54,68 +54,69 @@ class SymbolTable:
 
 
 def build_symbol_table(program: "Program") -> SymbolTable:
-    """Pass 1: 遍历 Program，建立符号表（支持嵌套作用域）。"""
+    """Pass 1: 遍历 AST，收集函数签名和 struct 定义。
+    进入函数体以捕获形参和嵌套 struct，但不管 let 变量。
+    """
     from compiler.ast import (
         Program, VariableDeclaration, ExpressionStatement,
         Assignment, Block, If, While, FunctionDeclaration, Return,
         StructDecl,
+        BinaryOp, UnaryOp, FunctionCall,
     )
     table = SymbolTable()
 
     def walk_stmts(stmts: list):
         for stmt in stmts:
-            if isinstance(stmt, VariableDeclaration):
-                table.declare(stmt.name, "i32", stmt.mut)
-            elif isinstance(stmt, If):
-                walk_expr(stmt.condition)
-                table.push_scope()
-                walk_stmts(stmt.then_block.statements)
-                table.pop_scope()
-                if stmt.else_block:
-                    table.push_scope()
-                    walk_stmts(stmt.else_block.statements)
-                    table.pop_scope()
-            elif isinstance(stmt, While):
-                walk_expr(stmt.condition)
-                table.push_scope()
-                walk_stmts(stmt.body.statements)
-                table.pop_scope()
-            elif isinstance(stmt, FunctionDeclaration):
-                # 函数名注册到外层作用域
+            if isinstance(stmt, FunctionDeclaration):
                 table.declare(stmt.name, stmt.return_type or "void")
                 table.push_scope()
-                # 参数也注册
                 for pname, ptype in stmt.params:
                     table.declare(pname, ptype)
                 walk_stmts(stmt.body.statements)
                 table.pop_scope()
-            elif isinstance(stmt, Return):
-                if stmt.expr:
-                    walk_expr(stmt.expr)
             elif isinstance(stmt, StructDecl):
                 table.declare(stmt.name, "struct")
                 table.declare_struct(stmt.name, stmt.fields)
+            elif isinstance(stmt, (If, While, Block)):
+                _descend_stmt(stmt)
             elif isinstance(stmt, ExpressionStatement):
-                walk_expr(stmt.expr)
+                _walk_expr(stmt.expr)
             elif isinstance(stmt, Assignment):
-                walk_expr(stmt.expr)
-            # Block standalone（暂不用到）
-            elif isinstance(stmt, Block):
-                table.push_scope()
-                walk_stmts(stmt.statements)
-                table.pop_scope()
+                _walk_expr(stmt.expr)
+            elif isinstance(stmt, Return):
+                if stmt.expr:
+                    _walk_expr(stmt.expr)
+            # VariableDeclaration: 跳过 —— Pass 2 负责
 
-    def walk_expr(node):
-        from compiler.ast import BinaryOp, UnaryOp, FunctionCall, Identifier, IntegerLiteral
+    def _descend_stmt(stmt):
+        if isinstance(stmt, If):
+            _walk_expr(stmt.condition)
+            table.push_scope()
+            walk_stmts(stmt.then_block.statements)
+            table.pop_scope()
+            if stmt.else_block:
+                table.push_scope()
+                walk_stmts(stmt.else_block.statements)
+                table.pop_scope()
+        elif isinstance(stmt, While):
+            _walk_expr(stmt.condition)
+            table.push_scope()
+            walk_stmts(stmt.body.statements)
+            table.pop_scope()
+        elif isinstance(stmt, Block):
+            table.push_scope()
+            walk_stmts(stmt.statements)
+            table.pop_scope()
+
+    def _walk_expr(node):
         if isinstance(node, BinaryOp):
-            walk_expr(node.left)
-            walk_expr(node.right)
+            _walk_expr(node.left)
+            _walk_expr(node.right)
         elif isinstance(node, UnaryOp):
-            walk_expr(node.operand)
+            _walk_expr(node.operand)
         elif isinstance(node, FunctionCall):
             for arg in node.args:
-                walk_expr(arg)
-        # Identifier / IntegerLiteral 不需处理
+                _walk_expr(arg)
 
     walk_stmts(program.statements)
     return table
