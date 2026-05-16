@@ -1,5 +1,5 @@
 # nc_compiler.nc —— 自举编译器
-# + if/else/==/!=
+# 简化：去括号，= 直出 = 
 
 fun is_digit(ch: i32): i32 {
     if 48 <= ch && ch <= 57 { return 1 }
@@ -12,10 +12,9 @@ fun is_alpha(ch: i32): i32 {
 }
 
 fun main() {
-    let src = "let x = 10; if x == 10 { print(x); } else { print(0); }"
+    let src = "let mut i = 0; while i < 3 { print(i); i = i + 1; }"
     let mut i = 0
     let mut out = "#include <stdio.h>\nint main(void) {\n"
-    let mut in_let = 0
     let mut after_if = 0
 
     while i < src._len {
@@ -37,20 +36,20 @@ fun main() {
             let word = src[start:i]
             if word == "let" {
                 out = out + "    int "
-                in_let = 1
                 after_if = 0
+            } else if word == "mut" {
             } else if word == "print" {
                 out = out + "    printf(\"%d\\n\", "
-                in_let = 0
                 after_if = 0
             } else if word == "if" {
                 out = out + "    if ("
-                in_let = 0
                 after_if = 1
             } else if word == "else" {
                 out = out + "else"
-                in_let = 0
                 after_if = 0
+            } else if word == "while" {
+                out = out + "    while ("
+                after_if = 1
             } else {
                 out = out + word
             }
@@ -59,7 +58,7 @@ fun main() {
                 out = out + " == "
                 i = i + 2
             } else {
-                out = out + " = ("
+                out = out + " = "
                 i = i + 1
             }
         } else if ch == 33 {
@@ -69,13 +68,14 @@ fun main() {
             } else {
                 i = i + 1
             }
+        } else if ch == 60 {
+            out = out + " < "
+            i = i + 1
+        } else if ch == 62 {
+            out = out + " > "
+            i = i + 1
         } else if ch == 59 {
-            if in_let {
-                out = out + ");\n"
-            } else {
-                out = out + ";\n"
-            }
-            in_let = 0
+            out = out + ";\n"
             i = i + 1
         } else if ch == 123 {
             if after_if {
