@@ -68,22 +68,39 @@ def build_symbol_table(program: "Program") -> SymbolTable:
         Assignment, Block, If, While, FunctionDeclaration, Return,
         StructDecl, EnumDecl, Switch, ForIn,
         BinaryOp, UnaryOp, FunctionCall,
-        ArrayLiteral, IndexAccess,
+        ArrayLiteral, IndexAccess, MethodCall, FieldAccess, StructLiteral
     )
     table = SymbolTable()
 
     table.declare_global("str", "struct")
     table.declare_struct("str", [("_ptr", "i64"), ("_len", "i64")])
+    table._methods = {}  # {type_name: {method_name: (ret_type, [(param, type)])}}
 
     def walk_stmts(stmts: list):
         for stmt in stmts:
             if isinstance(stmt, FunctionDeclaration):
-                table.declare(stmt.name, stmt.return_type or "void")
-                table.push_scope()
-                for pname, ptype in stmt.params:
-                    table.declare(pname, ptype)
-                walk_stmts(stmt.body.statements)
-                table.pop_scope()
+                if stmt.receiver_name:
+                    # 方法：注册为 TypeName_methodName
+                    rtype = stmt.receiver_type  # e.g. "*Stack"
+                    type_name = rtype.lstrip("*")
+                    mangled = f"{type_name}_{stmt.name}"
+                    table.declare(mangled, stmt.return_type or "void")
+                    if type_name not in table._methods:
+                        table._methods[type_name] = {}
+                    table._methods[type_name][stmt.name] = (stmt.return_type, stmt.params)
+                    table.push_scope()
+                    table.declare(stmt.receiver_name, rtype)
+                    for pname, ptype in stmt.params:
+                        table.declare(pname, ptype)
+                    walk_stmts(stmt.body.statements)
+                    table.pop_scope()
+                else:
+                    table.declare(stmt.name, stmt.return_type or "void")
+                    table.push_scope()
+                    for pname, ptype in stmt.params:
+                        table.declare(pname, ptype)
+                    walk_stmts(stmt.body.statements)
+                    table.pop_scope()
             elif isinstance(stmt, StructDecl):
                 table.declare_global(stmt.name, "struct")
                 table.declare_struct(stmt.name, stmt.fields)
@@ -147,6 +164,15 @@ def build_symbol_table(program: "Program") -> SymbolTable:
         elif isinstance(node, IndexAccess):
             _walk_expr(node.obj)
             _walk_expr(node.index)
+        elif isinstance(node, MethodCall):
+            _walk_expr(node.obj)
+            for arg in node.args:
+                _walk_expr(arg)
+        elif isinstance(node, FieldAccess):
+            _walk_expr(node.obj)
+        elif isinstance(node, StructLiteral):
+            for _fn, fv in node.fields:
+                _walk_expr(fv)
 
     walk_stmts(program.statements)
     return table

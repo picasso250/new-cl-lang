@@ -12,7 +12,7 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
         StructDecl, StructLiteral, FieldAccess,
         EnumDecl, EnumRef, Switch, ForIn,
         IntegerLiteral, StringLiteral, BinaryOp, UnaryOp, FunctionCall, Identifier,
-        ArrayLiteral, IndexAccess, SliceExpr
+        ArrayLiteral, IndexAccess, SliceExpr, MethodCall
     )
 
     def walk_expr(node):
@@ -74,14 +74,31 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
             symtab.lookup(node.enum_name)
             node.type = node.enum_name
         elif isinstance(node, StructLiteral):
-            node.type = node.name  # 类型名即 struct 名
+            if node.heap:
+                node.type = "*" + node.name
+            else:
+                node.type = node.name
             for _fname, fval in node.fields:
                 walk_expr(fval)
         elif isinstance(node, FieldAccess):
             walk_expr(node.obj)
             obj_type = node.obj.type
+            if obj_type.startswith("*"):
+                obj_type = obj_type[1:]
             fields = symtab.lookup_struct(obj_type)
             node.type = fields.get(node.field, "i32")
+        elif isinstance(node, MethodCall):
+            walk_expr(node.obj)
+            for arg in node.args:
+                walk_expr(arg)
+            obj_type = node.obj.type
+            if obj_type.startswith("*"):
+                obj_type = obj_type[1:]
+            methods = getattr(symtab, "_methods", {})
+            if obj_type in methods and node.method in methods[obj_type]:
+                node.type = methods[obj_type][node.method][0] or "void"
+            else:
+                node.type = "void"
         elif isinstance(node, ArrayLiteral):
             for elem in node.elements:
                 walk_expr(elem)
@@ -130,6 +147,8 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
                 symtab.pop_scope()
             elif isinstance(stmt, FunctionDeclaration):
                 symtab.push_scope()
+                if stmt.receiver_name:
+                    symtab.declare(stmt.receiver_name, stmt.receiver_type)
                 for pname, _ptype in stmt.params:
                     symtab.declare(pname, _ptype)
                 walk_stmts(stmt.body.statements)

@@ -121,14 +121,16 @@ class EnumRef(Node):
 
 
 class StructLiteral(Node):
-    """Name { field: value, ... }"""
-    def __init__(self, name: str, fields: list):
+    """Name { field: value, ... }  或  new Name { field: value, ... }"""
+    def __init__(self, name: str, fields: list, heap: bool = False):
         self.name = name
         self.fields = fields  # [(name, expr), ...]
+        self.heap = heap
 
     def __repr__(self):
         fs = ', '.join(f'{n}: {v}' for n, v in self.fields)
-        return f"StructLit({self.name} {{ {fs} }})"
+        pre = "new " if self.heap else ""
+        return f"{pre}StructLit({self.name} {{ {fs} }})"
 
 
 class FieldAccess(Node):
@@ -190,16 +192,22 @@ class SliceExpr(Node):
 
 
 class FunctionDeclaration(Node):
-    """fun name(params): return_type { body }"""
-    def __init__(self, name: str, params: list, return_type: str | None, body: Block):
+    """fun name(params): return_type { body }
+       或  fun (r *T) name(params): return_type { body }"""
+    def __init__(self, name: str, params: list, return_type: str | None, body: Block,
+                 receiver_name: str | None = None, receiver_type: str | None = None):
         self.name = name
         self.params = params   # [(name, type), ...]
         self.return_type = return_type  # None = void
         self.body = body
+        self.receiver_name = receiver_name  # 方法接收者名
+        self.receiver_type = receiver_type  # 方法接收者类型 (如 "*Stack")
 
     def __repr__(self):
         p = ', '.join(f'{n}: {t}' for n, t in self.params)
         r = f': {self.return_type}' if self.return_type else ''
+        if self.receiver_name:
+            return f"Method({self.receiver_type}.{self.name}({p}){r})"
         return f"Fun({self.name}({p}){r} {self.body})"
 
 
@@ -269,6 +277,18 @@ class FunctionCall(Node):
 
     def __repr__(self):
         return f"Call({self.name}, {self.args})"
+
+
+class MethodCall(Node):
+    """obj.method(args...)"""
+    def __init__(self, obj, method: str, args: list):
+        self.obj = obj
+        self.method = method
+        self.args = args
+
+    def __repr__(self):
+        as_ = ', '.join(str(a) for a in self.args)
+        return f"MethodCall({self.obj}.{self.method}({as_}))"
 
 
 class Identifier(Node):

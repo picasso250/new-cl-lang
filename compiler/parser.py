@@ -107,7 +107,18 @@ class Parser:
         return While(condition, body)
 
     def _parse_function(self):
-        self.advance()
+        self.advance()  # 吃 fun
+        # 方法接收者？
+        receiver_name = None
+        receiver_type = None
+        if self.peek().kind == TokenKind.LPAREN:
+            self.advance()
+            rname = self.expect(TokenKind.IDENT).value
+            self.expect(TokenKind.STAR)
+            rtype = self.expect(TokenKind.IDENT).value
+            self.expect(TokenKind.RPAREN)
+            receiver_name = rname
+            receiver_type = "*" + rtype
         name = self.expect(TokenKind.IDENT).value
         self.expect(TokenKind.LPAREN)
         params = []
@@ -129,7 +140,8 @@ class Parser:
             return_type = self.expect(TokenKind.IDENT).value
         body = self._parse_block()
         self.match(TokenKind.SEMI)
-        return FunctionDeclaration(name, params, return_type, body)
+        return FunctionDeclaration(name, params, return_type, body,
+                                   receiver_name, receiver_type)
 
     def _parse_return(self):
         self.advance()
@@ -274,13 +286,25 @@ class Parser:
         return self.parse_postfix()
 
     def parse_postfix(self):
-        """处理 .field、(args)、[idx] 后缀。"""
+        """处理 .field、(args)、[idx]、.method(args) 后缀。"""
         expr = self.parse_primary()
         while True:
             if self.peek().kind == TokenKind.DOT:
                 self.advance()
                 field = self.expect(TokenKind.IDENT).value
-                expr = FieldAccess(expr, field)
+                if self.peek().kind == TokenKind.LPAREN:
+                    # 方法调用: obj.method(args)
+                    self.advance()
+                    args = []
+                    if self.peek().kind != TokenKind.RPAREN:
+                        args.append(self.parse_expression())
+                        while self.peek().kind == TokenKind.COMMA:
+                            self.advance()
+                            args.append(self.parse_expression())
+                    self.expect(TokenKind.RPAREN)
+                    expr = MethodCall(expr, field, args)
+                else:
+                    expr = FieldAccess(expr, field)
             elif self.peek().kind == TokenKind.LBRACKET:
                 self.advance()
                 first = self.parse_expression()
@@ -310,6 +334,25 @@ class Parser:
         if t.kind == TokenKind.INTEGER:
             self.advance()
             return IntegerLiteral(t.value)
+
+        if t.kind == TokenKind.NEW:
+            self.advance()
+            name = self.expect(TokenKind.IDENT).value
+            self.expect(TokenKind.LBRACE)
+            fields = []
+            if self.peek().kind != TokenKind.RBRACE:
+                fname = self.expect(TokenKind.IDENT).value
+                self.expect(TokenKind.COLON)
+                fval = self.parse_expression()
+                fields.append((fname, fval))
+                while self.peek().kind == TokenKind.COMMA:
+                    self.advance()
+                    fname = self.expect(TokenKind.IDENT).value
+                    self.expect(TokenKind.COLON)
+                    fval = self.parse_expression()
+                    fields.append((fname, fval))
+            self.expect(TokenKind.RBRACE)
+            return StructLiteral(name, fields, heap=True)
 
         if t.kind == TokenKind.IDENT:
             name = self.advance().value

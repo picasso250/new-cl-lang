@@ -15,6 +15,8 @@ NC_TO_C = {
 
 
 def _type_to_c(nc_type: str) -> str:
+    if nc_type.startswith("*"):
+        return _type_to_c(nc_type[1:]) + "*"
     return NC_TO_C.get(nc_type, nc_type)
 
 
@@ -24,7 +26,7 @@ def generate_c(program: "Program") -> str:
         VariableDeclaration, ExpressionStatement, Assignment,
         Return, SliceExpr, ArrayLiteral, FunctionCall,
         IntegerLiteral, StringLiteral, Identifier, BinaryOp, UnaryOp,
-        EnumRef, StructLiteral, FieldAccess, IndexAccess, SliceExpr,
+        EnumRef, StructLiteral, FieldAccess, IndexAccess, SliceExpr, MethodCall
     )
 
     _lines = []
@@ -339,7 +341,22 @@ def generate_c(program: "Program") -> str:
             vals = ', '.join(gen_expr(v) for _n, v in node.fields)
             return f'({node.name}){{{vals}}}'
         if isinstance(node, FieldAccess):
-            return f'{gen_expr(node.obj)}.{node.field}'
+            obj_c = gen_expr(node.obj)
+            obj_type = getattr(node.obj, "type", "")
+            if obj_type.startswith("*"):
+                return f'{obj_c}->{node.field}'
+            return f'{obj_c}.{node.field}'
+        if isinstance(node, MethodCall):
+            obj = node.obj
+            obj_type = obj.type if hasattr(obj, 'type') else ""
+            if obj_type.startswith("*"):
+                obj_type = obj_type[1:]
+            obj_c = gen_expr(obj)
+            if node.args:
+                args_c = ', ' + ', '.join(gen_expr(a) for a in node.args)
+            else:
+                args_c = ''
+            return f'{obj_type}_{node.method}({obj_c}{args_c})'
         if isinstance(node, IndexAccess):
             obj_c = gen_expr(node.obj)
             idx_c = gen_expr(node.index)
@@ -414,19 +431,28 @@ def generate_c(program: "Program") -> str:
                     _slice_vars[stmt.name] = True
             else:
                 c_t = _type_to_c(stmt.type)
-                init_c = gen_expr(stmt.initializer)
-                if stmt.type == "nc_map":
-                    _lines.append(f'{pad}{c_t} {stmt.name}; __nc_map_init(&{stmt.name});')
-                    _gc_vars[stmt.name] = "nc_map"
+                # 堆分配: let s = new Struct{...}
+                if isinstance(stmt.initializer, StructLiteral) and stmt.initializer.heap:
+                    sname = stmt.initializer.name
+                    _lines.append(f'{pad}{c_t} {stmt.name} = ({sname}*)__nc_gc_alloc(sizeof({sname}));')
+                    for fname, fval in stmt.initializer.fields:
+                        _lines.append(f'{pad}{stmt.name}->{fname} = {gen_expr(fval)};')
+                    _gc_vars[stmt.name] = stmt.name  # 指针自身即根
+                    _lines.append(f'{pad}__nc_gc_push_root((void*){stmt.name});')
                 else:
-                    _lines.append(f'{pad}{c_t} {stmt.name} = {init_c};')
-                    if stmt.type == "str":
-                        _gc_vars[stmt.name] = "str"
-                # GC 根追踪
-                if stmt.type == "nc_map" and stmt.name not in _slice_vars:
-                    _lines.append(f'{pad}__nc_gc_push_root((void*){stmt.name}.entries);')
-                elif stmt.type == "str" and stmt.name not in _slice_vars:
-                    _lines.append(f'{pad}__nc_gc_push_root((void*){stmt.name}._ptr);')
+                    init_c = gen_expr(stmt.initializer)
+                    if stmt.type == "nc_map":
+                        _lines.append(f'{pad}{c_t} {stmt.name}; __nc_map_init(&{stmt.name});')
+                        _gc_vars[stmt.name] = "nc_map"
+                    else:
+                        _lines.append(f'{pad}{c_t} {stmt.name} = {init_c};')
+                        if stmt.type == "str":
+                            _gc_vars[stmt.name] = "str"
+                    # GC 根追踪（str/nc_map）
+                    if stmt.type == "nc_map" and stmt.name not in _slice_vars:
+                        _lines.append(f'{pad}__nc_gc_push_root((void*){stmt.name}.entries);')
+                    elif stmt.type == "str" and stmt.name not in _slice_vars:
+                        _lines.append(f'{pad}__nc_gc_push_root((void*){stmt.name}._ptr);')
             return
         if isinstance(stmt, Assignment):
             if isinstance(stmt.target, Identifier):
@@ -503,16 +529,30 @@ def generate_c(program: "Program") -> str:
     # ——— 前向声明（支持互递归） ———
     for func in other_funcs:
         c_ret = _type_to_c(func.return_type or "void")
-        params_c = ', '.join(f'{_type_to_c(t)} {n}' for n, t in func.params) or "void"
-        _lines.append(f'{c_ret} {func.name}({params_c});')
+        if func.receiver_name:
+            rtype = func.receiver_type.lstrip("*")
+            fname = f"{rtype}_{func.name}"
+            all_params = [(func.receiver_name, func.receiver_type)] + func.params
+        else:
+            fname = func.name
+            all_params = func.params
+        params_c = ', '.join(f'{_type_to_c(t)} {n}' for n, t in all_params) or "void"
+        _lines.append(f'{c_ret} {fname}({params_c});')
     if other_funcs:
         _lines.append('')
 
     # ——— 输出函数 ———
     for func in other_funcs:
         c_ret = _type_to_c(func.return_type or "void")
-        params_c = ', '.join(f'{_type_to_c(t)} {n}' for n, t in func.params) or "void"
-        _lines.append(f'{c_ret} {func.name}({params_c}) {{')
+        if func.receiver_name:
+            rtype = func.receiver_type.lstrip("*")
+            fname = f"{rtype}_{func.name}"
+            all_params = [(func.receiver_name, func.receiver_type)] + func.params
+        else:
+            fname = func.name
+            all_params = func.params
+        params_c = ', '.join(f'{_type_to_c(t)} {n}' for n, t in all_params) or "void"
+        _lines.append(f'{c_ret} {fname}({params_c}) {{')
         for s in func.body.statements:
             gen_stmt(s)
         _lines.append('}')

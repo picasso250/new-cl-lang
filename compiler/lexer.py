@@ -20,6 +20,7 @@ class TokenKind(Enum):
     SWITCH = auto()
     FOR = auto()
     IN = auto()
+    NEW = auto()
     # 运算符
     PLUS = auto()
     MINUS = auto()
@@ -71,6 +72,7 @@ KEYWORDS = {
     "switch": TokenKind.SWITCH,
     "for": TokenKind.FOR,
     "in": TokenKind.IN,
+    "new": TokenKind.NEW,
 }
 
 
