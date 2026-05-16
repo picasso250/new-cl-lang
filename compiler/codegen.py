@@ -1,17 +1,12 @@
 """
 代码生成 —— Pass 3：按序遍历 Typed AST，就地生成 C 代码。
-单遍递归，声明在哪就在哪出码，不做提升。
 """
 
 NC_TO_C = {
-    "i32": "int",
-    "i64": "long long",
-    "u32": "unsigned int",
-    "u64": "unsigned long long",
-    "f32": "float",
-    "f64": "double",
-    "bool": "int",
-    "void": "void",
+    "i32": "int", "i64": "long long",
+    "u32": "unsigned int", "u64": "unsigned long long",
+    "f32": "float", "f64": "double",
+    "bool": "int", "void": "void",
 }
 
 
@@ -30,8 +25,10 @@ def generate_c(program: "Program") -> str:
 
 
 def _gen_stmt(lines: list, stmt, indent: int):
-    """就地生成一条语句的 C 代码。"""
-    from compiler.ast import VariableDeclaration, ExpressionStatement, Assignment
+    from compiler.ast import (
+        VariableDeclaration, ExpressionStatement, Assignment,
+        Block, If,
+    )
     pad = '    ' * indent
 
     if isinstance(stmt, VariableDeclaration):
@@ -45,12 +42,26 @@ def _gen_stmt(lines: list, stmt, indent: int):
     elif isinstance(stmt, ExpressionStatement):
         _gen_expr_stmt(lines, stmt.expr, indent)
 
+    elif isinstance(stmt, If):
+        cond_c = _gen_expr(stmt.condition)
+        lines.append(f'{pad}if ({cond_c}) {{')
+        for s in stmt.then_block.statements:
+            _gen_stmt(lines, s, indent + 1)
+        if stmt.else_block:
+            lines.append(f'{pad}}} else {{')
+            for s in stmt.else_block.statements:
+                _gen_stmt(lines, s, indent + 1)
+        lines.append(f'{pad}}}')
+
+    elif isinstance(stmt, Block):
+        for s in stmt.statements:
+            _gen_stmt(lines, s, indent)
+
     else:
         raise NotImplementedError(f"codegen for {type(stmt).__name__}")
 
 
 def _gen_expr_stmt(lines: list, expr, indent: int):
-    """生成表达式语句（如 print 调用）。"""
     from compiler.ast import FunctionCall
     pad = '    ' * indent
 
@@ -63,7 +74,6 @@ def _gen_expr_stmt(lines: list, expr, indent: int):
 
 
 def _gen_expr(node) -> str:
-    """生成表达式的 C 代码。"""
     from compiler.ast import IntegerLiteral, Identifier, BinaryOp, FunctionCall
 
     if isinstance(node, IntegerLiteral):

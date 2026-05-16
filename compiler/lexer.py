@@ -9,6 +9,8 @@ class TokenKind(Enum):
     IDENT = auto()
     # 关键字
     LET = auto()
+    IF = auto()
+    ELSE = auto()
     # 运算符
     PLUS = auto()
     MINUS = auto()
@@ -16,9 +18,17 @@ class TokenKind(Enum):
     SLASH = auto()
     PERCENT = auto()
     EQ = auto()
+    GT = auto()
+    LT = auto()
+    GE = auto()
+    LE = auto()
+    EQEQ = auto()
+    NE = auto()
     # 分隔符
     LPAREN = auto()
     RPAREN = auto()
+    LBRACE = auto()
+    RBRACE = auto()
     SEMI = auto()
     EOF = auto()
 
@@ -32,6 +42,8 @@ class Token:
 
 KEYWORDS = {
     "let": TokenKind.LET,
+    "if": TokenKind.IF,
+    "else": TokenKind.ELSE,
 }
 
 
@@ -72,6 +84,18 @@ def lex(source: str):
             yield Token(kind, word, start)
             continue
 
+        # 双字符符号（先试两字符）
+        if i + 1 < n:
+            two = source[i:i+2]
+            if two == ">=":
+                yield Token(TokenKind.GE, ">=", i); i += 2; continue
+            if two == "<=":
+                yield Token(TokenKind.LE, "<=", i); i += 2; continue
+            if two == "==":
+                yield Token(TokenKind.EQEQ, "==", i); i += 2; continue
+            if two == "!=":
+                yield Token(TokenKind.NE, "!=", i); i += 2; continue
+
         # 单字符符号
         if ch == "+":
             yield Token(TokenKind.PLUS, "+", i); i += 1; continue
@@ -85,10 +109,18 @@ def lex(source: str):
             yield Token(TokenKind.PERCENT, "%", i); i += 1; continue
         if ch == "=":
             yield Token(TokenKind.EQ, "=", i); i += 1; continue
+        if ch == ">":
+            yield Token(TokenKind.GT, ">", i); i += 1; continue
+        if ch == "<":
+            yield Token(TokenKind.LT, "<", i); i += 1; continue
         if ch == "(":
             yield Token(TokenKind.LPAREN, "(", i); i += 1; continue
         if ch == ")":
             yield Token(TokenKind.RPAREN, ")", i); i += 1; continue
+        if ch == "{":
+            yield Token(TokenKind.LBRACE, "{", i); i += 1; continue
+        if ch == "}":
+            yield Token(TokenKind.RBRACE, "}", i); i += 1; continue
         if ch == ";":
             yield Token(TokenKind.SEMI, ";", i); i += 1; continue
 

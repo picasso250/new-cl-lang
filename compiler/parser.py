@@ -48,41 +48,85 @@ class Parser:
 
         # let 声明
         if t.kind == TokenKind.LET:
-            self.advance()  # 吞 let
-            mut = self.match(TokenKind.IDENT) and self.tokens[self.pos - 1].value == "mut"
-            if mut:
-                name = self.expect(TokenKind.IDENT).value
-            else:
-                # 已经吞了 IDENT，就是 name
-                name = self.tokens[self.pos - 1].value
-            self.expect(TokenKind.EQ)
-            init = self.parse_expression()
-            stmt = VariableDeclaration(name, mut, init)
+            return self._parse_let()
 
-        # 标识符开头的语句：可能是赋值 或 表达式语句（函数调用）
-        elif t.kind == TokenKind.IDENT:
-            # 预读：若后面是 = 则为赋值
-            name = t.value
-            if self.pos + 1 < len(self.tokens) and self.tokens[self.pos + 1].kind == TokenKind.EQ:
-                self.advance()  # 吞 ident
-                self.advance()  # 吞 =
-                expr = self.parse_expression()
-                stmt = Assignment(name, expr)
-            else:
-                expr = self.parse_expression()
-                stmt = ExpressionStatement(expr)
-        else:
-            expr = self.parse_expression()
-            stmt = ExpressionStatement(expr)
+        # if 语句
+        if t.kind == TokenKind.IF:
+            return self._parse_if()
 
-        # 语句结束符
+        # 标识符开头的语句：赋值 或 表达式语句
+        if t.kind == TokenKind.IDENT:
+            return self._parse_ident_stmt()
+
+        # 其他表达式语句
+        expr = self.parse_expression()
+        stmt = ExpressionStatement(expr)
         self.match(TokenKind.SEMI)
         return stmt
 
-    # ========== 表达式 ==========
+    def _parse_let(self):
+        self.advance()  # 吞 let
+        mut = self.match(TokenKind.IDENT) and self.tokens[self.pos - 1].value == "mut"
+        if mut:
+            name = self.expect(TokenKind.IDENT).value
+        else:
+            name = self.tokens[self.pos - 1].value
+        self.expect(TokenKind.EQ)
+        init = self.parse_expression()
+        stmt = VariableDeclaration(name, mut, init)
+        self.match(TokenKind.SEMI)
+        return stmt
+
+    def _parse_if(self):
+        self.advance()  # 吞 if
+        condition = self.parse_expression()
+        then_block = self._parse_block()
+        else_block = None
+        if self.peek().kind == TokenKind.ELSE:
+            self.advance()
+            # else 后可接 if（else if）或 {
+            if self.peek().kind == TokenKind.IF:
+                else_block = Block([self._parse_if()])
+            else:
+                else_block = self._parse_block()
+        self.match(TokenKind.SEMI)  # if 后可选的 ;
+        return If(condition, then_block, else_block)
+
+    def _parse_block(self):
+        self.expect(TokenKind.LBRACE)
+        stmts = []
+        while self.peek().kind not in (TokenKind.RBRACE, TokenKind.EOF):
+            stmts.append(self.parse_statement())
+        self.expect(TokenKind.RBRACE)
+        return Block(stmts)
+
+    def _parse_ident_stmt(self):
+        t = self.peek()
+        name = t.value
+        if self.pos + 1 < len(self.tokens) and self.tokens[self.pos + 1].kind == TokenKind.EQ:
+            self.advance()  # 吞 ident
+            self.advance()  # 吞 =
+            expr = self.parse_expression()
+            stmt = Assignment(name, expr)
+        else:
+            expr = self.parse_expression()
+            stmt = ExpressionStatement(expr)
+        self.match(TokenKind.SEMI)
+        return stmt
+
+    # ========== 表达式（含比较级） ==========
 
     def parse_expression(self):
-        return self.parse_additive()
+        return self.parse_comparison()
+
+    def parse_comparison(self):
+        left = self.parse_additive()
+        cmp_ops = {TokenKind.GT, TokenKind.LT, TokenKind.GE, TokenKind.LE, TokenKind.EQEQ, TokenKind.NE}
+        while self.peek().kind in cmp_ops:
+            op = self.advance().value
+            right = self.parse_additive()
+            left = BinaryOp(left, op, right)
+        return left
 
     def parse_additive(self):
         left = self.parse_multiplicative()
@@ -114,8 +158,6 @@ class Parser:
                 args = []
                 if self.peek().kind != TokenKind.RPAREN:
                     args.append(self.parse_expression())
-                    while self.peek().kind != TokenKind.RPAREN:
-                        raise ParseError("Only one arg supported for now")
                 self.expect(TokenKind.RPAREN)
                 return FunctionCall(name, args)
             return Identifier(name)
