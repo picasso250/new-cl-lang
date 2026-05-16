@@ -208,15 +208,13 @@ class Parser:
         return Block(stmts)
 
     def _parse_ident_stmt(self):
-        t = self.peek()
-        name = t.value
-        if self.pos + 1 < len(self.tokens) and self.tokens[self.pos + 1].kind == TokenKind.EQ:
+        """解析 标识符语句 或 表达式语句，含 a = expr 和 a[idx] = expr"""
+        expr = self.parse_expression()
+        if self.peek().kind == TokenKind.EQ:
             self.advance()
-            self.advance()
-            expr = self.parse_expression()
-            stmt = Assignment(name, expr)
+            rhs = self.parse_expression()
+            stmt = Assignment(expr, rhs)
         else:
-            expr = self.parse_expression()
             stmt = ExpressionStatement(expr)
         self.match(TokenKind.SEMI)
         return stmt

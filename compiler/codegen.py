@@ -291,9 +291,12 @@ def generate_c(program: "Program") -> str:
         if isinstance(node, IndexAccess):
             obj_c = gen_expr(node.obj)
             idx_c = gen_expr(node.index)
+            obj_type = getattr(node.obj, "type", "")
+            if obj_type == "nc_map":
+                return f'__nc_map_get_str(&{obj_c}, {idx_c})'
             if isinstance(node.obj, Identifier) and node.obj.name in _slice_vars:
                 return f'{obj_c}._ptr[{idx_c}]'
-            if getattr(node.obj, "type", "") == "str":
+            if obj_type == "str":
                 return f'(int)(unsigned char)(({obj_c})._ptr[{idx_c}])'
             return f'{obj_c}[{idx_c}]'
 
@@ -361,7 +364,18 @@ def generate_c(program: "Program") -> str:
                     _lines.append(f'{pad}{c_t} {stmt.name} = {init_c};')
             return
         if isinstance(stmt, Assignment):
-            _lines.append(f'{pad}{stmt.name} = {gen_expr(stmt.expr)};')
+            if isinstance(stmt.target, Identifier):
+                _lines.append(f'{pad}{stmt.target.name} = {gen_expr(stmt.expr)};')
+            elif isinstance(stmt.target, IndexAccess):
+                obj_c = gen_expr(stmt.target.obj)
+                idx_c = gen_expr(stmt.target.index)
+                obj_type = getattr(stmt.target.obj, "type", "")
+                if obj_type == "nc_map":
+                    _lines.append(f'{pad}__nc_map_set_str(&{obj_c}, {idx_c}, {gen_expr(stmt.expr)});')
+                else:
+                    _lines.append(f'{pad}{obj_c}[{idx_c}] = {gen_expr(stmt.expr)};')
+            else:
+                _lines.append(f'{pad}{gen_expr(stmt.target)} = {gen_expr(stmt.expr)};')
             return
         if isinstance(stmt, ExpressionStatement):
             gen_expr_stmt(stmt.expr, indent)

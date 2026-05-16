@@ -37,13 +37,13 @@ class ExpressionStatement(Node):
 
 
 class Assignment(Node):
-    """x = expr;  重赋值"""
-    def __init__(self, name: str, expr):
-        self.name = name
+    """x = expr;  重赋值。target 为 Identifier 或 IndexAccess。"""
+    def __init__(self, target, expr):
+        self.target = target
         self.expr = expr
 
     def __repr__(self):
-        return f"Assign({self.name} = {self.expr})"
+        return f"Assign({self.target} = {self.expr})"
 
 
 class Block(Node):

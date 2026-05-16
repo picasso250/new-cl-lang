@@ -88,6 +88,8 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
             walk_expr(node.index)
             if node.obj.type == "str":
                 node.type = "i32"
+            elif node.obj.type == "nc_map":
+                node.type = "str"
             else:
                 node.type = node.obj.type
         elif isinstance(node, SliceExpr):
@@ -107,6 +109,7 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
             elif isinstance(stmt, ExpressionStatement):
                 walk_expr(stmt.expr)
             elif isinstance(stmt, Assignment):
+                walk_expr(stmt.target)
                 walk_expr(stmt.expr)
             elif isinstance(stmt, If):
                 walk_expr(stmt.condition)
