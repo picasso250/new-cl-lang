@@ -72,6 +72,9 @@ def build_symbol_table(program: "Program") -> SymbolTable:
     )
     table = SymbolTable()
 
+    table.declare_global("str", "struct")
+    table.declare_struct("str", [("_ptr", "i64"), ("_len", "i64")])
+
     def walk_stmts(stmts: list):
         for stmt in stmts:
             if isinstance(stmt, FunctionDeclaration):
