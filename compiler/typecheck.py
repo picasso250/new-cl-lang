@@ -12,7 +12,7 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
         StructDecl, StructLiteral, FieldAccess,
         EnumDecl, EnumRef, Switch, ForIn,
         IntegerLiteral, StringLiteral, BinaryOp, UnaryOp, FunctionCall, Identifier,
-        ArrayLiteral, IndexAccess, SliceExpr, MethodCall, TryCatch, Throw, Defer, Break
+        ArrayLiteral, SliceLiteral, IndexAccess, SliceExpr, MethodCall, TryCatch, Throw, Defer, Break
     )
 
     def walk_expr(node):
@@ -108,7 +108,11 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
         elif isinstance(node, ArrayLiteral):
             for elem in node.elements:
                 walk_expr(elem)
-            node.type = node.elem_type if node.elements else "i32"
+            node.type = f"[{node.length}]{node.elem_type}"
+        elif isinstance(node, SliceLiteral):
+            for elem in node.elements:
+                walk_expr(elem)
+            node.type = f"[]{node.elem_type}"
         elif isinstance(node, IndexAccess):
             walk_expr(node.obj)
             walk_expr(node.index)
@@ -116,6 +120,10 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
                 node.type = "i32"
             elif node.obj.type == "nc_map":
                 node.type = "str"
+            elif node.obj.type.startswith("[]"):
+                node.type = node.obj.type[2:]
+            elif node.obj.type.startswith("["):
+                node.type = node.obj.type.split("]", 1)[1]
             else:
                 node.type = node.obj.type
         elif isinstance(node, SliceExpr):
@@ -124,7 +132,14 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
                 walk_expr(node.start)
             if node.end:
                 walk_expr(node.end)
-            node.type = node.array.type
+            if node.array.type == "str":
+                node.type = "str"
+            elif node.array.type.startswith("[]"):
+                node.type = node.array.type
+            elif node.array.type.startswith("["):
+                node.type = "[]" + node.array.type.split("]", 1)[1]
+            else:
+                node.type = node.array.type
 
     def walk_stmts(stmts: list):
         for stmt in stmts:
@@ -180,7 +195,10 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
                 symtab.push_scope()
                 symtab.declare(stmt.index, "i32")
                 if stmt.value:
-                    symtab.declare(stmt.value, "i32")
+                    if stmt.iterable.type.startswith("[]"):
+                        symtab.declare(stmt.value, stmt.iterable.type[2:])
+                    else:
+                        symtab.declare(stmt.value, "i32")
                 walk_stmts(stmt.body.statements)
                 symtab.pop_scope()
             elif isinstance(stmt, TryCatch):

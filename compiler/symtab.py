@@ -73,7 +73,7 @@ def build_symbol_table(program: "Program") -> SymbolTable:
     table = SymbolTable()
 
     table.declare_global("str", "struct")
-    table.declare_struct("str", [("_ptr", "i64"), ("_len", "i64")])
+    table.declare_struct("str", [("ptr", "i64"), ("len", "i64")])
     table._methods = {}  # {type_name: {method_name: (ret_type, [(param, type)])}}
 
     def walk_stmts(stmts: list):

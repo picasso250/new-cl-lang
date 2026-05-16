@@ -180,6 +180,17 @@ class ArrayLiteral(Node):
         return f"ArrayLit([{self.length}]{self.elem_type} {{ {es} }})"
 
 
+class SliceLiteral(Node):
+    """[]T { e1, e2, ... }"""
+    def __init__(self, elem_type: str, elements: list):
+        self.elem_type = elem_type
+        self.elements = elements
+
+    def __repr__(self):
+        es = ', '.join(str(e) for e in self.elements)
+        return f"SliceLit([]{self.elem_type} {{ {es} }})"
+
+
 class IndexAccess(Node):
     """expr[index]"""
     def __init__(self, obj, index):

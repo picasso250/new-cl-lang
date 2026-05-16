@@ -446,9 +446,11 @@ class Parser:
             return Identifier(name)
 
         if t.kind == TokenKind.LBRACKET:
-            # [N]T { e1, e2, ... } 数组字面量
+            # [N]T { e1, e2, ... } 数组字面量 / []T { ... } 切片字面量
             self.advance()  # 吞 [
-            length = self.expect(TokenKind.INTEGER).value
+            length = None
+            if self.peek().kind != TokenKind.RBRACKET:
+                length = self.expect(TokenKind.INTEGER).value
             self.expect(TokenKind.RBRACKET)
             elem_type = self.expect(TokenKind.IDENT).value
             self.expect(TokenKind.LBRACE)
@@ -459,6 +461,8 @@ class Parser:
                     self.advance()
                     elements.append(self.parse_expression())
             self.expect(TokenKind.RBRACE)
+            if length is None:
+                return SliceLiteral(elem_type, elements)
             return ArrayLiteral(length, elem_type, elements)
 
         if t.kind == TokenKind.LPAREN:
