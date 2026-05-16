@@ -33,6 +33,13 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
         elif isinstance(node, FunctionCall):
             for arg in node.args:
                 walk_expr(arg)
+            # 内置函数
+            if node.name == "read_file":
+                node.type = "str"
+                return
+            if node.name == "write_file":
+                node.type = "void"
+                return
             try:
                 sym = symtab.lookup(node.name)
                 node.type = sym.nc_type

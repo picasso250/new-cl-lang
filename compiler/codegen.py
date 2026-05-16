@@ -72,6 +72,27 @@ def generate_c(program: "Program") -> str:
     _lines.append('')
     _lines.append('typedef struct { const char* _ptr; long long _len; } str;')
     _lines.append('')
+    _lines.append('static str __nc_read_file(const char* path) {')
+    _lines.append('    FILE* fp = fopen(path, "rb");')
+    _lines.append('    if (!fp) { str e = {NULL, 0}; return e; }')
+    _lines.append('    fseek(fp, 0, SEEK_END);')
+    _lines.append('    long long sz = ftell(fp);')
+    _lines.append('    fseek(fp, 0, SEEK_SET);')
+    _lines.append('    char* buf = (char*)malloc(sz + 1);')
+    _lines.append('    fread(buf, 1, sz, fp);')
+    _lines.append('    buf[sz] = 0;')
+    _lines.append('    fclose(fp);')
+    _lines.append('    str r = {(const char*)buf, sz};')
+    _lines.append('    return r;')
+    _lines.append('}')
+    _lines.append('')
+    _lines.append('static void __nc_write_file(const char* path, str content) {')
+    _lines.append('    FILE* fp = fopen(path, "w");')
+    _lines.append('    if (!fp) return;')
+    _lines.append('    fwrite(content._ptr, 1, content._len, fp);')
+    _lines.append('    fclose(fp);')
+    _lines.append('}')
+    _lines.append('')
 
     for s in structs:
         fields_c = '; '.join(f'{_type_to_c(t)} {n}' for n, t in s.fields) + ';'
@@ -100,6 +121,12 @@ def generate_c(program: "Program") -> str:
         if isinstance(node, EnumRef):
             return f'{node.enum_name.upper()}_{node.variant.upper()}'
         if isinstance(node, FunctionCall):
+            if node.name == "read_file":
+                arg = node.args[0]
+                if isinstance(arg, StringLiteral):
+                    return f'__nc_read_file("{arg.value}")'
+                arg_c = gen_expr(arg)
+                return f'__nc_read_file({arg_c}._ptr)'
             args = ', '.join(gen_expr(a) for a in node.args)
             return f'{node.name}({args})'
         if isinstance(node, StructLiteral):
@@ -117,6 +144,12 @@ def generate_c(program: "Program") -> str:
 
     def gen_expr_stmt(expr, indent=0):
         pad = '    ' * indent
+        if isinstance(expr, FunctionCall) and expr.name == "write_file":
+            path = expr.args[0]
+            content = expr.args[1]
+            path_c = f'"{path.value}"' if isinstance(path, StringLiteral) else f'{gen_expr(path)}._ptr'
+            _lines.append(f'{pad}__nc_write_file({path_c}, {gen_expr(content)});')
+            return
         if isinstance(expr, FunctionCall) and expr.name == "print":
             arg = expr.args[0]
             arg_type = getattr(arg, "type", "i32")
