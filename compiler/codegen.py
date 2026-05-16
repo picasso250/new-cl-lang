@@ -201,6 +201,14 @@ def generate_c(program: "Program") -> str:
     _lines.append('static int __nc_map_has(nc_map* m, str key) {')
     _lines.append('    nc_val v; return __nc_map_get(m, key, &v); }')
     _lines.append('')
+    _lines.append('static str __nc_i32_to_str(int n) {')
+    _lines.append('    char* buf = (char*)malloc(24);')
+    _lines.append('    int len = sprintf(buf, "%d", n);')
+    _lines.append('    return (str){buf, len}; }')
+    _lines.append('')
+    _lines.append('static int __nc_str_to_i32(str s) {')
+    _lines.append('    return atoi(s._ptr); }')
+    _lines.append('')
 
     for e in enums:
         vs = ', '.join(f'{e.name.upper()}_{v.upper()}' for v in e.variants)
@@ -261,6 +269,18 @@ def generate_c(program: "Program") -> str:
                 m_c = gen_expr(node.args[0])
                 k_c = gen_expr(node.args[1])
                 return f'__nc_map_has(&{m_c}, {k_c})'
+            if node.name == "str":
+                arg_c = gen_expr(node.args[0])
+                arg_t = getattr(node.args[0], "type", "i32")
+                if arg_t == "i32":
+                    return f'__nc_i32_to_str({arg_c})'
+                return arg_c
+            if node.name == "i32":
+                arg_c = gen_expr(node.args[0])
+                arg_t = getattr(node.args[0], "type", "str")
+                if arg_t == "str":
+                    return f'__nc_str_to_i32({arg_c})'
+                return arg_c
             args = ', '.join(gen_expr(a) for a in node.args)
             return f'{node.name}({args})'
         if isinstance(node, StructLiteral):

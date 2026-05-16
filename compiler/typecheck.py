@@ -55,6 +55,12 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
             if node.name == "map_has":
                 node.type = "i32"
                 return
+            if node.name == "str":
+                node.type = "str"
+                return
+            if node.name == "i32":
+                node.type = "i32"
+                return
             try:
                 sym = symtab.lookup(node.name)
                 node.type = sym.nc_type
