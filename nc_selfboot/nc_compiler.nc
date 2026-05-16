@@ -1,5 +1,5 @@
-# nc_compiler.nc —— 最小自举编译器
-# 将 print(整数) 编译为 C printf
+# nc_compiler.nc —— 自举编译器
+# 支持 let 变量声明 + print
 
 fun is_digit(ch: i32): i32 {
     if 48 <= ch && ch <= 57 { return 1 }
@@ -12,10 +12,9 @@ fun is_alpha(ch: i32): i32 {
 }
 
 fun main() {
-    let src = "print(42)"
+    let src = "let x = 42; print(x);"
     let mut i = 0
     let mut out = "#include <stdio.h>\nint main(void) {\n"
-    out = out + "    printf(\"%d\\n\", "
 
     while i < src._len {
         let ch = src[i]
@@ -29,14 +28,31 @@ fun main() {
             }
             out = out + src[start:i]
         } else if is_alpha(ch) {
-            i = i + 1
+            let start = i
             while i < src._len && is_alpha(src[i]) {
                 i = i + 1
             }
+            let word = src[start:i]
+            if word == "let" {
+                out = out + "    int "
+            } else if word == "print" {
+                out = out + "    printf(\"%d\\n\", "
+            } else {
+                out = out + word
+            }
+        } else if ch == 61 {
+            out = out + " = "
+            i = i + 1
+        } else if ch == 59 {
+            out = out + ";\n"
+            i = i + 1
+        } else if ch == 41 {
+            out = out + ")"
+            i = i + 1
         } else {
             i = i + 1
         }
     }
-    out = out + ");\n    return 0;\n}\n"
+    out = out + "    return 0;\n}\n"
     write_file("out.c", out)
 }
