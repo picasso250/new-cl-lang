@@ -1,5 +1,5 @@
 # nc_compiler.nc —— 自举编译器
-# 状态机：跟踪 let/print 上下文以正确处理 ;
+# + if/else/==/!=
 
 fun is_digit(ch: i32): i32 {
     if 48 <= ch && ch <= 57 { return 1 }
@@ -12,10 +12,11 @@ fun is_alpha(ch: i32): i32 {
 }
 
 fun main() {
-    let src = "let x = 10; let y = x + 20; print(y);"
+    let src = "let x = 10; if x == 10 { print(x); } else { print(0); }"
     let mut i = 0
     let mut out = "#include <stdio.h>\nint main(void) {\n"
     let mut in_let = 0
+    let mut after_if = 0
 
     while i < src._len {
         let ch = src[i]
@@ -37,15 +38,37 @@ fun main() {
             if word == "let" {
                 out = out + "    int "
                 in_let = 1
+                after_if = 0
             } else if word == "print" {
                 out = out + "    printf(\"%d\\n\", "
                 in_let = 0
+                after_if = 0
+            } else if word == "if" {
+                out = out + "    if ("
+                in_let = 0
+                after_if = 1
+            } else if word == "else" {
+                out = out + "else"
+                in_let = 0
+                after_if = 0
             } else {
                 out = out + word
             }
         } else if ch == 61 {
-            out = out + " = ("
-            i = i + 1
+            if i + 1 < src._len && src[i+1] == 61 {
+                out = out + " == "
+                i = i + 2
+            } else {
+                out = out + " = ("
+                i = i + 1
+            }
+        } else if ch == 33 {
+            if i + 1 < src._len && src[i+1] == 61 {
+                out = out + " != "
+                i = i + 2
+            } else {
+                i = i + 1
+            }
         } else if ch == 59 {
             if in_let {
                 out = out + ");\n"
@@ -53,6 +76,17 @@ fun main() {
                 out = out + ";\n"
             }
             in_let = 0
+            i = i + 1
+        } else if ch == 123 {
+            if after_if {
+                out = out + ") {\n"
+            } else {
+                out = out + " {\n"
+            }
+            after_if = 0
+            i = i + 1
+        } else if ch == 125 {
+            out = out + "}\n"
             i = i + 1
         } else if ch == 43 {
             out = out + " + "
