@@ -125,8 +125,12 @@ def build_symbol_table(program: "Program") -> SymbolTable:
         if isinstance(stmt, ForIn):
             table.push_scope()
             table.declare(stmt.index, "i32")
-            table.declare(stmt.value, "i32")
-            _walk_expr(stmt.iterable)
+            if stmt.start is not None:
+                _walk_expr(stmt.start)
+                _walk_expr(stmt.end)
+            else:
+                table.declare(stmt.value, "i32")
+                _walk_expr(stmt.iterable)
             walk_stmts(stmt.body.statements)
             table.pop_scope()
         elif isinstance(stmt, Switch):

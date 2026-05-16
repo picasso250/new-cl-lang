@@ -180,12 +180,22 @@ class Parser:
     def _parse_forin(self):
         self.advance()  # 吞 for
         idx = self.expect(TokenKind.IDENT).value
-        self.expect(TokenKind.COMMA)
-        val = self.expect(TokenKind.IDENT).value
-        self.expect(TokenKind.IN)
-        iterable = self.parse_expression()
-        body = self._parse_block()
-        return ForIn(idx, val, iterable, body)
+        if self.peek().kind == TokenKind.COMMA:
+            # for i, v in iterable { }
+            self.advance()
+            val = self.expect(TokenKind.IDENT).value
+            self.expect(TokenKind.IN)
+            iterable = self.parse_expression()
+            body = self._parse_block()
+            return ForIn(idx, val, iterable, body)
+        else:
+            # for i in start..end { }
+            self.expect(TokenKind.IN)
+            start = self.parse_expression()
+            self.expect(TokenKind.DOTDOT)
+            end = self.parse_expression()
+            body = self._parse_block()
+            return ForIn(idx, None, None, body, start=start, end=end)
 
     def _parse_struct(self):
         self.advance()  # 吞 struct

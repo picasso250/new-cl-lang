@@ -66,6 +66,10 @@ def generate_c(program: "Program") -> str:
                     collect([cs])
             elif isinstance(s, ForIn):
                 collect(s.body.statements)
+                if s.start is not None:
+                    pass  # range expressions don't contain inner decls
+                else:
+                    pass
             elif isinstance(s, TryCatch):
                 collect(s.try_block.statements)
                 collect(s.catch_block.statements)
@@ -528,9 +532,14 @@ def generate_c(program: "Program") -> str:
             _lines.append(f'{pad}}}')
             return
         if isinstance(stmt, ForIn):
-            iter_c = gen_expr(stmt.iterable)
-            _lines.append(f'{pad}for (int {stmt.index} = 0; {stmt.index} < {iter_c}._len; {stmt.index}++) {{')
-            _lines.append(f'{pad}    int {stmt.value} = {iter_c}._ptr[{stmt.index}];')
+            if stmt.start is not None:
+                start_c = gen_expr(stmt.start)
+                end_c = gen_expr(stmt.end)
+                _lines.append(f'{pad}for (int {stmt.index} = {start_c}; {stmt.index} < {end_c}; {stmt.index}++) {{')
+            else:
+                iter_c = gen_expr(stmt.iterable)
+                _lines.append(f'{pad}for (int {stmt.index} = 0; {stmt.index} < {iter_c}._len; {stmt.index}++) {{')
+                _lines.append(f'{pad}    int {stmt.value} = {iter_c}._ptr[{stmt.index}];')
             for s in stmt.body.statements:
                 gen_stmt(s, indent + 1)
             _lines.append(f'{pad}}}')

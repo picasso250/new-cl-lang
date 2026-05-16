@@ -169,10 +169,15 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
                     walk_expr(case_val)
                     walk_stmts([case_stmt])
             elif isinstance(stmt, ForIn):
-                walk_expr(stmt.iterable)
+                if stmt.start is not None:
+                    walk_expr(stmt.start)
+                    walk_expr(stmt.end)
+                else:
+                    walk_expr(stmt.iterable)
                 symtab.push_scope()
                 symtab.declare(stmt.index, "i32")
-                symtab.declare(stmt.value, "i32")
+                if stmt.value:
+                    symtab.declare(stmt.value, "i32")
                 walk_stmts(stmt.body.statements)
                 symtab.pop_scope()
             elif isinstance(stmt, TryCatch):

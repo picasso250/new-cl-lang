@@ -77,15 +77,21 @@ class Switch(Node):
 
 
 class ForIn(Node):
-    """for index, value in iterable { body }"""
-    def __init__(self, index: str, value: str, iterable, body: "Block"):
+    """for index, value in iterable { body }
+       或  for i in start..end { body }"""
+    def __init__(self, index: str, value: str | None, iterable, body: "Block",
+                 start=None, end=None):
         self.index = index
         self.value = value
         self.iterable = iterable
         self.body = body
+        self.start = start  # 区间范围
+        self.end = end
 
     def __repr__(self):
-        return f"ForIn({self.index}, {self.value} in {self.iterable} {self.body})"
+        if self.start is not None:
+            return f"ForRange({self.index} in {self.start}..{self.end})"
+        return f"ForIn({self.index}, {self.value} in {self.iterable})"
 
 
 class StructDecl(Node):

@@ -51,6 +51,7 @@ class TokenKind(Enum):
     COMMA = auto()
     COLON = auto()
     COLONCOLON = auto()
+    DOTDOT = auto()
     ARROW = auto()
     LBRACKET = auto()
     RBRACKET = auto()
@@ -217,6 +218,8 @@ def lex(source: str):
         if ch == ":":
             yield Token(TokenKind.COLON, ":", i); i += 1; continue
         if ch == ".":
+            if i + 1 < n and source[i + 1] == ".":
+                yield Token(TokenKind.DOTDOT, "..", i); i += 2; continue
             yield Token(TokenKind.DOT, ".", i); i += 1; continue
         if ch == "[":
             yield Token(TokenKind.LBRACKET, "[", i); i += 1; continue
