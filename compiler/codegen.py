@@ -115,16 +115,16 @@ def generate_c(program: "Program") -> str:
     _lines.append('}')
     _lines.append('')
 
-    for s in structs:
-        fields_c = '; '.join(f'{_type_to_c(t)} {n}' for n, t in s.fields) + ';'
-        _lines.append(f'typedef struct {{ {fields_c} }} {s.name};')
-    if structs:
-        _lines.append('')
-
     for e in enums:
         vs = ', '.join(f'{e.name.upper()}_{v.upper()}' for v in e.variants)
         _lines.append(f'typedef enum {{ {vs} }} {e.name};')
     if enums:
+        _lines.append('')
+
+    for s in structs:
+        fields_c = '; '.join(f'{_type_to_c(t)} {n}' for n, t in s.fields) + ';'
+        _lines.append(f'typedef struct {{ {fields_c} }} {s.name};')
+    if structs:
         _lines.append('')
 
     # ——— 代码生成内部函数 ———
