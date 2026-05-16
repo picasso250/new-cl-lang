@@ -64,6 +64,12 @@ class Parser:
             return self._parse_switch()
         if t.kind == TokenKind.FOR:
             return self._parse_forin()
+        if t.kind == TokenKind.TRY:
+            return self._parse_try()
+        if t.kind == TokenKind.THROW:
+            return self._parse_throw()
+        if t.kind == TokenKind.DEFER:
+            return self._parse_defer()
         if t.kind == TokenKind.IDENT:
             return self._parse_ident_stmt()
 
@@ -151,6 +157,25 @@ class Parser:
         stmt = Return(expr)
         self.match(TokenKind.SEMI)
         return stmt
+
+    def _parse_try(self):
+        self.advance()
+        body = self._parse_block()
+        self.expect(TokenKind.CATCH)
+        error_name = self.expect(TokenKind.IDENT).value
+        catch_body = self._parse_block()
+        return TryCatch(body, error_name, catch_body)
+
+    def _parse_throw(self):
+        self.advance()
+        expr = self.parse_expression()
+        self.match(TokenKind.SEMI)
+        return Throw(expr)
+
+    def _parse_defer(self):
+        self.advance()
+        body = self._parse_block()
+        return Defer(body)
 
     def _parse_forin(self):
         self.advance()  # 吞 for

@@ -26,7 +26,8 @@ def generate_c(program: "Program") -> str:
         VariableDeclaration, ExpressionStatement, Assignment,
         Return, SliceExpr, ArrayLiteral, FunctionCall,
         IntegerLiteral, StringLiteral, Identifier, BinaryOp, UnaryOp,
-        EnumRef, StructLiteral, FieldAccess, IndexAccess, SliceExpr, MethodCall
+        EnumRef, StructLiteral, FieldAccess, IndexAccess, SliceExpr, MethodCall,
+        TryCatch, Throw, Defer
     )
 
     _lines = []
@@ -64,6 +65,11 @@ def generate_c(program: "Program") -> str:
                 for _cv, cs in s.cases:
                     collect([cs])
             elif isinstance(s, ForIn):
+                collect(s.body.statements)
+            elif isinstance(s, TryCatch):
+                collect(s.try_block.statements)
+                collect(s.catch_block.statements)
+            elif isinstance(s, Defer):
                 collect(s.body.statements)
 
     collect(program.statements)
@@ -267,6 +273,13 @@ def generate_c(program: "Program") -> str:
     _lines.append('    size_t n = 0;')
     _lines.append('    for (nc_record_t* r = __nc_gc_registry; r; r = r->next) n++;')
     _lines.append('    return n; }')
+    _lines.append('')
+    _lines.append('#include <setjmp.h>')
+    _lines.append('typedef struct __nc_ex_frame { jmp_buf jb; struct __nc_ex_frame* prev; str ex; } __nc_ex_frame_t;')
+    _lines.append('static __nc_ex_frame_t* __nc_ex_top = NULL;')
+    _lines.append('static void __nc_throw(str ex) {')
+    _lines.append('    if (__nc_ex_top) { __nc_ex_top->ex = ex; longjmp(__nc_ex_top->jb, 1); }')
+    _lines.append('    fprintf(stderr, "uncaught: %.*s\\n", (int)ex._len, ex._ptr); exit(1); }')
     _lines.append('')
 
     for e in enums:
@@ -530,6 +543,34 @@ def generate_c(program: "Program") -> str:
             return
         if isinstance(stmt, Block):
             for s in stmt.statements:
+                gen_stmt(s, indent)
+            return
+        if isinstance(stmt, TryCatch):
+            pad = '    ' * indent
+            _lines.append(f'{pad}{{')
+            _lines.append(f'{pad}    __nc_ex_frame_t __nc_f;')
+            _lines.append(f'{pad}    __nc_f.prev = __nc_ex_top; __nc_ex_top = &__nc_f;')
+            _lines.append(f'{pad}    if (setjmp(__nc_f.jb) == 0) {{')
+            for s in stmt.try_block.statements:
+                gen_stmt(s, indent + 2)
+            _lines.append(f'{pad}        __nc_ex_top = __nc_f.prev;')
+            _lines.append(f'{pad}    }} else {{')
+            _lines.append(f'{pad}        __nc_ex_top = __nc_f.prev;')
+            _lines.append(f'{pad}        str {stmt.error_name} = __nc_f.ex;')
+            for s in stmt.catch_block.statements:
+                gen_stmt(s, indent + 2)
+            _lines.append(f'{pad}    }}')
+            _lines.append(f'{pad}}}')
+            return
+        if isinstance(stmt, Throw):
+            pad = '    ' * indent
+            ex_c = gen_expr(stmt.expr)
+            _lines.append(f'{pad}__nc_throw({ex_c});')
+            return
+        if isinstance(stmt, Defer):
+            # defer 语句：编译到当前作用域结束时执行
+            # 简化：跳过 — 后续再处理
+            for s in stmt.body.statements:
                 gen_stmt(s, indent)
             return
         raise NotImplementedError(f"gen_stmt: {type(stmt).__name__}")

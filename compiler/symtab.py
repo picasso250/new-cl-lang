@@ -68,7 +68,7 @@ def build_symbol_table(program: "Program") -> SymbolTable:
         Assignment, Block, If, While, FunctionDeclaration, Return,
         StructDecl, EnumDecl, Switch, ForIn,
         BinaryOp, UnaryOp, FunctionCall,
-        ArrayLiteral, IndexAccess, MethodCall, FieldAccess, StructLiteral
+        ArrayLiteral, IndexAccess, MethodCall, FieldAccess, StructLiteral, TryCatch, Throw, Defer
     )
     table = SymbolTable()
 
@@ -106,7 +106,7 @@ def build_symbol_table(program: "Program") -> SymbolTable:
                 table.declare_struct(stmt.name, stmt.fields)
             elif isinstance(stmt, EnumDecl):
                 table.declare_global(stmt.name, "enum")
-            elif isinstance(stmt, (If, While, Block, Switch, ForIn)):
+            elif isinstance(stmt, (If, While, Block, Switch, ForIn, TryCatch)):
                 _descend_stmt(stmt)
             elif isinstance(stmt, ExpressionStatement):
                 _walk_expr(stmt.expr)
@@ -115,6 +115,10 @@ def build_symbol_table(program: "Program") -> SymbolTable:
             elif isinstance(stmt, Return):
                 if stmt.expr:
                     _walk_expr(stmt.expr)
+            elif isinstance(stmt, Throw):
+                _walk_expr(stmt.expr)
+            elif isinstance(stmt, Defer):
+                walk_stmts(stmt.body.statements)
             # VariableDeclaration: 跳过 —— Pass 2 负责
 
     def _descend_stmt(stmt):
@@ -130,6 +134,14 @@ def build_symbol_table(program: "Program") -> SymbolTable:
             for case_val, case_stmt in stmt.cases:
                 _walk_expr(case_val)
                 walk_stmts([case_stmt])
+        elif isinstance(stmt, TryCatch):
+            table.push_scope()
+            walk_stmts(stmt.try_block.statements)
+            table.pop_scope()
+            table.push_scope()
+            table.declare(stmt.error_name, "str")
+            walk_stmts(stmt.catch_block.statements)
+            table.pop_scope()
         elif isinstance(stmt, If):
             _walk_expr(stmt.condition)
             table.push_scope()

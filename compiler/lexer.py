@@ -21,6 +21,10 @@ class TokenKind(Enum):
     FOR = auto()
     IN = auto()
     NEW = auto()
+    TRY = auto()
+    CATCH = auto()
+    THROW = auto()
+    DEFER = auto()
     # 运算符
     PLUS = auto()
     MINUS = auto()
@@ -73,6 +77,10 @@ KEYWORDS = {
     "for": TokenKind.FOR,
     "in": TokenKind.IN,
     "new": TokenKind.NEW,
+    "try": TokenKind.TRY,
+    "catch": TokenKind.CATCH,
+    "throw": TokenKind.THROW,
+    "defer": TokenKind.DEFER,
 }
 
 
