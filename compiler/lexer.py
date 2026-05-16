@@ -104,16 +104,31 @@ def lex(source: str):
         # 字符串
         if ch == '"':
             i += 1  # 跳过开引号
-            start = i
+            chars = []
             while i < n and source[i] != '"':
                 if source[i] == '\\' and i + 1 < n:
-                    i += 2  # 跳过转义
+                    ec = source[i + 1]
+                    if ec == 'n':
+                        chars.append('\n')
+                    elif ec == 't':
+                        chars.append('\t')
+                    elif ec == 'r':
+                        chars.append('\r')
+                    elif ec == '\\':
+                        chars.append('\\')
+                    elif ec == '"':
+                        chars.append('"')
+                    else:
+                        chars.append(source[i])
+                        chars.append(ec)
+                    i += 2
                 else:
+                    chars.append(source[i])
                     i += 1
-            value = source[start:i]
+            value = ''.join(chars)
             if i < n:
                 i += 1  # 跳过闭引号
-            yield Token(TokenKind.STRING, value, start - 1)
+            yield Token(TokenKind.STRING, value, i - len(value) - 2)
             continue
         if ch.isalpha() or ch == "_":
             start = i
