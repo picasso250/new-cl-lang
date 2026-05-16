@@ -42,3 +42,59 @@
   - case_013：fun 函数定义 + return + 多参数 + 返回类型
   - parser 含标准递归下降优先级（additive / multiplicative / primary）
 - `已处理/` → `processed/`
+- case_014：字符串字面量 + print 适配 %s
+- case_015：else if 链（零成本，解析器天然支持嵌套）
+- case_016：struct 定义 + 字面量 + 字段访问
+- case_017：逻辑运算符 && || !  + 完整优先级链
+- symtab 瘦身：Pass1 只管函数签名 + struct 定义，变量声明移交 Pass2。去掉硬编码 "i32"
+- case_018：enum 标签枚举（甲层），纯标签无数据，`::` 引用
+- case_019：switch 分发，`->` 箭头语法，C switch 映射
+- case_020：[N]T 定长数组 + 字面量 + 索引 arr[i]（Go 序）
+
+---
+
+## 20-case 自省 (2026-05-16)
+
+### 编译器体格
+
+| 文件 | 行数 | 职责 |
+|------|------|------|
+| parser.py | 325 | 递归下降，优先级链完整（|| > && > == != < >... > +- > */% > ! > .field/[i] > primary）|
+| codegen.py | 201 | C 代码生成，struct/enum 提升至文件作用域 |
+| ast.py | 177 | 21 种 AST 节点 |
+| lexer.py | 167 | 词法分析，双字符前瞻 |
+| symtab.py | 123 | Pass1：仅收函数签名 + struct/enum 类型 |
+| typecheck.py | 105 | Pass2：类型推断 + 局部变量声明 |
+| __init__.py | 45 | 三 pass 流水线 + gcc/clang 编译 |
+
+### 能力矩阵
+
+| 已就 | 未就（自举相关） |
+|------|-------------------|
+| ✓ 算术 + 比较 + 逻辑 | ✗ `[]T` 切片（动态数组） |
+| ✓ let / let mut / 赋值 | ✗ `for i in 0 .. N` |
+| ✓ if / else if / else | ✗ `str` 真布局 `{u8*; u64}` |
+| ✓ while | ✗ 文件 IO |
+| ✓ fun + return + 参数 | ✗ `*T` 指针 |
+| ✓ fun main() | ✗ 类型转换 `i64(x)` |
+| ✓ struct + 字面量 + .field | ✗ f32/f64/bool/i8 等 |
+| ✓ enum 甲层 + switch | ✗ 模块 / import |
+| ✓ [N]T 定长数组 + 索引 | ✗ 复合赋值 += -= |
+| ✓ 字符串字面量 | ✗ 类型注解 `let x: i32` |
+
+### 已知伤疤
+
+| # | 伤疤 | 严重度 | 说明 |
+|----|------|--------|------|
+| A | `str` 映射为 `const char*` | 中 | 设计规定 `{u8* ptr; u64 len}`，当前偷懒 |
+| B | `print` 是魔术函数 | 中 | 应在 `std.io` 库，当前特殊判断 |
+| C | C 复合字面量无字段名 | 低 | `Point{3,4}` 非 `Point{.x=3,.y=4}` |
+| D | 无类型注解语法 | 低 | `let x: i32 = 1` 不可写 |
+
+### 自举差距
+
+自举需：**enum + switch + []T + str真身 + 文件IO + for...in**。
+
+已得 enum + switch + [N]T。尚差三件：`[]T`、`for...in`、`str` 真布局（含文件 IO）。
+
+建议下一步：`for i in 0 .. 10`（遍历数组），再 `[]T` 切片。
