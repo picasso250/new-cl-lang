@@ -1,0 +1,2 @@
+# STDOUT: 2
+let mut x = 1; x = 2; print(x)
