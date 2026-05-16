@@ -10,7 +10,7 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
         Program, VariableDeclaration, ExpressionStatement,
         Assignment, Block, If, While, FunctionDeclaration, Return,
         StructDecl, StructLiteral, FieldAccess,
-        IntegerLiteral, StringLiteral, BinaryOp, FunctionCall, Identifier,
+        IntegerLiteral, StringLiteral, BinaryOp, UnaryOp, FunctionCall, Identifier,
     )
 
     def walk_expr(node):
@@ -21,6 +21,9 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
         elif isinstance(node, Identifier):
             sym = symtab.lookup(node.name)
             node.type = sym.nc_type
+        elif isinstance(node, UnaryOp):
+            walk_expr(node.operand)
+            node.type = node.operand.type
         elif isinstance(node, BinaryOp):
             walk_expr(node.left)
             walk_expr(node.right)

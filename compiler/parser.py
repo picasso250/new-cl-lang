@@ -177,10 +177,26 @@ class Parser:
         self.match(TokenKind.SEMI)
         return stmt
 
-    # ========== 表达式 ==========
+    # ========== 表达式（优先级链：逻辑或 > 逻辑与 > 比较 > 加减 > 乘除 > 前缀 > 后缀 > 基本）
 
     def parse_expression(self):
-        return self.parse_comparison()
+        return self.parse_logic_or()
+
+    def parse_logic_or(self):
+        left = self.parse_logic_and()
+        while self.peek().kind == TokenKind.OR:
+            op = self.advance().value
+            right = self.parse_logic_and()
+            left = BinaryOp(left, op, right)
+        return left
+
+    def parse_logic_and(self):
+        left = self.parse_comparison()
+        while self.peek().kind == TokenKind.AND:
+            op = self.advance().value
+            right = self.parse_comparison()
+            left = BinaryOp(left, op, right)
+        return left
 
     def parse_comparison(self):
         left = self.parse_additive()
@@ -200,12 +216,20 @@ class Parser:
         return left
 
     def parse_multiplicative(self):
-        left = self.parse_postfix()
+        left = self.parse_unary()
         while self.peek().kind in (TokenKind.STAR, TokenKind.SLASH, TokenKind.PERCENT):
             op = self.advance().value
-            right = self.parse_postfix()
+            right = self.parse_unary()
             left = BinaryOp(left, op, right)
         return left
+
+    def parse_unary(self):
+        """前缀一元运算符：! 等。"""
+        if self.peek().kind == TokenKind.NOT:
+            op = self.advance().value
+            operand = self.parse_unary()
+            return UnaryOp(op, operand)
+        return self.parse_postfix()
 
     def parse_postfix(self):
         """处理 .field 和 (args) 后缀。"""
@@ -243,23 +267,34 @@ class Parser:
                         args.append(self.parse_expression())
                 self.expect(TokenKind.RPAREN)
                 return FunctionCall(name, args)
-            # struct 字面量: Name { ... }
+            # struct 字面量: Name { field: val, ... }
+            # 前瞻避免混淆 if 块：需 { 后首个 IDENT 之后是 :
             if self.peek().kind == TokenKind.LBRACE:
-                self.advance()
-                fields = []
-                if self.peek().kind != TokenKind.RBRACE:
-                    fname = self.expect(TokenKind.IDENT).value
-                    self.expect(TokenKind.COLON)
-                    fval = self.parse_expression()
-                    fields.append((fname, fval))
-                    while self.peek().kind == TokenKind.COMMA:
-                        self.advance()
+                save = self.pos
+                self.advance()  # 吞 {
+                is_struct = False
+                if self.peek().kind == TokenKind.RBRACE:
+                    is_struct = True  # Name{}
+                elif self.peek().kind == TokenKind.IDENT:
+                    self.advance()
+                    is_struct = self.peek().kind == TokenKind.COLON
+                self.pos = save  # 回退
+                if is_struct:
+                    self.advance()  # 吞 {
+                    fields = []
+                    if self.peek().kind != TokenKind.RBRACE:
                         fname = self.expect(TokenKind.IDENT).value
                         self.expect(TokenKind.COLON)
                         fval = self.parse_expression()
                         fields.append((fname, fval))
-                self.expect(TokenKind.RBRACE)
-                return StructLiteral(name, fields)
+                        while self.peek().kind == TokenKind.COMMA:
+                            self.advance()
+                            fname = self.expect(TokenKind.IDENT).value
+                            self.expect(TokenKind.COLON)
+                            fval = self.parse_expression()
+                            fields.append((fname, fval))
+                    self.expect(TokenKind.RBRACE)
+                    return StructLiteral(name, fields)
             return Identifier(name)
 
         if t.kind == TokenKind.LPAREN:

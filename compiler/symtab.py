@@ -106,10 +106,12 @@ def build_symbol_table(program: "Program") -> SymbolTable:
                 table.pop_scope()
 
     def walk_expr(node):
-        from compiler.ast import BinaryOp, FunctionCall, Identifier, IntegerLiteral
+        from compiler.ast import BinaryOp, UnaryOp, FunctionCall, Identifier, IntegerLiteral
         if isinstance(node, BinaryOp):
             walk_expr(node.left)
             walk_expr(node.right)
+        elif isinstance(node, UnaryOp):
+            walk_expr(node.operand)
         elif isinstance(node, FunctionCall):
             for arg in node.args:
                 walk_expr(arg)

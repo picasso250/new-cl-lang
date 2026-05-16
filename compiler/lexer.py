@@ -29,6 +29,9 @@ class TokenKind(Enum):
     LE = auto()
     EQEQ = auto()
     NE = auto()
+    AND = auto()
+    OR = auto()
+    NOT = auto()
     # 分隔符
     LPAREN = auto()
     RPAREN = auto()
@@ -120,6 +123,10 @@ def lex(source: str):
                 yield Token(TokenKind.EQEQ, "==", i); i += 2; continue
             if two == "!=":
                 yield Token(TokenKind.NE, "!=", i); i += 2; continue
+            if two == "&&":
+                yield Token(TokenKind.AND, "&&", i); i += 2; continue
+            if two == "||":
+                yield Token(TokenKind.OR, "||", i); i += 2; continue
 
         # 单字符符号
         if ch == "+":
@@ -154,6 +161,8 @@ def lex(source: str):
             yield Token(TokenKind.COLON, ":", i); i += 1; continue
         if ch == ".":
             yield Token(TokenKind.DOT, ".", i); i += 1; continue
+        if ch == "!":
+            yield Token(TokenKind.NOT, "!", i); i += 1; continue
 
         raise SyntaxError(f"Unexpected character '{ch}' at position {i}")
 

@@ -160,6 +160,16 @@ class BinaryOp(Node):
         return f"BinOp({self.left} {self.op} {self.right})"
 
 
+class UnaryOp(Node):
+    """!expr 等前缀运算符。"""
+    def __init__(self, op: str, operand):
+        self.op = op
+        self.operand = operand
+
+    def __repr__(self):
+        return f"UnaryOp({self.op}{self.operand})"
+
+
 class FunctionCall(Node):
     def __init__(self, name: str, args: list):
         self.name = name

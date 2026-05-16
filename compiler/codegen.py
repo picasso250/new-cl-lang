@@ -172,7 +172,7 @@ def _gen_expr_stmt(lines: list, expr, indent: int):
 def _gen_expr(node) -> str:
     from compiler.ast import (
         IntegerLiteral, StringLiteral, Identifier,
-        BinaryOp, FunctionCall, StructLiteral, FieldAccess,
+        BinaryOp, UnaryOp, FunctionCall, StructLiteral, FieldAccess,
     )
 
     if isinstance(node, IntegerLiteral):
@@ -188,6 +188,9 @@ def _gen_expr(node) -> str:
         left = _gen_expr(node.left)
         right = _gen_expr(node.right)
         return f'({left} {node.op} {right})'
+
+    if isinstance(node, UnaryOp):
+        return f'({node.op}{_gen_expr(node.operand)})'
 
     if isinstance(node, FunctionCall):
         args = ', '.join(_gen_expr(a) for a in node.args)
