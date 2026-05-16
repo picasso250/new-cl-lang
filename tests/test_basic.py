@@ -1,8 +1,11 @@
 """
-BDD 测试套件 —— 从最简单 case 开始，逐条打通全链路。
+BDD 测试套件 —— 自动收集 test_cases/ 下所有 .nc 文件。
+每个文件第一行注释 # STDOUT: <期望输出> 定义期望值。
 """
 import os
 import sys
+import glob
+import re
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -11,35 +14,30 @@ from compiler import compile_nc_to_c, run_c_code
 CASE_DIR = os.path.join(os.path.dirname(__file__), "..", "test_cases")
 
 
-def compile_and_run(nc_source: str) -> str:
-    c_code = compile_nc_to_c(nc_source)
-    return run_c_code(c_code)
+def _discover_cases():
+    """扫描 test_cases/*.nc，提取 (文件名, nc源码, 期望输出)。"""
+    cases = []
+    for path in sorted(glob.glob(os.path.join(CASE_DIR, "*.nc"))):
+        with open(path, encoding="utf-8") as f:
+            source = f.read()
+        expected = None
+        for line in source.split("\n"):
+            m = re.match(r"#\s*STDOUT:\s*(.*)", line)
+            if m:
+                expected = m.group(1).strip()
+                break
+        fname = os.path.basename(path)
+        cases.append((fname, source, expected))
+    return cases
 
 
-def _run_case(filename: str):
-    path = os.path.join(CASE_DIR, filename)
-    with open(path, encoding="utf-8") as f:
-        source = f.read()
-    return compile_and_run(source).strip()
+def _compile_and_run(source: str) -> str:
+    c_code = compile_nc_to_c(source)
+    return run_c_code(c_code).strip()
 
 
-def test_case_001():
-    assert _run_case("case_001_print_add.nc") == "3"
-
-def test_case_002_add():
-    assert _run_case("case_002_add.nc") == "8"
-
-def test_case_003_sub():
-    assert _run_case("case_003_sub.nc") == "6"
-
-def test_case_004_mul():
-    assert _run_case("case_004_mul.nc") == "21"
-
-def test_case_005_div():
-    assert _run_case("case_005_div.nc") == "5"
-
-def test_case_006_mod():
-    assert _run_case("case_006_mod.nc") == "1"
-
-def test_case_007_let():
-    assert _run_case("case_007_let.nc") == "42"
+def test_all_cases():
+    """自动发现并运行所有 test_cases。"""
+    for fname, source, expected in _discover_cases():
+        actual = _compile_and_run(source)
+        assert actual == expected, f"{fname}: expected '{expected}', got '{actual}'"

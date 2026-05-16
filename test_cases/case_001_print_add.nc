@@ -1,2 +1,2 @@
-# case_001: print(1+2) → 3
+# STDOUT: 3
 print(1+2)
