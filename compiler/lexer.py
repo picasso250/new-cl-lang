@@ -18,6 +18,8 @@ class TokenKind(Enum):
     STRUCT = auto()
     ENUM = auto()
     SWITCH = auto()
+    FOR = auto()
+    IN = auto()
     # 运算符
     PLUS = auto()
     MINUS = auto()
@@ -67,6 +69,8 @@ KEYWORDS = {
     "struct": TokenKind.STRUCT,
     "enum": TokenKind.ENUM,
     "switch": TokenKind.SWITCH,
+    "for": TokenKind.FOR,
+    "in": TokenKind.IN,
 }
 
 

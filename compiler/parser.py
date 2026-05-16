@@ -62,6 +62,8 @@ class Parser:
             return self._parse_enum()
         if t.kind == TokenKind.SWITCH:
             return self._parse_switch()
+        if t.kind == TokenKind.FOR:
+            return self._parse_forin()
         if t.kind == TokenKind.IDENT:
             return self._parse_ident_stmt()
 
@@ -137,6 +139,16 @@ class Parser:
         stmt = Return(expr)
         self.match(TokenKind.SEMI)
         return stmt
+
+    def _parse_forin(self):
+        self.advance()  # 吞 for
+        idx = self.expect(TokenKind.IDENT).value
+        self.expect(TokenKind.COMMA)
+        val = self.expect(TokenKind.IDENT).value
+        self.expect(TokenKind.IN)
+        iterable = self.parse_expression()
+        body = self._parse_block()
+        return ForIn(idx, val, iterable, body)
 
     def _parse_struct(self):
         self.advance()  # 吞 struct

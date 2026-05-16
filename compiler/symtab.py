@@ -66,7 +66,7 @@ def build_symbol_table(program: "Program") -> SymbolTable:
     from compiler.ast import (
         Program, VariableDeclaration, ExpressionStatement,
         Assignment, Block, If, While, FunctionDeclaration, Return,
-        StructDecl, EnumDecl, Switch,
+        StructDecl, EnumDecl, Switch, ForIn,
         BinaryOp, UnaryOp, FunctionCall,
         ArrayLiteral, IndexAccess,
     )
@@ -86,7 +86,7 @@ def build_symbol_table(program: "Program") -> SymbolTable:
                 table.declare_struct(stmt.name, stmt.fields)
             elif isinstance(stmt, EnumDecl):
                 table.declare_global(stmt.name, "enum")
-            elif isinstance(stmt, (If, While, Block, Switch)):
+            elif isinstance(stmt, (If, While, Block, Switch, ForIn)):
                 _descend_stmt(stmt)
             elif isinstance(stmt, ExpressionStatement):
                 _walk_expr(stmt.expr)
@@ -98,7 +98,14 @@ def build_symbol_table(program: "Program") -> SymbolTable:
             # VariableDeclaration: 跳过 —— Pass 2 负责
 
     def _descend_stmt(stmt):
-        if isinstance(stmt, Switch):
+        if isinstance(stmt, ForIn):
+            table.push_scope()
+            table.declare(stmt.index, "i32")
+            table.declare(stmt.value, "i32")
+            _walk_expr(stmt.iterable)
+            walk_stmts(stmt.body.statements)
+            table.pop_scope()
+        elif isinstance(stmt, Switch):
             _walk_expr(stmt.scrutinee)
             for case_val, case_stmt in stmt.cases:
                 _walk_expr(case_val)

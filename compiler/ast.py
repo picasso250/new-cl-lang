@@ -76,6 +76,18 @@ class Switch(Node):
         return f"Switch({self.scrutinee} {{ {cs} }})"
 
 
+class ForIn(Node):
+    """for index, value in iterable { body }"""
+    def __init__(self, index: str, value: str, iterable, body: "Block"):
+        self.index = index
+        self.value = value
+        self.iterable = iterable
+        self.body = body
+
+    def __repr__(self):
+        return f"ForIn({self.index}, {self.value} in {self.iterable} {self.body})"
+
+
 class StructDecl(Node):
     """struct Name { field: type, ... }"""
     def __init__(self, name: str, fields: list):

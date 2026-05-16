@@ -20,7 +20,7 @@ def _type_to_c(nc_type: str) -> str:
 
 def generate_c(program: "Program") -> str:
     from compiler.ast import (
-        FunctionDeclaration, StructDecl, EnumDecl, Switch, Block, If, While,
+        FunctionDeclaration, StructDecl, EnumDecl, Switch, ForIn, Block, If, While,
         VariableDeclaration, ExpressionStatement, Assignment,
         Return, SliceExpr, ArrayLiteral, FunctionCall,
         IntegerLiteral, StringLiteral, Identifier, BinaryOp, UnaryOp,
@@ -60,6 +60,8 @@ def generate_c(program: "Program") -> str:
             elif isinstance(s, Switch):
                 for _cv, cs in s.cases:
                     collect([cs])
+            elif isinstance(s, ForIn):
+                collect(s.body.statements)
 
     collect(program.statements)
 
@@ -246,6 +248,14 @@ def generate_c(program: "Program") -> str:
                 _lines.append(f'{pad}    case {val_c}:')
                 gen_stmt(case_stmt, indent + 2)
                 _lines.append(f'{pad}        break;')
+            _lines.append(f'{pad}}}')
+            return
+        if isinstance(stmt, ForIn):
+            iter_c = gen_expr(stmt.iterable)
+            _lines.append(f'{pad}for (int {stmt.index} = 0; {stmt.index} < {iter_c}._len; {stmt.index}++) {{')
+            _lines.append(f'{pad}    int {stmt.value} = {iter_c}._ptr[{stmt.index}];')
+            for s in stmt.body.statements:
+                gen_stmt(s, indent + 1)
             _lines.append(f'{pad}}}')
             return
         if isinstance(stmt, Return):

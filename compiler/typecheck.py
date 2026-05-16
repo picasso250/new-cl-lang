@@ -10,7 +10,7 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
         Program, VariableDeclaration, ExpressionStatement,
         Assignment, Block, If, While, FunctionDeclaration, Return,
         StructDecl, StructLiteral, FieldAccess,
-        EnumDecl, EnumRef, Switch,
+        EnumDecl, EnumRef, Switch, ForIn,
         IntegerLiteral, StringLiteral, BinaryOp, UnaryOp, FunctionCall, Identifier,
         ArrayLiteral, IndexAccess, SliceExpr
     )
@@ -119,6 +119,13 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
                 for case_val, case_stmt in stmt.cases:
                     walk_expr(case_val)
                     walk_stmts([case_stmt])
+            elif isinstance(stmt, ForIn):
+                walk_expr(stmt.iterable)
+                symtab.push_scope()
+                symtab.declare(stmt.index, "i32")
+                symtab.declare(stmt.value, "i32")
+                walk_stmts(stmt.body.statements)
+                symtab.pop_scope()
             elif isinstance(stmt, Block):
                 symtab.push_scope()
                 walk_stmts(stmt.statements)
