@@ -141,7 +141,8 @@ def generate_c(program: "Program") -> str:
         if isinstance(node, IntegerLiteral):
             return str(node.value)
         if isinstance(node, StringLiteral):
-            return f'(str){{\"{node.value}\", {len(node.value)}}}'
+            esc = node.value.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
+            return f'(str){{"{esc}", {len(node.value)}}}'
         if isinstance(node, Identifier):
             return node.name
         if isinstance(node, BinaryOp):
