@@ -263,6 +263,11 @@ def generate_c(program: "Program") -> str:
     _lines.append('static void __nc_gc_init(void) {')
     _lines.append('    __nc_gc_registry = NULL; __nc_gc_root_n = 0; __nc_gc_gray_top = 0; }')
     _lines.append('')
+    _lines.append('static size_t __nc_gc_live(void) {')
+    _lines.append('    size_t n = 0;')
+    _lines.append('    for (nc_record_t* r = __nc_gc_registry; r; r = r->next) n++;')
+    _lines.append('    return n; }')
+    _lines.append('')
 
     for e in enums:
         vs = ', '.join(f'{e.name.upper()}_{v.upper()}' for v in e.variants)
@@ -382,6 +387,9 @@ def generate_c(program: "Program") -> str:
         pad = '    ' * indent
         if isinstance(expr, FunctionCall) and expr.name == "gc_collect":
             _lines.append(f'{pad}__nc_gc_collect();')
+            return
+        if isinstance(expr, FunctionCall) and expr.name == "gc_live":
+            _lines.append(f'{pad}printf("%d\n", (int)__nc_gc_live());')
             return
         if isinstance(expr, FunctionCall) and expr.name == "write_file":
             path = expr.args[0]
@@ -543,6 +551,7 @@ def generate_c(program: "Program") -> str:
 
     # ——— 输出函数 ———
     for func in other_funcs:
+        _gc_vars.clear()  # 每函数独立的 GC 变量
         c_ret = _type_to_c(func.return_type or "void")
         if func.receiver_name:
             rtype = func.receiver_type.lstrip("*")
@@ -555,13 +564,19 @@ def generate_c(program: "Program") -> str:
         _lines.append(f'{c_ret} {fname}({params_c}) {{')
         for s in func.body.statements:
             gen_stmt(s)
+        # 函数退出：弹出所有 GC 根
+        for _ in _gc_vars:
+            _lines.append('    __nc_gc_pop_root();')
         _lines.append('}')
 
     if main_func:
+        _gc_vars.clear()
         _lines.append('int main(void) {')
         _lines.append('    __nc_gc_init();')
         for s in main_func.body.statements:
             gen_stmt(s)
+        for _ in _gc_vars:
+            _lines.append('    __nc_gc_pop_root();')
         _lines.append('    return 0;')
         _lines.append('}')
         for s in top_stmts:
