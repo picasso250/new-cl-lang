@@ -1,6 +1,9 @@
 """
 BDD 测试套件 —— 自动收集 test_cases/ 下所有 .nc 文件。
-每个文件第一行注释 # STDOUT: <期望输出> 定义期望值。
+STDOUT 注释格式：
+  # STDOUT: 值          → 单行期望输出
+  # STDOUT: 行1         → 多行（多条 STDOUT 行自动用换行拼接）
+  # STDOUT: 行2
 """
 import os
 import sys
@@ -20,12 +23,9 @@ def _discover_cases():
     for path in sorted(glob.glob(os.path.join(CASE_DIR, "*.nc"))):
         with open(path, encoding="utf-8") as f:
             source = f.read()
-        expected = None
-        for line in source.split("\n"):
-            m = re.match(r"#\s*STDOUT:\s*(.*)", line)
-            if m:
-                expected = m.group(1).strip()
-                break
+        # 收集所有 # STDOUT: 行
+        expected_lines = re.findall(r"#\s*STDOUT:\s*(.*)", source)
+        expected = "\n".join(expected_lines) if expected_lines else None
         fname = os.path.basename(path)
         cases.append((fname, source, expected))
     return cases

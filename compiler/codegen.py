@@ -27,7 +27,7 @@ def generate_c(program: "Program") -> str:
 def _gen_stmt(lines: list, stmt, indent: int):
     from compiler.ast import (
         VariableDeclaration, ExpressionStatement, Assignment,
-        Block, If,
+        Block, If, While,
     )
     pad = '    ' * indent
 
@@ -51,6 +51,13 @@ def _gen_stmt(lines: list, stmt, indent: int):
             lines.append(f'{pad}}} else {{')
             for s in stmt.else_block.statements:
                 _gen_stmt(lines, s, indent + 1)
+        lines.append(f'{pad}}}')
+
+    elif isinstance(stmt, While):
+        cond_c = _gen_expr(stmt.condition)
+        lines.append(f'{pad}while ({cond_c}) {{')
+        for s in stmt.body.statements:
+            _gen_stmt(lines, s, indent + 1)
         lines.append(f'{pad}}}')
 
     elif isinstance(stmt, Block):

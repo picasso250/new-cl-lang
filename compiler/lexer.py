@@ -11,6 +11,7 @@ class TokenKind(Enum):
     LET = auto()
     IF = auto()
     ELSE = auto()
+    WHILE = auto()
     # 运算符
     PLUS = auto()
     MINUS = auto()
@@ -44,6 +45,7 @@ KEYWORDS = {
     "let": TokenKind.LET,
     "if": TokenKind.IF,
     "else": TokenKind.ELSE,
+    "while": TokenKind.WHILE,
 }
 
 

@@ -8,7 +8,7 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
     """Pass 2: 标注 Program 中所有表达式和语句的类型。"""
     from compiler.ast import (
         Program, VariableDeclaration, ExpressionStatement,
-        Assignment, Block, If,
+        Assignment, Block, If, While,
         IntegerLiteral, BinaryOp, FunctionCall, Identifier,
     )
 
@@ -41,6 +41,9 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
                 walk_stmts(stmt.then_block.statements)
                 if stmt.else_block:
                     walk_stmts(stmt.else_block.statements)
+            elif isinstance(stmt, While):
+                walk_expr(stmt.condition)
+                walk_stmts(stmt.body.statements)
             elif isinstance(stmt, Block):
                 walk_stmts(stmt.statements)
 

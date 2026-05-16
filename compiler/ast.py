@@ -55,6 +55,16 @@ class Block(Node):
         return f"Block({self.statements})"
 
 
+class While(Node):
+    """while expr { block }"""
+    def __init__(self, condition, body: Block):
+        self.condition = condition
+        self.body = body
+
+    def __repr__(self):
+        return f"While({self.condition} {self.body})"
+
+
 class If(Node):
     """if expr { block } [else { block }]"""
     def __init__(self, condition, then_block: Block, else_block: Block | None = None):

@@ -54,6 +54,10 @@ class Parser:
         if t.kind == TokenKind.IF:
             return self._parse_if()
 
+        # while 语句
+        if t.kind == TokenKind.WHILE:
+            return self._parse_while()
+
         # 标识符开头的语句：赋值 或 表达式语句
         if t.kind == TokenKind.IDENT:
             return self._parse_ident_stmt()
@@ -91,6 +95,13 @@ class Parser:
                 else_block = self._parse_block()
         self.match(TokenKind.SEMI)  # if 后可选的 ;
         return If(condition, then_block, else_block)
+
+    def _parse_while(self):
+        self.advance()  # 吞 while
+        condition = self.parse_expression()
+        body = self._parse_block()
+        self.match(TokenKind.SEMI)
+        return While(condition, body)
 
     def _parse_block(self):
         self.expect(TokenKind.LBRACE)
