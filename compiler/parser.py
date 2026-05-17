@@ -89,11 +89,29 @@ class Parser:
             name = self.expect(TokenKind.IDENT).value
         else:
             name = self.tokens[self.pos - 1].value
+        annotation = None
+        if self.peek().kind == TokenKind.COLON:
+            self.advance()
+            annotation = self._parse_type()
         self.expect(TokenKind.EQ)
         init = self.parse_expression()
-        stmt = VariableDeclaration(name, mut, init)
+        stmt = VariableDeclaration(name, mut, init, annotation)
         self.match(TokenKind.SEMI)
         return stmt
+
+    def _parse_type(self) -> str:
+        if self.peek().kind == TokenKind.STAR:
+            self.advance()
+            return "*" + self._parse_type()
+        if self.peek().kind == TokenKind.LBRACKET:
+            self.advance()
+            length = None
+            if self.peek().kind != TokenKind.RBRACKET:
+                length = self.expect(TokenKind.INTEGER).value
+            self.expect(TokenKind.RBRACKET)
+            elem = self._parse_type()
+            return f"[]{elem}" if length is None else f"[{length}]{elem}"
+        return self.expect(TokenKind.IDENT).value
 
     def _parse_if(self):
         self.advance()
@@ -135,19 +153,19 @@ class Parser:
         if self.peek().kind != TokenKind.RPAREN:
             pname = self.expect(TokenKind.IDENT).value
             self.expect(TokenKind.COLON)
-            ptype = self.expect(TokenKind.IDENT).value
+            ptype = self._parse_type()
             params.append((pname, ptype))
             while self.peek().kind == TokenKind.COMMA:
                 self.advance()
                 pname = self.expect(TokenKind.IDENT).value
                 self.expect(TokenKind.COLON)
-                ptype = self.expect(TokenKind.IDENT).value
+                ptype = self._parse_type()
                 params.append((pname, ptype))
         self.expect(TokenKind.RPAREN)
         return_type = None
         if self.peek().kind == TokenKind.COLON:
             self.advance()
-            return_type = self.expect(TokenKind.IDENT).value
+            return_type = self._parse_type()
         body = self._parse_block()
         self.match(TokenKind.SEMI)
         return FunctionDeclaration(name, params, return_type, body,
@@ -209,13 +227,13 @@ class Parser:
         if self.peek().kind != TokenKind.RBRACE:
             fname = self.expect(TokenKind.IDENT).value
             self.expect(TokenKind.COLON)
-            ftype = self.expect(TokenKind.IDENT).value
+            ftype = self._parse_type()
             fields.append((fname, ftype))
             while self.peek().kind == TokenKind.COMMA:
                 self.advance()
                 fname = self.expect(TokenKind.IDENT).value
                 self.expect(TokenKind.COLON)
-                ftype = self.expect(TokenKind.IDENT).value
+                ftype = self._parse_type()
                 fields.append((fname, ftype))
         self.expect(TokenKind.RBRACE)
         stmt = StructDecl(name, fields)

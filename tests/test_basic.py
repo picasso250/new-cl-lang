@@ -28,6 +28,9 @@ def _discover_cases():
 
 
 def _parse_expected(source: str) -> tuple[str, str, int]:
+    error_lines = re.findall(r"#\s*ERROR:\s*(.*)", source)
+    if error_lines:
+        return ("__ERROR__", "\n".join(error_lines), 0)
     stdout_lines = re.findall(r"#\s*STDOUT:\s*(.*)", source)
     stderr_lines = re.findall(r"#\s*STDERR:\s*(.*)", source)
     rc_lines = re.findall(r"#\s*RC:\s*(-?\d+)", source)
@@ -38,7 +41,10 @@ def _parse_expected(source: str) -> tuple[str, str, int]:
 
 
 def _compile_and_run(source: str) -> tuple[str, str, int]:
-    c_code = compile_nc_to_c(source)
+    try:
+        c_code = compile_nc_to_c(source)
+    except Exception as e:
+        return "__ERROR__", str(e), 0
     stdout, stderr, rc = run_c_code(c_code)
     return stdout.strip(), stderr.strip(), rc
 

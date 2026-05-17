@@ -94,6 +94,7 @@ def build_symbol_table(program: "Program") -> SymbolTable:
     table.declare_global("str", "struct")
     table.declare_struct("str", [("ptr", "i64"), ("len", "i64")])
     table._methods = {}  # {type_name: {method_name: (ret_type, [(param, type)])}}
+    table._functions = {}  # {function_name: (ret_type, [(param, type)])}
 
     def walk_stmts(stmts: list):
         for stmt in stmts:
@@ -115,6 +116,7 @@ def build_symbol_table(program: "Program") -> SymbolTable:
                     table.pop_scope()
                 else:
                     table.declare(stmt.name, stmt.return_type or "void")
+                    table._functions[stmt.name] = (stmt.return_type or "void", stmt.params)
                     table.push_scope()
                     for pname, ptype in stmt.params:
                         table.declare(pname, ptype)

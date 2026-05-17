@@ -16,15 +16,17 @@ class Program(Node):
 # ===== 语句 =====
 
 class VariableDeclaration(Node):
-    """let x = expr;  或  let mut x = expr;"""
-    def __init__(self, name: str, mut: bool, initializer):
+    """let x = expr;  或  let mut x: T = expr;"""
+    def __init__(self, name: str, mut: bool, initializer, annotation: str | None = None):
         self.name = name
         self.mut = mut
         self.initializer = initializer
+        self.annotation = annotation
 
     def __repr__(self):
         m = "mut " if self.mut else ""
-        return f"Let({m}{self.name} = {self.initializer})"
+        t = f": {self.annotation}" if self.annotation else ""
+        return f"Let({m}{self.name}{t} = {self.initializer})"
 
 
 class ExpressionStatement(Node):
