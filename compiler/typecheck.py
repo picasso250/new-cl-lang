@@ -15,7 +15,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         Assignment, Block, If, While, FunctionDeclaration, Return,
         StructDecl, StructLiteral, FieldAccess,
         EnumDecl, EnumRef, Switch, ForIn,
-        IntegerLiteral, StringLiteral, BoolLiteral, BinaryOp, UnaryOp, FunctionCall, Identifier,
+        IfExpr, IntegerLiteral, StringLiteral, BoolLiteral, BinaryOp, UnaryOp, FunctionCall, Identifier,
         ArrayLiteral, SliceLiteral, IndexAccess, SliceExpr, MethodCall, TryCatch, Throw, Defer, Break
     )
 
@@ -46,6 +46,35 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
 
     def ends_with_return(stmts):
         return bool(stmts) and isinstance(stmts[-1], Return)
+
+    def block_tail_expr(block):
+        if not block.statements:
+            return None
+        last = block.statements[-1]
+        if isinstance(last, ExpressionStatement):
+            return last.expr
+        return None
+
+    def infer_block_value(block, context_node):
+        symtab.push_scope()
+        body = block.statements[:-1] if block_tail_expr(block) else block.statements
+        walk_stmts(body)
+        tail = block_tail_expr(block)
+        if tail is None:
+            symtab.pop_scope()
+            fail("if expression branch has no value", context_node)
+        walk_expr(tail)
+        tail_type = tail.type
+        symtab.pop_scope()
+        return tail_type
+
+    def infer_if_value(stmt):
+        if stmt.else_block is None:
+            fail("if expression requires else", stmt)
+        then_type = infer_block_value(stmt.then_block, stmt)
+        else_type = infer_block_value(stmt.else_block, stmt)
+        require_type(else_type, then_type, "if expression branches", stmt)
+        return then_type
 
     def walk_expr(node):
         if isinstance(node, IntegerLiteral):
@@ -152,6 +181,10 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             for arg, (pname, ptype) in zip(node.args, params):
                 require_type(arg.type, ptype, f"argument {pname} to {node.name}", arg)
             node.type = ret_type
+        elif isinstance(node, IfExpr):
+            walk_expr(node.condition)
+            require_type(node.condition.type, "bool", "if condition", node.condition)
+            node.type = infer_if_value(node)
         elif isinstance(node, EnumRef):
             # 验证 enum 类型存在
             symtab.lookup(node.enum_name)
@@ -294,7 +327,13 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                     symtab.declare(pname, _ptype)
                 walk_stmts(stmt.body.statements)
                 if current_return_type != "void" and not ends_with_return(stmt.body.statements):
-                    fail(f"function {stmt.name}: missing return {current_return_type}", stmt)
+                    if stmt.body.statements and isinstance(stmt.body.statements[-1], ExpressionStatement):
+                        require_type(stmt.body.statements[-1].expr.type, current_return_type, f"function {stmt.name} tail expression", stmt.body.statements[-1].expr)
+                    elif stmt.body.statements and isinstance(stmt.body.statements[-1], If):
+                        tail_type = infer_if_value(stmt.body.statements[-1])
+                        require_type(tail_type, current_return_type, f"function {stmt.name} tail expression", stmt.body.statements[-1])
+                    else:
+                        fail(f"function {stmt.name}: missing return {current_return_type}", stmt)
                 current_return_type = prev_return_type
                 symtab.pop_scope()
             elif isinstance(stmt, Return):

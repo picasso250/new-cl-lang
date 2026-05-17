@@ -388,6 +388,14 @@ class Parser:
     def parse_primary(self):
         t = self.peek()
 
+        if t.kind == TokenKind.IF:
+            start = self.advance()
+            condition = self.parse_expression()
+            then_block = self._parse_block()
+            self.expect(TokenKind.ELSE)
+            else_block = self._parse_block()
+            return self.span(IfExpr(condition, then_block, else_block), start)
+
         if t.kind == TokenKind.STRING:
             start = self.advance()
             return self.span(StringLiteral(t.value), start)

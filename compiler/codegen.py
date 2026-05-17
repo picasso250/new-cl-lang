@@ -43,7 +43,7 @@ def generate_c(program: "Program") -> str:
         FunctionDeclaration, StructDecl, EnumDecl, Switch, ForIn, Block, If, While,
         VariableDeclaration, ExpressionStatement, Assignment,
         Return, SliceExpr, ArrayLiteral, SliceLiteral, FunctionCall,
-        IntegerLiteral, StringLiteral, BoolLiteral, Identifier, BinaryOp, UnaryOp,
+        IfExpr, IntegerLiteral, StringLiteral, BoolLiteral, Identifier, BinaryOp, UnaryOp,
         EnumRef, StructLiteral, FieldAccess, IndexAccess, SliceExpr, MethodCall,
         TryCatch, Throw, Defer, Break
     )
@@ -127,6 +127,12 @@ def generate_c(program: "Program") -> str:
         elif isinstance(node, FunctionCall):
             for arg in node.args:
                 collect_expr_types(arg)
+        elif isinstance(node, IfExpr):
+            collect_expr_types(node.condition)
+            for s in node.then_block.statements:
+                collect_stmt_types(s)
+            for s in node.else_block.statements:
+                collect_stmt_types(s)
         elif isinstance(node, StructLiteral):
             for _n, val in node.fields:
                 collect_expr_types(val)
@@ -507,6 +513,8 @@ def generate_c(program: "Program") -> str:
                 return arg_c
             args = ', '.join(gen_expr(a) for a in node.args)
             return f'{node.name}({args})'
+        if isinstance(node, IfExpr):
+            raise NotImplementedError("if expression is only supported in let initializers and function tail returns")
         if isinstance(node, StructLiteral):
             vals = ', '.join(gen_expr(v) for _n, v in node.fields)
             return f'({node.name}){{{vals}}}'
@@ -584,6 +592,44 @@ def generate_c(program: "Program") -> str:
         else:
             _lines.append(f'{pad}{gen_expr(expr)};')
 
+    def block_tail_expr(block):
+        if not block.statements:
+            return None
+        last = block.statements[-1]
+        if isinstance(last, ExpressionStatement):
+            return last.expr
+        return None
+
+    def gen_block_value_assign(block, target, indent):
+        tail = block_tail_expr(block)
+        body = block.statements[:-1] if tail else block.statements
+        for s in body:
+            gen_stmt(s, indent)
+        _lines.append(f'{"    " * indent}{target} = {gen_expr(tail)};')
+
+    def gen_block_value_return(block, indent):
+        tail = block_tail_expr(block)
+        body = block.statements[:-1] if tail else block.statements
+        for s in body:
+            gen_stmt(s, indent)
+        _lines.append(f'{"    " * indent}return {gen_expr(tail)};')
+
+    def gen_ifexpr_assign(expr, target, indent):
+        pad = '    ' * indent
+        _lines.append(f'{pad}if ({gen_expr(expr.condition)}) {{')
+        gen_block_value_assign(expr.then_block, target, indent + 1)
+        _lines.append(f'{pad}}} else {{')
+        gen_block_value_assign(expr.else_block, target, indent + 1)
+        _lines.append(f'{pad}}}')
+
+    def gen_if_tail_return(stmt, indent):
+        pad = '    ' * indent
+        _lines.append(f'{pad}if ({gen_expr(stmt.condition)}) {{')
+        gen_block_value_return(stmt.then_block, indent + 1)
+        _lines.append(f'{pad}}} else {{')
+        gen_block_value_return(stmt.else_block, indent + 1)
+        _lines.append(f'{pad}}}')
+
     def gen_stmt(stmt, indent=1):
         pad = '    ' * indent
 
@@ -613,6 +659,16 @@ def generate_c(program: "Program") -> str:
                 _lines.append(f'{pad}{c_t} {stmt.name} = {gen_expr(stmt.initializer)};')
                 _gc_vars[stmt.name] = stmt.type
                 _lines.append(f'{pad}__nc_gc_push_root((void*){stmt.name}.ptr);')
+            elif isinstance(stmt.initializer, IfExpr):
+                c_t = _type_to_c(stmt.type)
+                _lines.append(f'{pad}{c_t} {stmt.name};')
+                gen_ifexpr_assign(stmt.initializer, stmt.name, indent)
+                if stmt.type == "str":
+                    _gc_vars[stmt.name] = "str"
+                    _lines.append(f'{pad}__nc_gc_push_root((void*){stmt.name}.ptr);')
+                elif isinstance(stmt.type, str) and stmt.type.startswith("[]"):
+                    _gc_vars[stmt.name] = stmt.type
+                    _lines.append(f'{pad}__nc_gc_push_root((void*){stmt.name}.ptr);')
             else:
                 c_t = _type_to_c(stmt.type)
                 # 堆分配: let s = new Struct{...}
@@ -783,7 +839,14 @@ def generate_c(program: "Program") -> str:
             all_params = func.params
         params_c = ', '.join(f'{_type_to_c(t)} {n}' for n, t in all_params) or "void"
         _lines.append(f'{c_ret} {fname}({params_c}) {{')
-        for s in func.body.statements:
+        for i, s in enumerate(func.body.statements):
+            if i == len(func.body.statements) - 1 and (func.return_type or "void") != "void":
+                if isinstance(s, ExpressionStatement):
+                    _lines.append(f'    return {gen_expr(s.expr)};')
+                    continue
+                if isinstance(s, If):
+                    gen_if_tail_return(s, 1)
+                    continue
             gen_stmt(s)
         # 函数退出：弹出所有 GC 根
         for _ in _gc_vars:
@@ -794,7 +857,14 @@ def generate_c(program: "Program") -> str:
         _gc_vars.clear()
         _lines.append('int main(void) {')
         _lines.append('    __nc_gc_init();')
-        for s in main_func.body.statements:
+        for i, s in enumerate(main_func.body.statements):
+            if i == len(main_func.body.statements) - 1 and (main_func.return_type or "void") != "void":
+                if isinstance(s, ExpressionStatement):
+                    _lines.append(f'    return {gen_expr(s.expr)};')
+                    continue
+                if isinstance(s, If):
+                    gen_if_tail_return(s, 1)
+                    continue
             gen_stmt(s)
         for _ in _gc_vars:
             _lines.append('    __nc_gc_pop_root();')
