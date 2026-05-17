@@ -44,6 +44,9 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         if len(args) != expected:
             fail(f"{context}: expected {expected} args, got {len(args)}", node)
 
+    def ends_with_return(stmts):
+        return bool(stmts) and isinstance(stmts[-1], Return)
+
     def walk_expr(node):
         if isinstance(node, IntegerLiteral):
             node.type = "i32"
@@ -260,6 +263,10 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             elif isinstance(stmt, Assignment):
                 walk_expr(stmt.target)
                 walk_expr(stmt.expr)
+                if isinstance(stmt.target, Identifier):
+                    sym = symtab.lookup(stmt.target.name)
+                    if not sym.is_mut:
+                        fail(f"cannot assign to immutable variable {stmt.target.name}", stmt.target)
                 require_type(stmt.expr.type, stmt.target.type, "assignment", stmt.expr)
             elif isinstance(stmt, If):
                 walk_expr(stmt.condition)
@@ -286,6 +293,8 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 for pname, _ptype in stmt.params:
                     symtab.declare(pname, _ptype)
                 walk_stmts(stmt.body.statements)
+                if current_return_type != "void" and not ends_with_return(stmt.body.statements):
+                    fail(f"function {stmt.name}: missing return {current_return_type}", stmt)
                 current_return_type = prev_return_type
                 symtab.pop_scope()
             elif isinstance(stmt, Return):
@@ -308,15 +317,16 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 if stmt.start is not None:
                     walk_expr(stmt.start)
                     walk_expr(stmt.end)
+                    require_type(stmt.start.type, "i32", "for range start", stmt.start)
+                    require_type(stmt.end.type, "i32", "for range end", stmt.end)
                 else:
                     walk_expr(stmt.iterable)
+                    if not stmt.iterable.type.startswith("[]"):
+                        fail(f"for-in: expected slice, got {stmt.iterable.type}", stmt.iterable)
                 symtab.push_scope()
                 symtab.declare(stmt.index, "i32")
                 if stmt.value:
-                    if stmt.iterable.type.startswith("[]"):
-                        symtab.declare(stmt.value, stmt.iterable.type[2:])
-                    else:
-                        symtab.declare(stmt.value, "i32")
+                    symtab.declare(stmt.value, stmt.iterable.type[2:])
                 walk_stmts(stmt.body.statements)
                 symtab.pop_scope()
             elif isinstance(stmt, TryCatch):
