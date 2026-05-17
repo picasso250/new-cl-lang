@@ -55,16 +55,29 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             return last.expr
         return None
 
+    def block_tail_if(block):
+        if not block.statements:
+            return None
+        last = block.statements[-1]
+        if isinstance(last, If):
+            return last
+        return None
+
     def infer_block_value(block, context_node):
         symtab.push_scope()
-        body = block.statements[:-1] if block_tail_expr(block) else block.statements
+        has_tail = block_tail_expr(block) or block_tail_if(block)
+        body = block.statements[:-1] if has_tail else block.statements
         walk_stmts(body)
         tail = block_tail_expr(block)
-        if tail is None:
+        tail_if = block_tail_if(block)
+        if tail is None and tail_if is None:
             symtab.pop_scope()
             fail("if expression branch has no value", context_node)
-        walk_expr(tail)
-        tail_type = tail.type
+        if tail is not None:
+            walk_expr(tail)
+            tail_type = tail.type
+        else:
+            tail_type = infer_if_value(tail_if)
         symtab.pop_scope()
         return tail_type
 

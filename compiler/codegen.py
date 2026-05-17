@@ -600,18 +600,40 @@ def generate_c(program: "Program") -> str:
             return last.expr
         return None
 
+    def block_tail_if(block):
+        if not block.statements:
+            return None
+        last = block.statements[-1]
+        if isinstance(last, If):
+            return last
+        return None
+
     def gen_block_value_assign(block, target, indent):
         tail = block_tail_expr(block)
-        body = block.statements[:-1] if tail else block.statements
+        tail_if = block_tail_if(block)
+        body = block.statements[:-1] if (tail or tail_if) else block.statements
         for s in body:
             gen_stmt(s, indent)
+        if tail_if is not None:
+            gen_if_tail_assign(tail_if, target, indent)
+            return
+        if isinstance(tail, IfExpr):
+            gen_ifexpr_assign(tail, target, indent)
+            return
         _lines.append(f'{"    " * indent}{target} = {gen_expr(tail)};')
 
     def gen_block_value_return(block, indent):
         tail = block_tail_expr(block)
-        body = block.statements[:-1] if tail else block.statements
+        tail_if = block_tail_if(block)
+        body = block.statements[:-1] if (tail or tail_if) else block.statements
         for s in body:
             gen_stmt(s, indent)
+        if tail_if is not None:
+            gen_if_tail_return(tail_if, indent)
+            return
+        if isinstance(tail, IfExpr):
+            gen_ifexpr_return(tail, indent)
+            return
         _lines.append(f'{"    " * indent}return {gen_expr(tail)};')
 
     def gen_ifexpr_assign(expr, target, indent):
@@ -620,6 +642,22 @@ def generate_c(program: "Program") -> str:
         gen_block_value_assign(expr.then_block, target, indent + 1)
         _lines.append(f'{pad}}} else {{')
         gen_block_value_assign(expr.else_block, target, indent + 1)
+        _lines.append(f'{pad}}}')
+
+    def gen_if_tail_assign(stmt, target, indent):
+        pad = '    ' * indent
+        _lines.append(f'{pad}if ({gen_expr(stmt.condition)}) {{')
+        gen_block_value_assign(stmt.then_block, target, indent + 1)
+        _lines.append(f'{pad}}} else {{')
+        gen_block_value_assign(stmt.else_block, target, indent + 1)
+        _lines.append(f'{pad}}}')
+
+    def gen_ifexpr_return(expr, indent):
+        pad = '    ' * indent
+        _lines.append(f'{pad}if ({gen_expr(expr.condition)}) {{')
+        gen_block_value_return(expr.then_block, indent + 1)
+        _lines.append(f'{pad}}} else {{')
+        gen_block_value_return(expr.else_block, indent + 1)
         _lines.append(f'{pad}}}')
 
     def gen_if_tail_return(stmt, indent):

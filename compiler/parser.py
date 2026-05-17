@@ -389,7 +389,10 @@ class Parser:
             condition = self.parse_expression()
             then_block = self._parse_block()
             self.expect(TokenKind.ELSE)
-            else_block = self._parse_block()
+            if self.peek().kind == TokenKind.IF:
+                else_block = Block([ExpressionStatement(self.parse_primary())])
+            else:
+                else_block = self._parse_block()
             return self.span(IfExpr(condition, then_block, else_block), start)
 
         if t.kind == TokenKind.STRING:
