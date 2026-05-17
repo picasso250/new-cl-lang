@@ -51,6 +51,8 @@ def generate_c(program: "Program") -> str:
     _lines = []
     _slice_types = set()
     _gc_vars = {}  # 变量名 → 类型 (str/nc_map) 用于 GC 根追踪
+    _tmp_id = [0]
+    _expr_indent = [1]
 
     # ——— 收集类型定义 ———
     structs = []
@@ -441,6 +443,11 @@ def generate_c(program: "Program") -> str:
         _lines.append('')
 
     # ——— 代码生成内部函数 ———
+    def next_tmp(prefix="__nc_tmp"):
+        name = f'{prefix}_{_tmp_id[0]}'
+        _tmp_id[0] += 1
+        return name
+
     def gen_expr(node) -> str:
         if isinstance(node, IntegerLiteral):
             return str(node.value)
@@ -514,7 +521,11 @@ def generate_c(program: "Program") -> str:
             args = ', '.join(gen_expr(a) for a in node.args)
             return f'{node.name}({args})'
         if isinstance(node, IfExpr):
-            raise NotImplementedError("if expression is only supported in let initializers and function tail returns")
+            tmp = next_tmp("__nc_if")
+            pad = '    ' * _expr_indent[0]
+            _lines.append(f'{pad}{_type_to_c(node.type)} {tmp};')
+            gen_ifexpr_assign(node, tmp, _expr_indent[0])
+            return tmp
         if isinstance(node, StructLiteral):
             vals = ', '.join(gen_expr(v) for _n, v in node.fields)
             return f'({node.name}){{{vals}}}'
@@ -566,18 +577,23 @@ def generate_c(program: "Program") -> str:
         raise NotImplementedError(f"gen_expr: {type(node).__name__}")
 
     def gen_expr_stmt(expr, indent=0):
+        old_indent = _expr_indent[0]
+        _expr_indent[0] = indent
         pad = '    ' * indent
         if isinstance(expr, FunctionCall) and expr.name == "gc_collect":
             _lines.append(f'{pad}__nc_gc_collect();')
+            _expr_indent[0] = old_indent
             return
         if isinstance(expr, FunctionCall) and expr.name == "gc_live":
             _lines.append(f'{pad}printf("%d\n", (int)__nc_gc_live());')
+            _expr_indent[0] = old_indent
             return
         if isinstance(expr, FunctionCall) and expr.name == "write_file":
             path = expr.args[0]
             content = expr.args[1]
             path_c = f'"{path.value}"' if isinstance(path, StringLiteral) else f'{gen_expr(path)}.ptr'
             _lines.append(f'{pad}__nc_write_file({path_c}, {gen_expr(content)});')
+            _expr_indent[0] = old_indent
             return
         if isinstance(expr, FunctionCall) and expr.name == "print":
             arg = expr.args[0]
@@ -591,6 +607,7 @@ def generate_c(program: "Program") -> str:
                 _lines.append(f'{pad}printf("%d\\n", {gen_expr(arg)});')
         else:
             _lines.append(f'{pad}{gen_expr(expr)};')
+        _expr_indent[0] = old_indent
 
     def block_tail_expr(block):
         if not block.statements:
@@ -669,9 +686,12 @@ def generate_c(program: "Program") -> str:
         _lines.append(f'{pad}}}')
 
     def gen_stmt(stmt, indent=1):
+        old_indent = _expr_indent[0]
+        _expr_indent[0] = indent
         pad = '    ' * indent
 
         if isinstance(stmt, (StructDecl, EnumDecl)):
+            _expr_indent[0] = old_indent
             return
         if isinstance(stmt, VariableDeclaration):
             if isinstance(stmt.initializer, ArrayLiteral):
@@ -735,6 +755,7 @@ def generate_c(program: "Program") -> str:
                         _lines.append(f'{pad}__nc_gc_push_root((void*){stmt.name}.ptr);')
                     elif isinstance(stmt.type, str) and stmt.type.startswith("[]"):
                         _lines.append(f'{pad}__nc_gc_push_root((void*){stmt.name}.ptr);')
+            _expr_indent[0] = old_indent
             return
         if isinstance(stmt, Assignment):
             if isinstance(stmt.target, Identifier):
@@ -762,9 +783,11 @@ def generate_c(program: "Program") -> str:
                 _lines.append(f'{pad}{gen_expr(stmt.target)} = {gen_expr(stmt.expr)};')
             else:
                 _lines.append(f'{pad}{gen_expr(stmt.target)} = {gen_expr(stmt.expr)};')
+            _expr_indent[0] = old_indent
             return
         if isinstance(stmt, ExpressionStatement):
             gen_expr_stmt(stmt.expr, indent)
+            _expr_indent[0] = old_indent
             return
         if isinstance(stmt, If):
             cond_c = gen_expr(stmt.condition)
@@ -776,6 +799,7 @@ def generate_c(program: "Program") -> str:
                 for s in stmt.else_block.statements:
                     gen_stmt(s, indent + 1)
             _lines.append(f'{pad}}}')
+            _expr_indent[0] = old_indent
             return
         if isinstance(stmt, While):
             cond_c = gen_expr(stmt.condition)
@@ -783,6 +807,7 @@ def generate_c(program: "Program") -> str:
             for s in stmt.body.statements:
                 gen_stmt(s, indent + 1)
             _lines.append(f'{pad}}}')
+            _expr_indent[0] = old_indent
             return
         if isinstance(stmt, Switch):
             scrut_c = gen_expr(stmt.scrutinee)
@@ -793,6 +818,7 @@ def generate_c(program: "Program") -> str:
                 gen_stmt(case_stmt, indent + 2)
                 _lines.append(f'{pad}        break;')
             _lines.append(f'{pad}}}')
+            _expr_indent[0] = old_indent
             return
         if isinstance(stmt, ForIn):
             if stmt.start is not None:
@@ -808,16 +834,19 @@ def generate_c(program: "Program") -> str:
             for s in stmt.body.statements:
                 gen_stmt(s, indent + 1)
             _lines.append(f'{pad}}}')
+            _expr_indent[0] = old_indent
             return
         if isinstance(stmt, Return):
             if stmt.expr:
                 _lines.append(f'{pad}return {gen_expr(stmt.expr)};')
             else:
                 _lines.append(f'{pad}return;')
+            _expr_indent[0] = old_indent
             return
         if isinstance(stmt, Block):
             for s in stmt.statements:
                 gen_stmt(s, indent)
+            _expr_indent[0] = old_indent
             return
         if isinstance(stmt, TryCatch):
             pad = '    ' * indent
@@ -835,19 +864,23 @@ def generate_c(program: "Program") -> str:
                 gen_stmt(s, indent + 2)
             _lines.append(f'{pad}    }}')
             _lines.append(f'{pad}}}')
+            _expr_indent[0] = old_indent
             return
         if isinstance(stmt, Throw):
             pad = '    ' * indent
             ex_c = gen_expr(stmt.expr)
             _lines.append(f'{pad}__nc_throw({ex_c});')
+            _expr_indent[0] = old_indent
             return
         if isinstance(stmt, Defer):
             for s in stmt.body.statements:
                 gen_stmt(s, indent)
+            _expr_indent[0] = old_indent
             return
         if isinstance(stmt, Break):
             pad = '    ' * indent
             _lines.append(f'{pad}break;')
+            _expr_indent[0] = old_indent
             return
         raise NotImplementedError(f"gen_stmt: {type(stmt).__name__}")
 
