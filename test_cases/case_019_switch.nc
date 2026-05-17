@@ -2,7 +2,7 @@
 fun main() {
     enum Color { Red, Green, Blue }
     let c = Color::Green
-    let mut result = 0
+    let result = 0
     switch c {
         Color::Red   -> result = 1
         Color::Green -> result = 2

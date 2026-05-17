@@ -5,15 +5,13 @@
 
 
 class Symbol:
-    def __init__(self, name: str, nc_type: str, scope_level: int, is_mut: bool = False):
+    def __init__(self, name: str, nc_type: str, scope_level: int):
         self.name = name
         self.nc_type = nc_type
         self.scope_level = scope_level
-        self.is_mut = is_mut
 
     def __repr__(self):
-        m = "mut " if self.is_mut else ""
-        return f"Symbol({m}{self.name}: {self.nc_type} @{self.scope_level})"
+        return f"Symbol({self.name}: {self.nc_type} @{self.scope_level})"
 
 
 C_RUNTIME_NAMES = {
@@ -49,11 +47,11 @@ class SymbolTable:
         self._scopes.pop()
         self._level -= 1
 
-    def declare(self, name: str, nc_type: str, is_mut: bool = False):
+    def declare(self, name: str, nc_type: str):
         _check_c_runtime_name(name)
         if name in self._scopes[-1]:
             raise NameError(f"Variable '{name}' already declared in this scope")
-        self._scopes[-1][name] = Symbol(name, nc_type, self._level, is_mut)
+        self._scopes[-1][name] = Symbol(name, nc_type, self._level)
 
     def declare_global(self, name: str, nc_type: str):
         """类型定义统一入全局层（struct/enum），不随作用域弹出。"""

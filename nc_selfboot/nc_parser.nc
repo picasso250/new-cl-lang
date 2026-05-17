@@ -68,7 +68,7 @@ fun parse_primary(src: str, pos: i32): ParseResult {
         if pos < len(src) && src[pos] == '(' {
             pos = pos + 1
             pos = skip_space(src, pos)
-            let mut args = ""
+            let args = ""
             if pos < len(src) && src[pos] != ')' {
                 let er = parse_expression(src, pos)
                 args = er.code
@@ -94,7 +94,7 @@ fun parse_primary(src: str, pos: i32): ParseResult {
 
 fun parse_mul(src: str, pos: i32): ParseResult {
     let r = parse_primary(src, pos)
-    let mut code = r.code;  pos = r.pos;  pos = skip_space(src, pos)
+    let code = r.code;  pos = r.pos;  pos = skip_space(src, pos)
     while pos < len(src) && (src[pos] == '*' || src[pos] == '/') {
         let op = src[pos];  pos = pos + 1
         let r2 = parse_primary(src, pos)
@@ -107,7 +107,7 @@ fun parse_mul(src: str, pos: i32): ParseResult {
 
 fun parse_add(src: str, pos: i32): ParseResult {
     let r = parse_mul(src, pos)
-    let mut code = r.code;  pos = r.pos;  pos = skip_space(src, pos)
+    let code = r.code;  pos = r.pos;  pos = skip_space(src, pos)
     while pos < len(src) && (src[pos] == '+' || src[pos] == '-') {
         let op = src[pos];  pos = pos + 1
         let r2 = parse_mul(src, pos)
@@ -120,8 +120,8 @@ fun parse_add(src: str, pos: i32): ParseResult {
 
 fun parse_cmp(src: str, pos: i32): ParseResult {
     let r = parse_add(src, pos)
-    let mut code = r.code;  pos = r.pos;  pos = skip_space(src, pos)
-    let mut op = ""
+    let code = r.code;  pos = r.pos;  pos = skip_space(src, pos)
+    let op = ""
     if pos + 1 < len(src) && src[pos] == '=' && src[pos+1] == '=' { op = "=="; pos = pos + 2 }
     else if pos + 1 < len(src) && src[pos] == '!' && src[pos+1] == '=' { op = "!="; pos = pos + 2 }
     else if pos + 1 < len(src) && src[pos] == '<' && src[pos+1] == '=' { op = "<="; pos = pos + 2 }
@@ -138,7 +138,7 @@ fun parse_cmp(src: str, pos: i32): ParseResult {
 
 fun parse_expression(src: str, pos: i32): ParseResult {
     let r = parse_cmp(src, pos)
-    let mut code = r.code
+    let code = r.code
     pos = r.pos
     pos = skip_space(src, pos)
     while pos + 1 < len(src) && src[pos] == '&' && src[pos+1] == '&' {
@@ -171,7 +171,7 @@ fun c_type(nc: str): str {
 fun parse_block(src: str, pos: i32): ParseResult {
     pos = skip_space(src, pos)
     if pos < len(src) && src[pos] == '{' { pos = pos + 1 }
-    let mut code = "{\n"
+    let code = "{\n"
     pos = skip_space(src, pos)
     while pos < len(src) && src[pos] != '}' {
         let r = parse_statement(src, pos)
@@ -210,13 +210,13 @@ fun parse_statement(src: str, pos: i32): ParseResult {
             pos = nr.pos
             # 参数
             pos = skip_space(src, pos)
-            let mut params_c = "void"
+            let params_c = "void"
             if pos < len(src) && src[pos] == '(' {
                 pos = pos + 1
                 pos = skip_space(src, pos)
                 if pos < len(src) && src[pos] != ')' {
                     let pr = read_word(src, pos)
-                    let mut pcode = "int " + pr.code
+                    let pcode = "int " + pr.code
                     pos = pr.pos
                     pos = skip_space(src, pos)
                     if pos < len(src) && src[pos] == ':' {
@@ -230,7 +230,7 @@ fun parse_statement(src: str, pos: i32): ParseResult {
                         pos = pos + 1
                         pos = skip_space(src, pos)
                         let pr2 = read_word(src, pos)
-                        let mut p2 = "int " + pr2.code
+                        let p2 = "int " + pr2.code
                         pos = pr2.pos
                         pos = skip_space(src, pos)
                         if pos < len(src) && src[pos] == ':' {
@@ -249,7 +249,7 @@ fun parse_statement(src: str, pos: i32): ParseResult {
                 if pos < len(src) && src[pos] == ')' { pos = pos + 1 }
             }
             # 返回类型
-            let mut ret = "int"
+            let ret = "int"
             pos = skip_space(src, pos)
             if pos < len(src) && src[pos] == ':' {
                 pos = pos + 1
@@ -279,10 +279,6 @@ fun parse_statement(src: str, pos: i32): ParseResult {
 
         if word == "let" {
             pos = skip_space(src, pos)
-            if pos < len(src) && src[pos] == 'm' {
-                let r2 = read_word(src, pos)
-                if r2.code == "mut" { pos = r2.pos; pos = skip_space(src, pos) }
-            }
             let vr = read_word(src, pos)
             let vname = vr.code
             pos = vr.pos
@@ -311,7 +307,7 @@ fun parse_statement(src: str, pos: i32): ParseResult {
             let cr = parse_expression(src, pos)
             pos = cr.pos
             let block = parse_block(src, pos)
-            let mut code = "    if (" + cr.code + ") " + block.code
+            let code = "    if (" + cr.code + ") " + block.code
             pos = block.pos
             pos = skip_space(src, pos)
             if pos < len(src) && src[pos] == 'e' {
@@ -386,7 +382,7 @@ fun parse_top(src: str, pos: i32): ParseResult {
 fun main() {
     let src = read_file("input.nc")
     let pos = 0
-    let mut out = "#include <stdio.h>\n"
+    let out = "#include <stdio.h>\n"
     out = out + "#include <stdlib.h>\n"
     out = out + "#include <string.h>\n"
     out = out + "typedef struct { const char* _ptr; long long _len; } str;\n"

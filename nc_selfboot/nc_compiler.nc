@@ -3,10 +3,10 @@
 
 fun main() {
     let src = "fun main() { print(1+2) }"
-    let mut i = 0
-    let mut out = "#include <stdio.h>\n"
-    let mut after_if = 0
-    let mut need_semi = 0
+    let i = 0
+    let out = "#include <stdio.h>\n"
+    let after_if = 0
+    let need_semi = 0
 
     while i < src._len {
         let ch = src[i]
@@ -37,7 +37,6 @@ fun main() {
             } else if word == "let" {
                 out = out + "    int "
                 need_semi = 1
-            } else if word == "mut" {
             } else if word == "print" {
                 out = out + "    printf(\"%d\\n\", "
                 need_semi = 1

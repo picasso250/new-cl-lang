@@ -141,11 +141,11 @@ type Point = struct { x: f64, y: f64 }
 
 ## 五、变量
 
-**无 `const` 关键字。`let` = 不可变，`let mut` = 可变。**
+**无 `const` / `mut` 关键字。`let` 声明变量，变量可重赋值。**
 
 ```nc
-let x: i32 = 5         # 不可变
-let mut y: u64 = 0     # 可变
+let x: i32 = 5
+let y: u64 = 0
 y = 42
 
 let MAX = 256          # 编译期常量（let 初始值为编译期已知量）

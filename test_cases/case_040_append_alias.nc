@@ -3,8 +3,8 @@
 # STDOUT: 99
 # STDOUT: 40
 fun main() {
-    let mut arr = []i32 { 10, 20, 30, 40 }
-    let mut s1 = arr[1:3]
+    let arr = []i32 { 10, 20, 30, 40 }
+    let s1 = arr[1:3]
     s1[1] = 99
     print(arr[2])
     print(arr[3])

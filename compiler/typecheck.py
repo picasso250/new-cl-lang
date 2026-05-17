@@ -290,16 +290,12 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 walk_expr(stmt.initializer)
                 stmt.type = stmt.annotation or stmt.initializer.type
                 require_type(stmt.initializer.type, stmt.type, f"let {stmt.name}", stmt)
-                symtab.declare(stmt.name, stmt.type, stmt.mut)
+                symtab.declare(stmt.name, stmt.type)
             elif isinstance(stmt, ExpressionStatement):
                 walk_expr(stmt.expr)
             elif isinstance(stmt, Assignment):
                 walk_expr(stmt.target)
                 walk_expr(stmt.expr)
-                if isinstance(stmt.target, Identifier):
-                    sym = symtab.lookup(stmt.target.name)
-                    if not sym.is_mut:
-                        fail(f"cannot assign to immutable variable {stmt.target.name}", stmt.target)
                 require_type(stmt.expr.type, stmt.target.type, "assignment", stmt.expr)
             elif isinstance(stmt, If):
                 walk_expr(stmt.condition)

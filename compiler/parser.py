@@ -88,18 +88,14 @@ class Parser:
 
     def _parse_let(self):
         start = self.advance()
-        mut = self.match(TokenKind.IDENT) and self.tokens[self.pos - 1].value == "mut"
-        if mut:
-            name = self.expect(TokenKind.IDENT).value
-        else:
-            name = self.tokens[self.pos - 1].value
+        name = self.expect(TokenKind.IDENT).value
         annotation = None
         if self.peek().kind == TokenKind.COLON:
             self.advance()
             annotation = self._parse_type()
         self.expect(TokenKind.EQ)
         init = self.parse_expression()
-        stmt = self.span(VariableDeclaration(name, mut, init, annotation), start)
+        stmt = self.span(VariableDeclaration(name, init, annotation), start)
         self.match(TokenKind.SEMI)
         return stmt
 

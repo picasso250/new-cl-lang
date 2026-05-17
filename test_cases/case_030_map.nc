@@ -2,7 +2,7 @@
 # STDOUT: 1
 
 fun main() {
-    let mut m = map_new()
+    let m = map_new()
     m["greeting"] = "hello world"
     let val = m["greeting"]
     print(val)
