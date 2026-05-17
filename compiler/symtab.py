@@ -39,6 +39,7 @@ class SymbolTable:
         self._scopes: list[dict[str, Symbol]] = [{}]
         self._level = 0
         self._structs: dict[str, dict[str, str]] = {}  # struct名 → {字段: 类型}
+        self._enums: dict[str, set[str]] = {}  # enum名 → variants
 
     def push_scope(self):
         self._scopes.append({})
@@ -73,6 +74,14 @@ class SymbolTable:
         if name not in self._structs:
             raise NameError(f"Struct '{name}' not found")
         return self._structs[name]
+
+    def declare_enum(self, name: str, variants: list[str]):
+        self._enums[name] = set(variants)
+
+    def lookup_enum(self, name: str) -> set[str]:
+        if name not in self._enums:
+            raise NameError(f"Enum '{name}' not found")
+        return self._enums[name]
 
     def __repr__(self):
         return f"SymbolTable({self._scopes})"
@@ -127,6 +136,7 @@ def build_symbol_table(program: "Program") -> SymbolTable:
                 table.declare_struct(stmt.name, stmt.fields)
             elif isinstance(stmt, EnumDecl):
                 table.declare_global(stmt.name, "enum")
+                table.declare_enum(stmt.name, stmt.variants)
             elif isinstance(stmt, (If, While, Block, Switch, ForIn, TryCatch)):
                 _descend_stmt(stmt)
             elif isinstance(stmt, ExpressionStatement):

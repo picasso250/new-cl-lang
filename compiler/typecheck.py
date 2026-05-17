@@ -152,6 +152,9 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         elif isinstance(node, EnumRef):
             # 验证 enum 类型存在
             symtab.lookup(node.enum_name)
+            variants = symtab.lookup_enum(node.enum_name)
+            if node.variant not in variants:
+                fail(f"enum {node.enum_name}: unknown variant {node.variant}", node)
             node.type = node.enum_name
         elif isinstance(node, StructLiteral):
             if node.heap:
@@ -161,10 +164,17 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             for _fname, fval in node.fields:
                 walk_expr(fval)
             fields = symtab.lookup_struct(node.name)
+            seen = set()
             for fname, fval in node.fields:
+                if fname in seen:
+                    fail(f"struct {node.name}: duplicate field {fname}", node)
+                seen.add(fname)
                 if fname not in fields:
                     fail(f"struct {node.name}: unknown field {fname}", node)
                 require_type(fval.type, fields[fname], f"struct {node.name}.{fname}", fval)
+            for fname in fields:
+                if fname not in seen:
+                    fail(f"struct {node.name}: missing field {fname}", node)
         elif isinstance(node, FieldAccess):
             walk_expr(node.obj)
             obj_type = node.obj.type
@@ -292,6 +302,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 walk_expr(stmt.scrutinee)
                 for case_val, case_stmt in stmt.cases:
                     walk_expr(case_val)
+                    require_type(case_val.type, stmt.scrutinee.type, "switch case", case_val)
                     walk_stmts([case_stmt])
             elif isinstance(stmt, ForIn):
                 if stmt.start is not None:
