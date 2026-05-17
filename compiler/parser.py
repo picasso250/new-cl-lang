@@ -33,6 +33,10 @@ class Parser:
             return True
         return False
 
+    def span(self, node, start: Token):
+        node.span = (start.pos, self.tokens[self.pos - 1].pos)
+        return node
+
     # ========== 程序入口 ==========
 
     def parse_program(self) -> Program:
@@ -83,7 +87,7 @@ class Parser:
         return stmt
 
     def _parse_let(self):
-        self.advance()
+        start = self.advance()
         mut = self.match(TokenKind.IDENT) and self.tokens[self.pos - 1].value == "mut"
         if mut:
             name = self.expect(TokenKind.IDENT).value
@@ -95,7 +99,7 @@ class Parser:
             annotation = self._parse_type()
         self.expect(TokenKind.EQ)
         init = self.parse_expression()
-        stmt = VariableDeclaration(name, mut, init, annotation)
+        stmt = self.span(VariableDeclaration(name, mut, init, annotation), start)
         self.match(TokenKind.SEMI)
         return stmt
 
@@ -172,11 +176,11 @@ class Parser:
                                    receiver_name, receiver_type)
 
     def _parse_return(self):
-        self.advance()
+        start = self.advance()
         expr = None
         if self.peek().kind != TokenKind.SEMI and self.peek().kind != TokenKind.RBRACE:
             expr = self.parse_expression()
-        stmt = Return(expr)
+        stmt = self.span(Return(expr), start)
         self.match(TokenKind.SEMI)
         return stmt
 
@@ -189,10 +193,10 @@ class Parser:
         return TryCatch(body, error_name, catch_body)
 
     def _parse_throw(self):
-        self.advance()
+        start = self.advance()
         expr = self.parse_expression()
         self.match(TokenKind.SEMI)
-        return Throw(expr)
+        return self.span(Throw(expr), start)
 
     def _parse_defer(self):
         self.advance()
@@ -385,16 +389,16 @@ class Parser:
         t = self.peek()
 
         if t.kind == TokenKind.STRING:
-            self.advance()
-            return StringLiteral(t.value)
+            start = self.advance()
+            return self.span(StringLiteral(t.value), start)
 
         if t.kind == TokenKind.INTEGER:
-            self.advance()
-            return IntegerLiteral(t.value)
+            start = self.advance()
+            return self.span(IntegerLiteral(t.value), start)
 
         if t.kind == TokenKind.BOOL:
-            self.advance()
-            return BoolLiteral(t.value)
+            start = self.advance()
+            return self.span(BoolLiteral(t.value), start)
 
         if t.kind == TokenKind.CHAR:
             self.advance()
@@ -420,7 +424,8 @@ class Parser:
             return StructLiteral(name, fields, heap=True)
 
         if t.kind == TokenKind.IDENT:
-            name = self.advance().value
+            start = self.advance()
+            name = start.value
             # EnumRef: Name::Variant
             if self.peek().kind == TokenKind.COLONCOLON:
                 self.advance()
@@ -436,7 +441,7 @@ class Parser:
                         self.advance()
                         args.append(self.parse_expression())
                 self.expect(TokenKind.RPAREN)
-                return FunctionCall(name, args)
+                return self.span(FunctionCall(name, args), start)
             # struct 字面量: Name { field: val, ... }
             # 前瞻避免混淆 if 块：需 { 后首个 IDENT 之后是 :
             if self.peek().kind == TokenKind.LBRACE:
@@ -464,12 +469,12 @@ class Parser:
                             fval = self.parse_expression()
                             fields.append((fname, fval))
                     self.expect(TokenKind.RBRACE)
-                    return StructLiteral(name, fields)
-            return Identifier(name)
+                    return self.span(StructLiteral(name, fields), start)
+            return self.span(Identifier(name), start)
 
         if t.kind == TokenKind.LBRACKET:
             # [N]T { e1, e2, ... } 数组字面量 / []T { ... } 切片字面量
-            self.advance()  # 吞 [
+            start = self.advance()  # 吞 [
             length = None
             if self.peek().kind != TokenKind.RBRACKET:
                 length = self.expect(TokenKind.INTEGER).value
@@ -484,8 +489,8 @@ class Parser:
                     elements.append(self.parse_expression())
             self.expect(TokenKind.RBRACE)
             if length is None:
-                return SliceLiteral(elem_type, elements)
-            return ArrayLiteral(length, elem_type, elements)
+                return self.span(SliceLiteral(elem_type, elements), start)
+            return self.span(ArrayLiteral(length, elem_type, elements), start)
 
         if t.kind == TokenKind.LPAREN:
             self.advance()

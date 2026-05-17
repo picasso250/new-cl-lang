@@ -52,7 +52,11 @@ def _compile_and_run(source: str) -> tuple[str, str, int]:
 def test_all_cases():
     for fname, source, expected in _discover_cases():
         actual = _compile_and_run(source)
-        assert actual == expected, f"{fname}: expected '{expected}', got '{actual}'"
+        if expected[0] == "__ERROR__":
+            assert actual[0] == "__ERROR__", f"{fname}: expected error, got {actual}"
+            assert expected[1] in actual[1], f"{fname}: expected error containing {expected[1]!r}, got {actual[1]!r}"
+        else:
+            assert actual == expected, f"{fname}: expected '{expected}', got '{actual}'"
 
 
 if __name__ == "__main__":
@@ -75,7 +79,11 @@ if __name__ == "__main__":
         failed = 0
         for fname, source, expected in _discover_cases():
             actual = _compile_and_run(source)
-            if actual == expected:
+            if expected[0] == "__ERROR__":
+                ok = actual[0] == "__ERROR__" and expected[1] in actual[1]
+            else:
+                ok = actual == expected
+            if ok:
                 print(f"  PASS  {fname}")
                 passed += 1
             else:

@@ -22,7 +22,7 @@ def compile_nc_to_c(nc_source: str) -> str:
     symtab = build_symbol_table(ast)
 
     # Pass 2: 类型推断
-    infer_types(ast, symtab)
+    infer_types(ast, symtab, nc_source)
 
     # Pass 3: 代码生成
     return generate_c(ast)
