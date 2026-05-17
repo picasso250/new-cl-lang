@@ -43,7 +43,7 @@ def generate_c(program: "Program") -> str:
         FunctionDeclaration, StructDecl, EnumDecl, Switch, ForIn, Block, If, While,
         VariableDeclaration, ExpressionStatement, Assignment,
         Return, SliceExpr, ArrayLiteral, SliceLiteral, FunctionCall,
-        IfExpr, IntegerLiteral, StringLiteral, BoolLiteral, Identifier, BinaryOp, UnaryOp,
+        IfExpr, BlockExpr, IntegerLiteral, StringLiteral, BoolLiteral, Identifier, BinaryOp, UnaryOp,
         EnumRef, StructLiteral, FieldAccess, IndexAccess, SliceExpr, MethodCall,
         TryCatch, Throw, Defer, Break
     )
@@ -134,6 +134,9 @@ def generate_c(program: "Program") -> str:
             for s in node.then_block.statements:
                 collect_stmt_types(s)
             for s in node.else_block.statements:
+                collect_stmt_types(s)
+        elif isinstance(node, BlockExpr):
+            for s in node.block.statements:
                 collect_stmt_types(s)
         elif isinstance(node, StructLiteral):
             for _n, val in node.fields:
@@ -448,6 +451,21 @@ def generate_c(program: "Program") -> str:
         _tmp_id[0] += 1
         return name
 
+    def root_expr_temp(name, nc_type, indent):
+        pad = '    ' * indent
+        if nc_type == "nc_map":
+            _gc_vars[name] = nc_type
+            _lines.append(f'{pad}__nc_gc_push_root((void*){name}.entries);')
+        elif nc_type == "str":
+            _gc_vars[name] = nc_type
+            _lines.append(f'{pad}__nc_gc_push_root((void*){name}.ptr);')
+        elif isinstance(nc_type, str) and nc_type.startswith("[]"):
+            _gc_vars[name] = nc_type
+            _lines.append(f'{pad}__nc_gc_push_root((void*){name}.ptr);')
+        elif isinstance(nc_type, str) and nc_type.startswith("*"):
+            _gc_vars[name] = nc_type
+            _lines.append(f'{pad}__nc_gc_push_root((void*){name});')
+
     def gen_expr(node) -> str:
         if isinstance(node, IntegerLiteral):
             return str(node.value)
@@ -525,6 +543,14 @@ def generate_c(program: "Program") -> str:
             pad = '    ' * _expr_indent[0]
             _lines.append(f'{pad}{_type_to_c(node.type)} {tmp};')
             gen_ifexpr_assign(node, tmp, _expr_indent[0])
+            root_expr_temp(tmp, node.type, _expr_indent[0])
+            return tmp
+        if isinstance(node, BlockExpr):
+            tmp = next_tmp("__nc_block")
+            pad = '    ' * _expr_indent[0]
+            _lines.append(f'{pad}{_type_to_c(node.type)} {tmp};')
+            gen_block_value_assign(node.block, tmp, _expr_indent[0])
+            root_expr_temp(tmp, node.type, _expr_indent[0])
             return tmp
         if isinstance(node, StructLiteral):
             vals = ', '.join(gen_expr(v) for _n, v in node.fields)

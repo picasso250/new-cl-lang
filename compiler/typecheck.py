@@ -15,7 +15,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         Assignment, Block, If, While, FunctionDeclaration, Return,
         StructDecl, StructLiteral, FieldAccess,
         EnumDecl, EnumRef, Switch, ForIn,
-        IfExpr, IntegerLiteral, StringLiteral, BoolLiteral, BinaryOp, UnaryOp, FunctionCall, Identifier,
+        IfExpr, BlockExpr, IntegerLiteral, StringLiteral, BoolLiteral, BinaryOp, UnaryOp, FunctionCall, Identifier,
         ArrayLiteral, SliceLiteral, IndexAccess, SliceExpr, MethodCall, TryCatch, Throw, Defer, Break
     )
 
@@ -196,6 +196,8 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             walk_expr(node.condition)
             require_type(node.condition.type, "bool", "if condition", node.condition)
             node.type = infer_if_value(node)
+        elif isinstance(node, BlockExpr):
+            node.type = infer_block_value(node.block, node)
         elif isinstance(node, EnumRef):
             # 验证 enum 类型存在
             symtab.lookup(node.enum_name)

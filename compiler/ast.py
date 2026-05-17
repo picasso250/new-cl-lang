@@ -296,6 +296,15 @@ class IfExpr(Node):
     def __repr__(self):
         return f"IfExpr({self.condition} {self.then_block} else {self.else_block})"
 
+
+class BlockExpr(Node):
+    """{ statements; tail_expr } 作为表达式。"""
+    def __init__(self, block: Block):
+        self.block = block
+
+    def __repr__(self):
+        return f"BlockExpr({self.block})"
+
 class StringLiteral(Node):
     def __init__(self, value: str):
         self.value = value

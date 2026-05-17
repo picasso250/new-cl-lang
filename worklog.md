@@ -98,3 +98,11 @@
 已得 enum + switch + [N]T。尚差三件：`[]T`、`for...in`、`str` 真布局（含文件 IO）。
 
 建议下一步：`for i in 0 .. 10`（遍历数组），再 `[]T` 切片。
+
+---
+
+## 2026-05-17 运行时债
+
+- if-expression lowering 会生成临时变量。若临时变量类型是 `str`、`[]T`、`nc_map`、`*Struct` 等持有 GC 堆指针的类型，目前不会被自动加入 GC root。
+- 当前手动 GC 下通常不炸；但若未来 GC 在分配时自动触发，或表达式求值期间出现 `gc_collect()`，临时值可能被过早回收。
+- 这不是泄露问题，而是 premature free / dangling pointer 风险。自动 GC 前必须处理。

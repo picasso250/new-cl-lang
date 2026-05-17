@@ -395,6 +395,11 @@ class Parser:
                 else_block = self._parse_block()
             return self.span(IfExpr(condition, then_block, else_block), start)
 
+        if t.kind == TokenKind.LBRACE:
+            start = self.peek()
+            block = self._parse_block()
+            return self.span(BlockExpr(block), start)
+
         if t.kind == TokenKind.STRING:
             start = self.advance()
             return self.span(StringLiteral(t.value), start)
