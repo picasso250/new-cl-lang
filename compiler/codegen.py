@@ -758,6 +758,8 @@ def generate_c(program: "Program") -> str:
                     _lines.append(f'{pad}{obj_c}.ptr[{idx_c}] = {gen_expr(stmt.expr)};')
                 else:
                     _lines.append(f'{pad}{obj_c}[{idx_c}] = {gen_expr(stmt.expr)};')
+            elif isinstance(stmt.target, FieldAccess):
+                _lines.append(f'{pad}{gen_expr(stmt.target)} = {gen_expr(stmt.expr)};')
             else:
                 _lines.append(f'{pad}{gen_expr(stmt.target)} = {gen_expr(stmt.expr)};')
             return

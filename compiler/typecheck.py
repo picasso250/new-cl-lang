@@ -89,6 +89,50 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         require_type(else_type, then_type, "if expression branches", stmt)
         return then_type
 
+    def check_builtin_call(node):
+        if node.name == "print":
+            require_arg_count(node.args, 1, "print", node)
+            return "void"
+        if node.name == "read_file":
+            require_arg_count(node.args, 1, "read_file", node)
+            require_type(node.args[0].type, "str", "read_file path", node)
+            return "str"
+        if node.name == "write_file":
+            require_arg_count(node.args, 2, "write_file", node)
+            require_type(node.args[0].type, "str", "write_file path", node)
+            require_type(node.args[1].type, "str", "write_file content", node)
+            return "void"
+        if node.name == "append":
+            require_arg_count(node.args, 2, "append", node)
+            if not node.args[0].type.startswith("[]"):
+                fail(f"append: expected slice, got {node.args[0].type}", node)
+            require_type(node.args[1].type, node.args[0].type[2:], "append element", node)
+            return node.args[0].type
+        if node.name == "map_new":
+            return "nc_map"
+        if node.name == "map_set_s":
+            return "void"
+        if node.name == "map_get_s":
+            return "str"
+        if node.name == "map_has":
+            return "i32"
+        if node.name == "str":
+            require_arg_count(node.args, 1, "str", node)
+            return "str"
+        if node.name == "i32":
+            require_arg_count(node.args, 1, "i32", node)
+            return "i32"
+        if node.name == "gc_collect":
+            return "void"
+        if node.name == "gc_live":
+            return "i32"
+        if node.name == "len":
+            require_arg_count(node.args, 1, "len", node)
+            if not (node.args[0].type == "str" or node.args[0].type == "nc_map" or node.args[0].type.startswith("[]")):
+                fail(f"len: expected str, map, or slice, got {node.args[0].type}", node)
+            return "i32"
+        return None
+
     def walk_expr(node):
         if isinstance(node, IntegerLiteral):
             node.type = "i32"
@@ -131,60 +175,9 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         elif isinstance(node, FunctionCall):
             for arg in node.args:
                 walk_expr(arg)
-            # 内置函数
-            if node.name == "print":
-                require_arg_count(node.args, 1, "print", node)
-                node.type = "void"
-                return
-            if node.name == "read_file":
-                require_arg_count(node.args, 1, "read_file", node)
-                require_type(node.args[0].type, "str", "read_file path", node)
-                node.type = "str"
-                return
-            if node.name == "write_file":
-                require_arg_count(node.args, 2, "write_file", node)
-                require_type(node.args[0].type, "str", "write_file path", node)
-                require_type(node.args[1].type, "str", "write_file content", node)
-                node.type = "void"
-                return
-            if node.name == "append":
-                require_arg_count(node.args, 2, "append", node)
-                if not node.args[0].type.startswith("[]"):
-                    fail(f"append: expected slice, got {node.args[0].type}", node)
-                require_type(node.args[1].type, node.args[0].type[2:], "append element", node)
-                node.type = node.args[0].type if node.args else "i32"
-                return
-            if node.name == "map_new":
-                node.type = "nc_map"
-                return
-            if node.name == "map_set_s":
-                node.type = "void"
-                return
-            if node.name == "map_get_s":
-                node.type = "str"
-                return
-            if node.name == "map_has":
-                node.type = "i32"
-                return
-            if node.name == "str":
-                require_arg_count(node.args, 1, "str", node)
-                node.type = "str"
-                return
-            if node.name == "i32":
-                require_arg_count(node.args, 1, "i32", node)
-                node.type = "i32"
-                return
-            if node.name == "gc_collect":
-                node.type = "void"
-                return
-            if node.name == "gc_live":
-                node.type = "i32"
-                return
-            if node.name == "len":
-                require_arg_count(node.args, 1, "len", node)
-                if not (node.args[0].type == "str" or node.args[0].type == "nc_map" or node.args[0].type.startswith("[]")):
-                    fail(f"len: expected str, map, or slice, got {node.args[0].type}", node)
-                node.type = "i32"
+            builtin_type = check_builtin_call(node)
+            if builtin_type is not None:
+                node.type = builtin_type
                 return
             funcs = getattr(symtab, "_functions", {})
             if node.name not in funcs:
