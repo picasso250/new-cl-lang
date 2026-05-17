@@ -20,6 +20,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
     )
 
     current_return_type = "void"
+    break_depth = 0
 
     def line_col(pos: int) -> tuple[int, int]:
         if source is None:
@@ -88,6 +89,10 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         else_type = infer_block_value(stmt.else_block, stmt)
         require_type(else_type, then_type, "if expression branches", stmt)
         return then_type
+
+    def require_assignable(target):
+        if not isinstance(target, (Identifier, IndexAccess, FieldAccess)):
+            fail(f"invalid assignment target: {type(target).__name__}", target)
 
     def check_builtin_call(node):
         if node.name == "print":
@@ -290,7 +295,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 node.type = node.array.type
 
     def walk_stmts(stmts: list):
-        nonlocal current_return_type
+        nonlocal current_return_type, break_depth
         for stmt in stmts:
             if isinstance(stmt, VariableDeclaration):
                 walk_expr(stmt.initializer)
@@ -300,6 +305,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             elif isinstance(stmt, ExpressionStatement):
                 walk_expr(stmt.expr)
             elif isinstance(stmt, Assignment):
+                require_assignable(stmt.target)
                 walk_expr(stmt.target)
                 walk_expr(stmt.expr)
                 require_type(stmt.expr.type, stmt.target.type, "assignment", stmt.expr)
@@ -317,7 +323,9 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 walk_expr(stmt.condition)
                 require_type(stmt.condition.type, "bool", "while condition", stmt.condition)
                 symtab.push_scope()
+                break_depth += 1
                 walk_stmts(stmt.body.statements)
+                break_depth -= 1
                 symtab.pop_scope()
             elif isinstance(stmt, FunctionDeclaration):
                 symtab.push_scope()
@@ -350,10 +358,12 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 pass  # 已在 Pass 1 注册
             elif isinstance(stmt, Switch):
                 walk_expr(stmt.scrutinee)
+                break_depth += 1
                 for case_val, case_stmt in stmt.cases:
                     walk_expr(case_val)
                     require_type(case_val.type, stmt.scrutinee.type, "switch case", case_val)
                     walk_stmts([case_stmt])
+                break_depth -= 1
             elif isinstance(stmt, ForIn):
                 if stmt.start is not None:
                     walk_expr(stmt.start)
@@ -368,7 +378,9 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 symtab.declare(stmt.index, "i32")
                 if stmt.value:
                     symtab.declare(stmt.value, stmt.iterable.type[2:])
+                break_depth += 1
                 walk_stmts(stmt.body.statements)
+                break_depth -= 1
                 symtab.pop_scope()
             elif isinstance(stmt, TryCatch):
                 walk_stmts(stmt.try_block.statements)
@@ -382,7 +394,8 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             elif isinstance(stmt, Defer):
                 walk_stmts(stmt.body.statements)
             elif isinstance(stmt, Break):
-                pass
+                if break_depth <= 0:
+                    fail("break outside loop or switch", stmt)
             elif isinstance(stmt, Block):
                 symtab.push_scope()
                 walk_stmts(stmt.statements)
