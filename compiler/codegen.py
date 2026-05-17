@@ -34,6 +34,10 @@ def _slice_append_name(elem_type: str) -> str:
     return f'__nc_append_{_c_ident(elem_type)}'
 
 
+def _slice_copy_name(elem_type: str) -> str:
+    return f'__nc_slice_copy_{_c_ident(elem_type)}'
+
+
 def generate_c(program: "Program") -> str:
     from compiler.ast import (
         FunctionDeclaration, StructDecl, EnumDecl, Switch, ForIn, Block, If, While,
@@ -278,11 +282,31 @@ def generate_c(program: "Program") -> str:
     _lines.append('    return r;')
     _lines.append('}')
     _lines.append('')
+    _lines.append('static str __nc_str_slice_copy(str s, uint64_t start, uint64_t end) {')
+    _lines.append('    uint64_t n = end - start;')
+    _lines.append('    uint8_t* buf = (uint8_t*)__nc_gc_alloc(n + 1);')
+    _lines.append('    if (n) memcpy(buf, s.ptr + start, n);')
+    _lines.append('    buf[n] = 0;')
+    _lines.append('    str r = {buf, n};')
+    _lines.append('    return r;')
+    _lines.append('}')
+    _lines.append('')
     for elem_type in sorted(_slice_types):
         slice_name = _slice_type_name(elem_type)
         elem_c = _type_to_c(elem_type)
         append_name = _slice_append_name(elem_type)
+        copy_name = _slice_copy_name(elem_type)
         _lines.append(f'typedef struct {{ {elem_c}* ptr; uint64_t len; uint64_t cap; }} {slice_name};')
+        _lines.append('')
+        _lines.append(f'static {slice_name} {copy_name}({elem_c}* src, uint64_t len) {{')
+        _lines.append(f'    {slice_name} s = {{0, 0, 0}};')
+        _lines.append('    if (len) {')
+        _lines.append(f'        s.ptr = ({elem_c}*)__nc_gc_alloc(len * sizeof({elem_c}));')
+        _lines.append('        memcpy(s.ptr, src, len * sizeof(*s.ptr));')
+        _lines.append('    }')
+        _lines.append('    s.len = len; s.cap = len;')
+        _lines.append('    return s;')
+        _lines.append('}')
         _lines.append('')
         _lines.append(f'static {slice_name} {append_name}({slice_name} s, {elem_c} elem) {{')
         _lines.append('    if (s.len >= s.cap) {')
@@ -516,11 +540,18 @@ def generate_c(program: "Program") -> str:
         if isinstance(node, SliceExpr):
             arr_c = gen_expr(node.array)
             start_c = gen_expr(node.start) if node.start else '0'
-            end_c = gen_expr(node.end) if node.end else f'{arr_c}.len'
-            if getattr(node.array, "type", "") == "str":
-                return f'(str){{{arr_c}.ptr + {start_c}, {end_c} - {start_c}}}'
-            if getattr(node.array, "type", "").startswith("[]"):
-                return f'({_type_to_c(node.type)}){{{arr_c}.ptr + {start_c}, {end_c} - {start_c}, {end_c} - {start_c}}}'
+            arr_t = getattr(node.array, "type", "")
+            if arr_t == "str":
+                end_c = gen_expr(node.end) if node.end else f'{arr_c}.len'
+                return f'__nc_str_slice_copy({arr_c}, {start_c}, {end_c})'
+            if arr_t.startswith("[]"):
+                end_c = gen_expr(node.end) if node.end else f'{arr_c}.len'
+                elem_t = arr_t[2:]
+                return f'{_slice_copy_name(elem_t)}({arr_c}.ptr + {start_c}, {end_c} - {start_c})'
+            if arr_t.startswith("["):
+                end_c = gen_expr(node.end) if node.end else arr_t[1:].split("]", 1)[0]
+                elem_t = arr_t.split("]", 1)[1]
+                return f'{_slice_copy_name(elem_t)}({arr_c} + {start_c}, {end_c} - {start_c})'
             return f'({arr_c} + {start_c})'
         raise NotImplementedError(f"gen_expr: {type(node).__name__}")
 
@@ -574,27 +605,10 @@ def generate_c(program: "Program") -> str:
                     _gc_vars[stmt.name] = stmt.type
                     _lines.append(f'{pad}__nc_gc_push_root((void*){stmt.name}.ptr);')
             elif isinstance(stmt.initializer, SliceExpr):
-                se = stmt.initializer
-                # str 切片 → str struct
-                if getattr(se.array, "type", "") == "str":
-                    arr_c = gen_expr(se.array)
-                    start_c = gen_expr(se.start) if se.start else '0'
-                    end_c = gen_expr(se.end) if se.end else f'{arr_c}.len'
-                    _lines.append(f'{pad}str {stmt.name} = (str){{{arr_c}.ptr + {start_c}, {end_c} - {start_c}}};')
-                    _gc_vars[stmt.name] = "str"
-                    _lines.append(f'{pad}__nc_gc_push_root((void*){stmt.name}.ptr);')
-                else:
-                    c_t = _type_to_c(stmt.type)
-                    arr_c = gen_expr(se.array)
-                    start_c = gen_expr(se.start) if se.start else '0'
-                    if getattr(se.array, "type", "").startswith("[]"):
-                        end_c = gen_expr(se.end) if se.end else f'{arr_c}.len'
-                        _lines.append(f'{pad}{c_t} {stmt.name} = {{{arr_c}.ptr + {start_c}, {end_c} - {start_c}, {end_c} - {start_c}}};')
-                    else:
-                        end_c = gen_expr(se.end) if se.end else '0'
-                        _lines.append(f'{pad}{c_t} {stmt.name} = {{{arr_c} + {start_c}, {end_c} - {start_c}, {end_c} - {start_c}}};')
-                    _gc_vars[stmt.name] = stmt.type
-                    _lines.append(f'{pad}__nc_gc_push_root((void*){stmt.name}.ptr);')
+                c_t = _type_to_c(stmt.type)
+                _lines.append(f'{pad}{c_t} {stmt.name} = {gen_expr(stmt.initializer)};')
+                _gc_vars[stmt.name] = stmt.type
+                _lines.append(f'{pad}__nc_gc_push_root((void*){stmt.name}.ptr);')
             else:
                 c_t = _type_to_c(stmt.type)
                 # 堆分配: let s = new Struct{...}

@@ -48,6 +48,16 @@ fun parse_primary(src: str, pos: i32): ParseResult {
         if pos < len(src) && src[pos] == ')' { pos = pos + 1 }
         return ParseResult { code: "(" + er.code + ")", pos: pos }
     }
+    if ch == '"' {
+        let start = pos
+        pos = pos + 1
+        while pos < len(src) && src[pos] != '"' {
+            if src[pos] == '\\' && pos + 1 < len(src) { pos = pos + 1 }
+            pos = pos + 1
+        }
+        if pos < len(src) { pos = pos + 1 }
+        return ParseResult { code: src[start:pos], pos: pos }
+    }
     if is_digit(ch) { return read_number(src, pos) }
     if is_alpha(ch) {
         let r = read_word(src, pos)
@@ -127,7 +137,25 @@ fun parse_cmp(src: str, pos: i32): ParseResult {
 }
 
 fun parse_expression(src: str, pos: i32): ParseResult {
-    return parse_cmp(src, pos)
+    let r = parse_cmp(src, pos)
+    let mut code = r.code
+    pos = r.pos
+    pos = skip_space(src, pos)
+    while pos + 1 < len(src) && src[pos] == '&' && src[pos+1] == '&' {
+        pos = pos + 2
+        let r2 = parse_cmp(src, pos)
+        code = "(" + code + " && " + r2.code + ")"
+        pos = r2.pos
+        pos = skip_space(src, pos)
+    }
+    while pos + 1 < len(src) && src[pos] == '|' && src[pos+1] == '|' {
+        pos = pos + 2
+        let r2 = parse_cmp(src, pos)
+        code = "(" + code + " || " + r2.code + ")"
+        pos = r2.pos
+        pos = skip_space(src, pos)
+    }
+    return ParseResult { code: code, pos: pos }
 }
 
 # ——— 类型映射 ———
@@ -164,6 +192,10 @@ fun parse_statement(src: str, pos: i32): ParseResult {
     if pos >= len(src) { return ParseResult { code: "", pos: pos } }
     let ch = src[pos]
     if ch == '}' { return ParseResult { code: "", pos: pos } }
+    if ch == '#' {
+        while pos < len(src) && src[pos] != '\n' { pos = pos + 1 }
+        return ParseResult { code: "", pos: pos }
+    }
     if ch == ';' { return ParseResult { code: "", pos: pos + 1 } }
 
     if is_alpha(ch) {
@@ -233,6 +265,12 @@ fun parse_statement(src: str, pos: i32): ParseResult {
             return ParseResult { code: code, pos: block.pos }
         }
 
+        if word == "struct" {
+            while pos < len(src) && src[pos] != '}' { pos = pos + 1 }
+            if pos < len(src) { pos = pos + 1 }
+            return ParseResult { code: "", pos: pos }
+        }
+
         if word == "return" {
             pos = skip_space(src, pos)
             let er = parse_expression(src, pos)
@@ -262,6 +300,9 @@ fun parse_statement(src: str, pos: i32): ParseResult {
             pos = er.pos
             pos = skip_space(src, pos)
             if pos < len(src) && src[pos] == ')' { pos = pos + 1 }
+            if len(er.code) > 0 && er.code[0] == '"' {
+                return ParseResult { code: "    printf(" + er.code + "); printf(\"\\n\");\n", pos: pos }
+            }
             return ParseResult { code: "    printf(\"%d\\n\", " + er.code + ");\n", pos: pos }
         }
 
@@ -314,18 +355,30 @@ fun parse_top(src: str, pos: i32): ParseResult {
     if pos >= len(src) { return ParseResult { code: "", pos: pos } }
     let ch = src[pos]
     if ch == '}' { return ParseResult { code: "", pos: pos } }
+    if ch == '#' {
+        while pos < len(src) && src[pos] != '\n' { pos = pos + 1 }
+        return ParseResult { code: "", pos: pos }
+    }
     if ch == ';' { return ParseResult { code: "", pos: pos + 1 } }
 
     if is_alpha(ch) {
         let r = read_word(src, pos)
         let word = r.code
+        let word_start = pos
         pos = r.pos
 
         if word == "fun" {
-            return parse_statement(src, pos - 3)
+            return parse_statement(src, word_start)
         }
+        if word == "struct" {
+            while pos < len(src) && src[pos] != '}' { pos = pos + 1 }
+            if pos < len(src) { pos = pos + 1 }
+            return ParseResult { code: "", pos: pos }
+        }
+        # 其他：从词开始重新解析为语句
+        return parse_statement(src, word_start)
     }
-    # fallback: statement
+    # fallback: non-alpha
     return parse_statement(src, pos)
 }
 

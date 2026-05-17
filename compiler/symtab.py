@@ -16,6 +16,24 @@ class Symbol:
         return f"Symbol({m}{self.name}: {self.nc_type} @{self.scope_level})"
 
 
+C_RUNTIME_NAMES = {
+    "div",
+    "exit",
+    "malloc",
+    "free",
+    "printf",
+    "strlen",
+    "memcpy",
+    "memcmp",
+    "str",
+}
+
+
+def _check_c_runtime_name(name: str):
+    if name in C_RUNTIME_NAMES or name.startswith("__nc_"):
+        raise NameError(f"'{name}' conflicts with NC/C runtime name")
+
+
 class SymbolTable:
     def __init__(self):
         self._scopes: list[dict[str, Symbol]] = [{}]
@@ -31,6 +49,7 @@ class SymbolTable:
         self._level -= 1
 
     def declare(self, name: str, nc_type: str, is_mut: bool = False):
+        _check_c_runtime_name(name)
         if name in self._scopes[-1]:
             raise NameError(f"Variable '{name}' already declared in this scope")
         self._scopes[-1][name] = Symbol(name, nc_type, self._level, is_mut)

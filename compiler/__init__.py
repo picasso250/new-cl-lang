@@ -28,8 +28,8 @@ def compile_nc_to_c(nc_source: str) -> str:
     return generate_c(ast)
 
 
-def run_c_code(c_code: str) -> str:
-    """C 源码 → 编译 → 运行 → 返回 stdout。"""
+def run_c_code(c_code: str) -> "tuple[str, str, int]":
+    """C 源码 → 编译 → 运行 → 返回 (stdout, stderr, returncode)。"""
     with tempfile.TemporaryDirectory() as tmpdir:
         c_path = os.path.join(tmpdir, "out.c")
         exe_path = os.path.join(tmpdir, "out.exe")
@@ -53,4 +53,4 @@ def run_c_code(c_code: str) -> str:
             [exe_path],
             capture_output=True, text=True
         )
-        return result.stdout
+        return result.stdout, result.stderr, result.returncode

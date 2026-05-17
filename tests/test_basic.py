@@ -21,16 +21,26 @@ def _discover_cases():
     for path in sorted(glob.glob(os.path.join(CASE_DIR, "*.nc"))):
         with open(path, encoding="utf-8") as f:
             source = f.read()
-        expected_lines = re.findall(r"#\s*STDOUT:\s*(.*)", source)
-        expected = "\n".join(expected_lines) if expected_lines else None
+        expected = _parse_expected(source)
         fname = os.path.basename(path)
         cases.append((fname, source, expected))
     return cases
 
 
-def _compile_and_run(source: str) -> str:
+def _parse_expected(source: str) -> tuple[str, str, int]:
+    stdout_lines = re.findall(r"#\s*STDOUT:\s*(.*)", source)
+    stderr_lines = re.findall(r"#\s*STDERR:\s*(.*)", source)
+    rc_lines = re.findall(r"#\s*RC:\s*(-?\d+)", source)
+    stdout = "\n".join(stdout_lines)
+    stderr = "\n".join(stderr_lines)
+    rc = int(rc_lines[-1]) if rc_lines else 0
+    return stdout, stderr, rc
+
+
+def _compile_and_run(source: str) -> tuple[str, str, int]:
     c_code = compile_nc_to_c(source)
-    return run_c_code(c_code).strip()
+    stdout, stderr, rc = run_c_code(c_code)
+    return stdout.strip(), stderr.strip(), rc
 
 
 def test_all_cases():
@@ -48,16 +58,12 @@ if __name__ == "__main__":
             sys.exit(1)
         with open(path, encoding="utf-8") as f:
             source = f.read()
-        expected_lines = re.findall(r"#\s*STDOUT:\s*(.*)", source)
-        expected = "\n".join(expected_lines) if expected_lines else None
+        expected = _parse_expected(source)
         print(f"=== {fname} ===")
         actual = _compile_and_run(source)
-        if expected is not None:
-            print(f"expected: {repr(expected)}")
-            print(f"actual:   {repr(actual)}")
-            print("PASS" if actual == expected else "FAIL")
-        else:
-            print(f"output: {repr(actual)}")
+        print(f"expected: {repr(expected)}")
+        print(f"actual:   {repr(actual)}")
+        print("PASS" if actual == expected else "FAIL")
     else:
         passed = 0
         failed = 0
