@@ -43,7 +43,7 @@ def generate_c(program: "Program") -> str:
         FunctionDeclaration, StructDecl, EnumDecl, Switch, ForIn, Block, If, While,
         VariableDeclaration, ExpressionStatement, Assignment,
         Return, SliceExpr, ArrayLiteral, SliceLiteral, FunctionCall,
-        IntegerLiteral, StringLiteral, Identifier, BinaryOp, UnaryOp,
+        IntegerLiteral, StringLiteral, BoolLiteral, Identifier, BinaryOp, UnaryOp,
         EnumRef, StructLiteral, FieldAccess, IndexAccess, SliceExpr, MethodCall,
         TryCatch, Throw, Defer, Break
     )
@@ -438,6 +438,8 @@ def generate_c(program: "Program") -> str:
     def gen_expr(node) -> str:
         if isinstance(node, IntegerLiteral):
             return str(node.value)
+        if isinstance(node, BoolLiteral):
+            return '1' if node.value else '0'
         if isinstance(node, StringLiteral):
             esc = node.value.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
             return f'(str){{(uint8_t*)"{esc}", {len(node.value)}}}'
@@ -575,6 +577,8 @@ def generate_c(program: "Program") -> str:
             if arg_type == "str":
                 arg_c = gen_expr(arg)
                 _lines.append(f'{pad}printf("%.*s\\n", (int)({arg_c}).len, ({arg_c}).ptr);')
+            elif arg_type == "bool":
+                _lines.append(f'{pad}printf("%d\\n", {gen_expr(arg)});')
             else:
                 _lines.append(f'{pad}printf("%d\\n", {gen_expr(arg)});')
         else:

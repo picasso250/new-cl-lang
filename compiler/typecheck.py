@@ -11,7 +11,7 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
         Assignment, Block, If, While, FunctionDeclaration, Return,
         StructDecl, StructLiteral, FieldAccess,
         EnumDecl, EnumRef, Switch, ForIn,
-        IntegerLiteral, StringLiteral, BinaryOp, UnaryOp, FunctionCall, Identifier,
+        IntegerLiteral, StringLiteral, BoolLiteral, BinaryOp, UnaryOp, FunctionCall, Identifier,
         ArrayLiteral, SliceLiteral, IndexAccess, SliceExpr, MethodCall, TryCatch, Throw, Defer, Break
     )
 
@@ -30,26 +30,37 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
             node.type = "i32"
         elif isinstance(node, StringLiteral):
             node.type = "str"
+        elif isinstance(node, BoolLiteral):
+            node.type = "bool"
         elif isinstance(node, Identifier):
             sym = symtab.lookup(node.name)
             node.type = sym.nc_type
         elif isinstance(node, UnaryOp):
             walk_expr(node.operand)
-            node.type = node.operand.type
+            if node.op == "!":
+                require_type(node.operand.type, "bool", "logical not")
+                node.type = "bool"
+            else:
+                node.type = node.operand.type
         elif isinstance(node, BinaryOp):
             walk_expr(node.left)
             walk_expr(node.right)
+            if node.op in ("&&", "||"):
+                require_type(node.left.type, "bool", f"logical operator {node.op}")
+                require_type(node.right.type, "bool", f"logical operator {node.op}")
+                node.type = "bool"
+                return
             if node.op == "+" and node.left.type == "str":
                 require_type(node.right.type, "str", "string concatenation")
                 node.type = "str"
                 return
             if node.op in ("==", "!="):
                 require_type(node.right.type, node.left.type, "comparison")
-                node.type = "i32"
+                node.type = "bool"
                 return
             if node.op in ("<", ">", "<=", ">="):
                 require_type(node.right.type, node.left.type, "comparison")
-                node.type = "i32"
+                node.type = "bool"
                 return
             require_type(node.right.type, node.left.type, f"binary operator {node.op}")
             node.type = node.left.type
@@ -221,6 +232,7 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
                 require_type(stmt.expr.type, stmt.target.type, "assignment")
             elif isinstance(stmt, If):
                 walk_expr(stmt.condition)
+                require_type(stmt.condition.type, "bool", "if condition")
                 symtab.push_scope()
                 walk_stmts(stmt.then_block.statements)
                 symtab.pop_scope()
@@ -230,6 +242,7 @@ def infer_types(program: "Program", symtab: "SymbolTable"):
                     symtab.pop_scope()
             elif isinstance(stmt, While):
                 walk_expr(stmt.condition)
+                require_type(stmt.condition.type, "bool", "while condition")
                 symtab.push_scope()
                 walk_stmts(stmt.body.statements)
                 symtab.pop_scope()

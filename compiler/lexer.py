@@ -8,6 +8,7 @@ class TokenKind(Enum):
     INTEGER = auto()
     STRING = auto()
     CHAR = auto()
+    BOOL = auto()
     IDENT = auto()
     # 关键字
     LET = auto()
@@ -85,6 +86,8 @@ KEYWORDS = {
     "catch": TokenKind.CATCH,
     "throw": TokenKind.THROW,
     "defer": TokenKind.DEFER,
+    "true": TokenKind.BOOL,
+    "false": TokenKind.BOOL,
 }
 
 
@@ -165,7 +168,8 @@ def lex(source: str):
                 i += 1
             word = source[start:i]
             kind = KEYWORDS.get(word, TokenKind.IDENT)
-            yield Token(kind, word, start)
+            value = (word == "true") if kind == TokenKind.BOOL else word
+            yield Token(kind, value, start)
             continue
 
         # 双字符符号（先试两字符）

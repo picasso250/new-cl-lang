@@ -304,6 +304,14 @@ class IntegerLiteral(Node):
         return f"Integer({self.value})"
 
 
+class BoolLiteral(Node):
+    def __init__(self, value: bool):
+        self.value = value
+
+    def __repr__(self):
+        return "Bool(true)" if self.value else "Bool(false)"
+
+
 class BinaryOp(Node):
     def __init__(self, left, op: str, right):
         self.left = left

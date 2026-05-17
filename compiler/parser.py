@@ -392,6 +392,10 @@ class Parser:
             self.advance()
             return IntegerLiteral(t.value)
 
+        if t.kind == TokenKind.BOOL:
+            self.advance()
+            return BoolLiteral(t.value)
+
         if t.kind == TokenKind.CHAR:
             self.advance()
             return IntegerLiteral(t.value)

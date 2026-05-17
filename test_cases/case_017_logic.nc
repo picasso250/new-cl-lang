@@ -2,9 +2,9 @@
 # STDOUT: ok
 # STDOUT: ok
 fun main() {
-    let a = 1
-    let b = 1
-    let c = 0
+    let a = true
+    let b = true
+    let c = false
     if a && b { print("ok") }
     if a || c { print("ok") }
     if !c { print("ok") }
