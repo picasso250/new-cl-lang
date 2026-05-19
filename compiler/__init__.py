@@ -42,11 +42,6 @@ def run_c_code(c_code: str) -> "tuple[str, str, int]":
             capture_output=True, text=True
         )
         if result.returncode != 0:
-            result = subprocess.run(
-                ["clang", c_path, "-o", exe_path],
-                capture_output=True, text=True
-            )
-        if result.returncode != 0:
             raise RuntimeError(f"C compilation failed:\n{result.stderr}")
 
         result = subprocess.run(

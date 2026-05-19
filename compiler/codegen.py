@@ -29,6 +29,9 @@ def generate_c(program: "Program") -> str:
     _gc_vars = {}  # 变量名 → 类型 (str/nc_map) 用于 GC 根追踪
     _tmp_id = [0]
     _expr_indent = [1]
+    _return_label = [None]
+    _return_var = [None]
+    _return_type = ["void"]
 
     # ——— 收集类型定义 ———
     structs = []
@@ -216,6 +219,18 @@ def generate_c(program: "Program") -> str:
             _gc_vars[name] = nc_type
             _lines.append(f'{pad}__nc_gc_push_root((void*){name});')
 
+    def emit_return_expr(expr, indent):
+        pad = '    ' * indent
+        if _return_type[0] == "void":
+            _lines.append(f'{pad}goto {_return_label[0]};')
+            return
+        _lines.append(f'{pad}{_return_var[0]} = {gen_expr(expr)};')
+        _lines.append(f'{pad}goto {_return_label[0]};')
+
+    def emit_return_void(indent):
+        pad = '    ' * indent
+        _lines.append(f'{pad}goto {_return_label[0]};')
+
     def gen_expr(node) -> str:
         if isinstance(node, IntegerLiteral):
             return str(node.value)
@@ -361,7 +376,7 @@ def generate_c(program: "Program") -> str:
             _expr_indent[0] = old_indent
             return
         if isinstance(expr, FunctionCall) and expr.name == "gc_live":
-            _lines.append(f'{pad}printf("%d\n", (int)__nc_gc_live());')
+            _lines.append(f'{pad}printf("%d\\n", (int)__nc_gc_live());')
             _expr_indent[0] = old_indent
             return
         if isinstance(expr, FunctionCall) and expr.name == "write_file":
@@ -427,7 +442,7 @@ def generate_c(program: "Program") -> str:
         if isinstance(tail, IfExpr):
             gen_ifexpr_return(tail, indent)
             return
-        _lines.append(f'{"    " * indent}return {gen_expr(tail)};')
+        emit_return_expr(tail, indent)
 
     def gen_ifexpr_assign(expr, target, indent):
         pad = '    ' * indent
@@ -614,9 +629,9 @@ def generate_c(program: "Program") -> str:
             return
         if isinstance(stmt, Return):
             if stmt.expr:
-                _lines.append(f'{pad}return {gen_expr(stmt.expr)};')
+                emit_return_expr(stmt.expr, indent)
             else:
-                _lines.append(f'{pad}return;')
+                emit_return_void(indent)
             _expr_indent[0] = old_indent
             return
         if isinstance(stmt, Block):
@@ -679,6 +694,9 @@ def generate_c(program: "Program") -> str:
     for func in other_funcs:
         _gc_vars.clear()  # 每函数独立的 GC 变量
         c_ret = _type_to_c(func.return_type or "void")
+        _return_type[0] = c_ret
+        _return_label[0] = "__nc_return"
+        _return_var[0] = "__nc_ret"
         if func.receiver_name:
             rtype = func.receiver_type.lstrip("*")
             fname = f"{rtype}_{func.name}"
@@ -688,36 +706,47 @@ def generate_c(program: "Program") -> str:
             all_params = func.params
         params_c = ', '.join(f'{_type_to_c(t)} {n}' for n, t in all_params) or "void"
         _lines.append(f'{c_ret} {fname}({params_c}) {{')
+        _lines.append('    size_t __nc_gc_mark = __nc_gc_root_mark();')
+        if c_ret != "void":
+            _lines.append(f'    {c_ret} __nc_ret;')
         for i, s in enumerate(func.body.statements):
             if i == len(func.body.statements) - 1 and (func.return_type or "void") != "void":
                 if isinstance(s, ExpressionStatement):
-                    _lines.append(f'    return {gen_expr(s.expr)};')
+                    emit_return_expr(s.expr, 1)
                     continue
                 if isinstance(s, If):
                     gen_if_tail_return(s, 1)
                     continue
             gen_stmt(s)
-        # 函数退出：弹出所有 GC 根
-        for _ in _gc_vars:
-            _lines.append('    __nc_gc_pop_root();')
+        _lines.append(f'{_return_label[0]}:')
+        _lines.append('    __nc_gc_root_rewind(__nc_gc_mark);')
+        if c_ret != "void":
+            _lines.append(f'    return {_return_var[0]};')
+        else:
+            _lines.append('    return;')
         _lines.append('}')
 
     if main_func:
         _gc_vars.clear()
+        _return_type[0] = "int"
+        _return_label[0] = "__nc_main_return"
+        _return_var[0] = "__nc_ret"
         _lines.append('int main(void) {')
         _lines.append('    __nc_gc_init();')
+        _lines.append('    size_t __nc_gc_mark = __nc_gc_root_mark();')
+        _lines.append('    int __nc_ret = 0;')
         for i, s in enumerate(main_func.body.statements):
             if i == len(main_func.body.statements) - 1 and (main_func.return_type or "void") != "void":
                 if isinstance(s, ExpressionStatement):
-                    _lines.append(f'    return {gen_expr(s.expr)};')
+                    emit_return_expr(s.expr, 1)
                     continue
                 if isinstance(s, If):
                     gen_if_tail_return(s, 1)
                     continue
             gen_stmt(s)
-        for _ in _gc_vars:
-            _lines.append('    __nc_gc_pop_root();')
-        _lines.append('    return 0;')
+        _lines.append(f'{_return_label[0]}:')
+        _lines.append('    __nc_gc_root_rewind(__nc_gc_mark);')
+        _lines.append('    return __nc_ret;')
         _lines.append('}')
         for s in top_stmts:
             gen_stmt(s, indent=0)
