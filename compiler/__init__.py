@@ -7,37 +7,45 @@ import os
 
 from compiler.lexer import lex
 from compiler.parser import parse
-from compiler.ast import Program
 from compiler.symtab import build_symbol_table
 from compiler.typecheck import infer_types
 from compiler.codegen import generate_c
+from compiler.source import Module, SourceFile, annotate_source_file, module_name_from_sources
 
 
-def compile_nc_sources_to_c(sources: "list[tuple[str, str]]") -> str:
-    """多个 NC 源码片段 → 单个 C 源码。
+def parse_module_sources(sources: "list[tuple[str, str]]") -> Module:
+    """Parse source tuples as one directory module.
 
-    当前语义是同一模块内多文件自动互见：所有文件解析后合并为一个 Program，
-    再走同一套三 pass。
+    当前语义仍是同目录多文件自动互见，但 SourceFile 边界会保留给诊断
+    和后续 import/module namespace。
     """
-    statements = []
-    combined_source_parts = []
-    for filename, source in sources:
-        tokens = list(lex(source))
-        ast: Program = parse(tokens)
-        statements.extend(ast.statements)
-        combined_source_parts.append(source)
+    source_files = [SourceFile(filename, source) for filename, source in sources]
+    name, root = module_name_from_sources(source_files)
+    module = Module(name, root, source_files)
+    for source_file in module.files:
+        tokens = list(lex(source_file.source))
+        source_file.ast = parse(tokens)
+        annotate_source_file(source_file.ast, source_file)
+    return module
 
-    program = Program(statements)
-    combined_source = "\n".join(combined_source_parts)
+
+def compile_module_to_c(module: Module) -> str:
+    """Module → C 源码（三 pass）。"""
+    program = module.to_program()
 
     # Pass 1: 建符号表
     symtab = build_symbol_table(program)
 
     # Pass 2: 类型推断
-    infer_types(program, symtab, combined_source)
+    infer_types(program, symtab)
 
     # Pass 3: 代码生成
     return generate_c(program)
+
+
+def compile_nc_sources_to_c(sources: "list[tuple[str, str]]") -> str:
+    """多个 NC 源码片段 → 单个 C 源码。"""
+    return compile_module_to_c(parse_module_sources(sources))
 
 
 def compile_nc_to_c(nc_source: str) -> str:

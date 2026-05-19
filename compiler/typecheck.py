@@ -22,18 +22,22 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
     current_return_type = "void"
     break_depth = 0
 
-    def line_col(pos: int) -> tuple[int, int]:
-        if source is None:
+    def line_col(text: str | None, pos: int) -> tuple[int, int]:
+        if text is None:
             return 0, 0
-        line = source.count("\n", 0, pos) + 1
-        last_nl = source.rfind("\n", 0, pos)
+        line = text.count("\n", 0, pos) + 1
+        last_nl = text.rfind("\n", 0, pos)
         col = pos + 1 if last_nl < 0 else pos - last_nl
         return line, col
 
     def fail(message, node=None):
         span = getattr(node, "span", None)
-        if span and source is not None:
-            line, col = line_col(span[0])
+        source_file = getattr(node, "source_file", None)
+        node_source = source_file.source if source_file is not None else source
+        if span and node_source is not None:
+            line, col = line_col(node_source, span[0])
+            if source_file is not None and not source_file.path.startswith("<"):
+                raise TypeCheckError(f"{source_file.path}:{line}:{col}: {message}")
             raise TypeCheckError(f"{line}:{col}: {message}")
         raise TypeCheckError(message)
 
