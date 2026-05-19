@@ -75,9 +75,9 @@ class Parser:
         if t.kind == TokenKind.DEFER:
             return self._parse_defer()
         if t.kind == TokenKind.BREAK:
-            self.advance()
+            start = self.advance()
             self.match(TokenKind.SEMI)
-            return Break()
+            return self.span(Break(), start)
         if t.kind == TokenKind.IDENT:
             return self._parse_ident_stmt()
 
@@ -195,9 +195,9 @@ class Parser:
         return self.span(Throw(expr), start)
 
     def _parse_defer(self):
-        self.advance()
+        start = self.advance()
         body = self._parse_block()
-        return Defer(body)
+        return self.span(Defer(body), start)
 
     def _parse_forin(self):
         self.advance()  # 吞 for

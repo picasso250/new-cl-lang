@@ -32,6 +32,8 @@ def generate_c(program: "Program") -> str:
     _return_label = [None]
     _return_var = [None]
     _return_type = ["void"]
+    _defer_stack = []
+    _emitting_defer = [False]
 
     # ——— 收集类型定义 ———
     structs = []
@@ -230,6 +232,16 @@ def generate_c(program: "Program") -> str:
     def emit_return_void(indent):
         pad = '    ' * indent
         _lines.append(f'{pad}goto {_return_label[0]};')
+
+    def emit_deferred(indent):
+        if not _defer_stack:
+            return
+        old = _emitting_defer[0]
+        _emitting_defer[0] = True
+        for body in reversed(_defer_stack):
+            for s in body.statements:
+                gen_stmt(s, indent)
+        _emitting_defer[0] = old
 
     def gen_expr(node) -> str:
         if isinstance(node, IntegerLiteral):
@@ -660,12 +672,16 @@ def generate_c(program: "Program") -> str:
         if isinstance(stmt, Throw):
             pad = '    ' * indent
             ex_c = gen_expr(stmt.expr)
+            emit_deferred(indent)
             _lines.append(f'{pad}__nc_throw({ex_c});')
             _expr_indent[0] = old_indent
             return
         if isinstance(stmt, Defer):
-            for s in stmt.body.statements:
-                gen_stmt(s, indent)
+            if _emitting_defer[0]:
+                for s in stmt.body.statements:
+                    gen_stmt(s, indent)
+            else:
+                _defer_stack.append(stmt.body)
             _expr_indent[0] = old_indent
             return
         if isinstance(stmt, Break):
@@ -693,6 +709,7 @@ def generate_c(program: "Program") -> str:
     # ——— 输出函数 ———
     for func in other_funcs:
         _gc_vars.clear()  # 每函数独立的 GC 变量
+        _defer_stack.clear()
         c_ret = _type_to_c(func.return_type or "void")
         _return_type[0] = c_ret
         _return_label[0] = "__nc_return"
@@ -719,6 +736,7 @@ def generate_c(program: "Program") -> str:
                     continue
             gen_stmt(s)
         _lines.append(f'{_return_label[0]}:')
+        emit_deferred(1)
         _lines.append('    __nc_gc_root_rewind(__nc_gc_mark);')
         if c_ret != "void":
             _lines.append(f'    return {_return_var[0]};')
@@ -728,6 +746,7 @@ def generate_c(program: "Program") -> str:
 
     if main_func:
         _gc_vars.clear()
+        _defer_stack.clear()
         _return_type[0] = "int"
         _return_label[0] = "__nc_main_return"
         _return_var[0] = "__nc_ret"
@@ -745,6 +764,7 @@ def generate_c(program: "Program") -> str:
                     continue
             gen_stmt(s)
         _lines.append(f'{_return_label[0]}:')
+        emit_deferred(1)
         _lines.append('    __nc_gc_root_rewind(__nc_gc_mark);')
         _lines.append('    return __nc_ret;')
         _lines.append('}')

@@ -67,37 +67,31 @@
 | typecheck.py | 105 | Pass2：类型推断 + 局部变量声明 |
 | __init__.py | 45 | 三 pass 流水线 + gcc/clang 编译 |
 
-### 能力矩阵
+### 当时能力矩阵
 
-| 已就 | 未就（自举相关） |
-|------|-------------------|
-| ✓ 算术 + 比较 + 逻辑 | ✗ `[]T` 切片（动态数组） |
-| ✓ let / let mut / 赋值 | ✗ `for i in 0 .. N` |
-| ✓ if / else if / else | ✗ `str` 真布局 `{u8*; u64}` |
-| ✓ while | ✗ 文件 IO |
-| ✓ fun + return + 参数 | ✗ `*T` 指针 |
-| ✓ fun main() | ✗ 类型转换 `i64(x)` |
-| ✓ struct + 字面量 + .field | ✗ f32/f64/bool/i8 等 |
-| ✓ enum 甲层 + switch | ✗ 模块 / import |
-| ✓ [N]T 定长数组 + 索引 | ✗ 复合赋值 += -= |
-| ✓ 字符串字面量 | ✗ 类型注解 `let x: i32` |
+本段只保留 20-case 时的历史截面，不再记录已落地缺口，避免误导后续判断。
+
+| 已就 | 仍未就 / 未确认 |
+|------|-----------------|
+| ✓ 算术 + 比较 + 逻辑 | ✗ 模块 / import |
+| ✓ let / 赋值 | ✗ 标准库化：`print` / 文件 IO 不应是魔术函数 |
+| ✓ if / else if / else | ✗ 复合赋值 `+= -= *= ...` |
+| ✓ while / fun / return | ✗ 更多数值类型：i8/u8/i16/u16/i64/u64/f32/f64 |
+| ✓ struct / enum / switch | ✗ 指针语义仍需系统性压测 |
+| ✓ [N]T / []T / str 真布局 | ✗ 自动 GC 前的 root 生命周期仍需压实 |
 
 ### 已知伤疤
 
 | # | 伤疤 | 严重度 | 说明 |
 |----|------|--------|------|
-| A | `str` 映射为 `const char*` | 中 | 设计规定 `{u8* ptr; u64 len}`，当前偷懒 |
 | B | `print` 是魔术函数 | 中 | 应在 `std.io` 库，当前特殊判断 |
 | C | C 复合字面量无字段名 | 低 | `Point{3,4}` 非 `Point{.x=3,.y=4}` |
-| D | 无类型注解语法 | 低 | `let x: i32 = 1` 不可写 |
 
 ### 自举差距
 
-自举需：**enum + switch + []T + str真身 + 文件IO + for...in**。
+20-case 时列出的 `enum + switch + []T + str真身 + 文件IO + for...in` 已基本落地，不再作为当前差距记录。
 
-已得 enum + switch + [N]T。尚差三件：`[]T`、`for...in`、`str` 真布局（含文件 IO）。
-
-建议下一步：`for i in 0 .. 10`（遍历数组），再 `[]T` 切片。
+当前更高风险的差距转为：**模块/import、标准库边界、defer/throw/return 与 GC root 生命周期、source map / 错误定位、代码生成拆分**。
 
 ---
 
@@ -106,3 +100,25 @@
 - if-expression lowering 会生成临时变量。若临时变量类型是 `str`、`[]T`、`nc_map`、`*Struct` 等持有 GC 堆指针的类型，目前不会被自动加入 GC root。
 - 当前手动 GC 下通常不炸；但若未来 GC 在分配时自动触发，或表达式求值期间出现 `gc_collect()`，临时值可能被过早回收。
 - 这不是泄露问题，而是 premature free / dangling pointer 风险。自动 GC 前必须处理。
+
+---
+
+## 2026-05-19
+
+- case_090~094：补 defer / root 生命周期 / 错误定位保守组。
+  - `defer` 延迟到函数退出执行。
+  - 多个 `defer` 按 LIFO 执行。
+  - `return` / `throw` 路径会先执行已登记 defer。
+  - `defer`、`break` 补 span，类型错误和非法 break 能定位到源码行列。
+- 激进第一刀：编译输入从单 source 升级为 source set。
+  - 新增 `compile_nc_sources_to_c([(filename, source), ...])`。
+  - 同目录多 `.nc` 文件合并为一个 module，Pass1/Pass2/codegen 共用原流水线。
+  - `nc.py run <dir>`、`nc.py compile <dir>` 支持目录。
+  - `nc.py build <file|dir>` 输出 `build/main.c` 与 `build/main.exe`。
+  - 新增项目级 fixture：多文件函数调用、多文件 struct 使用。
+
+### 当前边界
+
+- 多文件现在是“同目录自动互见”，还不是 import/module namespace。
+- 多文件诊断仍是合并源码行列，尚未升级为 `file:line:col`。
+- `defer` 目前按函数级静态登记生成，`if/loop` 内动态注册语义还需专门 case 压测。
