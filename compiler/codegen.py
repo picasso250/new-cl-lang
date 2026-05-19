@@ -5,6 +5,7 @@ str 是胖指针 {ptr, len}，打印用 %.*s。
 所有生成函数内闭于 generate_c。
 """
 
+from compiler.builtins import lower_builtin_expr, lower_builtin_stmt
 from compiler.c_abi import slice_append_name, slice_copy_name, type_to_c
 from compiler.runtime import emit_runtime
 
@@ -268,51 +269,9 @@ def generate_c(program: "Program") -> str:
         if isinstance(node, EnumRef):
             return f'{node.enum_name.upper()}_{node.variant.upper()}'
         if isinstance(node, FunctionCall):
-            if node.name == "read_file":
-                arg = node.args[0]
-                if isinstance(arg, StringLiteral):
-                    return f'__nc_read_file("{arg.value}")'
-                arg_c = gen_expr(arg)
-                return f'__nc_read_file({arg_c}.ptr)'
-            if node.name == "append":
-                slice_c = gen_expr(node.args[0])
-                elem_c = gen_expr(node.args[1])
-                slice_t = getattr(node.args[0], "type", "[]i32")
-                elem_t = slice_t[2:] if slice_t.startswith("[]") else "i32"
-                return f'{_slice_append_name(elem_t)}({slice_c}, {elem_c})'
-            if node.name == "map_set_s":
-                m_c = gen_expr(node.args[0])
-                k_c = gen_expr(node.args[1])
-                v_c = gen_expr(node.args[2])
-                return f'__nc_map_set_str(&{m_c}, {k_c}, {v_c})'
-            if node.name == "map_get_s":
-                m_c = gen_expr(node.args[0])
-                k_c = gen_expr(node.args[1])
-                return f'__nc_map_get_str(&{m_c}, {k_c})'
-            if node.name == "map_has":
-                m_c = gen_expr(node.args[0])
-                k_c = gen_expr(node.args[1])
-                return f'__nc_map_has(&{m_c}, {k_c})'
-            if node.name == "len":
-                arg_c = gen_expr(node.args[0])
-                arg_t = getattr(node.args[0], "type", "str")
-                if arg_t == "str":
-                    return f'(int)({arg_c}).len'
-                if arg_t == "nc_map":
-                    return f'(int)({arg_c}).len'
-                return f'(int)({arg_c}).len'
-            if node.name == "str":
-                arg_c = gen_expr(node.args[0])
-                arg_t = getattr(node.args[0], "type", "i32")
-                if arg_t == "i32":
-                    return f'__nc_i32_to_str({arg_c})'
-                return arg_c
-            if node.name == "i32":
-                arg_c = gen_expr(node.args[0])
-                arg_t = getattr(node.args[0], "type", "str")
-                if arg_t == "str":
-                    return f'__nc_str_to_i32({arg_c})'
-                return arg_c
+            builtin_c = lower_builtin_expr(node, gen_expr, _slice_append_name)
+            if builtin_c is not None:
+                return builtin_c
             args = ', '.join(gen_expr(a) for a in node.args)
             return f'{node.name}({args})'
         if isinstance(node, IfExpr):
@@ -383,31 +342,8 @@ def generate_c(program: "Program") -> str:
         old_indent = _expr_indent[0]
         _expr_indent[0] = indent
         pad = '    ' * indent
-        if isinstance(expr, FunctionCall) and expr.name == "gc_collect":
-            _lines.append(f'{pad}__nc_gc_collect();')
-            _expr_indent[0] = old_indent
-            return
-        if isinstance(expr, FunctionCall) and expr.name == "gc_live":
-            _lines.append(f'{pad}printf("%d\\n", (int)__nc_gc_live());')
-            _expr_indent[0] = old_indent
-            return
-        if isinstance(expr, FunctionCall) and expr.name == "write_file":
-            path = expr.args[0]
-            content = expr.args[1]
-            path_c = f'"{path.value}"' if isinstance(path, StringLiteral) else f'{gen_expr(path)}.ptr'
-            _lines.append(f'{pad}__nc_write_file({path_c}, {gen_expr(content)});')
-            _expr_indent[0] = old_indent
-            return
-        if isinstance(expr, FunctionCall) and expr.name == "print":
-            arg = expr.args[0]
-            arg_type = getattr(arg, "type", "i32")
-            if arg_type == "str":
-                arg_c = gen_expr(arg)
-                _lines.append(f'{pad}printf("%.*s\\n", (int)({arg_c}).len, ({arg_c}).ptr);')
-            elif arg_type == "bool":
-                _lines.append(f'{pad}printf("%d\\n", {gen_expr(arg)});')
-            else:
-                _lines.append(f'{pad}printf("%d\\n", {gen_expr(arg)});')
+        if isinstance(expr, FunctionCall) and lower_builtin_stmt(expr, gen_expr, _lines.append, pad):
+            pass
         else:
             _lines.append(f'{pad}{gen_expr(expr)};')
         _expr_indent[0] = old_indent
