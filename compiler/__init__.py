@@ -11,6 +11,8 @@ from compiler.ast import Program
 from compiler.symtab import build_symbol_table
 from compiler.typecheck import infer_types
 from compiler.codegen import generate_c
+from compiler.llvm_backend import generate_llvm_ir
+from compiler.llvm_runner import run_llvm_code
 
 
 def compile_nc_to_c(nc_source: str) -> str:
@@ -26,6 +28,16 @@ def compile_nc_to_c(nc_source: str) -> str:
 
     # Pass 3: 代码生成
     return generate_c(ast)
+
+
+def compile_nc_to_llvm_ir(nc_source: str) -> str:
+    """NC 源码 → LLVM IR（实验后端，仅支持 i32/bool 基础子集）。"""
+    tokens = list(lex(nc_source))
+    ast: Program = parse(tokens)
+
+    symtab = build_symbol_table(ast)
+    infer_types(ast, symtab, nc_source)
+    return generate_llvm_ir(ast)
 
 
 def run_c_code(c_code: str) -> "tuple[str, str, int]":
