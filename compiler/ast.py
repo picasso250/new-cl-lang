@@ -290,8 +290,10 @@ class Return(Node):
         return f"Return({self.expr})"
 
 
-class If(Node):
-    """if expr { block } [else { block }]"""
+# ===== 表达式 =====
+
+class IfExpr(Node):
+    """if expr { block } else { block } 作为表达式。"""
     def __init__(self, condition, then_block: Block, else_block: Block | None = None):
         self.condition = condition
         self.then_block = then_block
@@ -299,20 +301,7 @@ class If(Node):
 
     def __repr__(self):
         e = f" else {self.else_block}" if self.else_block else ""
-        return f"If({self.condition} {self.then_block}{e})"
-
-
-# ===== 表达式 =====
-
-class IfExpr(Node):
-    """if expr { block } else { block } 作为表达式。"""
-    def __init__(self, condition, then_block: Block, else_block: Block):
-        self.condition = condition
-        self.then_block = then_block
-        self.else_block = else_block
-
-    def __repr__(self):
-        return f"IfExpr({self.condition} {self.then_block} else {self.else_block})"
+        return f"IfExpr({self.condition} {self.then_block}{e})"
 
 
 class BlockExpr(Node):

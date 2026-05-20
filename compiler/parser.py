@@ -53,7 +53,10 @@ class Parser:
         if t.kind == TokenKind.LET:
             return self._parse_let()
         if t.kind == TokenKind.IF:
-            return self._parse_if()
+            expr = self.parse_expression()
+            stmt = ExpressionStatement(expr)
+            self.match(TokenKind.SEMI)
+            return stmt
         if t.kind == TokenKind.FUN and self._is_function_declaration_start():
             return self._parse_function()
         if t.kind == TokenKind.RETURN:
@@ -136,20 +139,6 @@ class Parser:
             elem = self._parse_type()
             return f"[]{elem}" if length is None else f"[{length}]{elem}"
         return self.expect(TokenKind.IDENT).value
-
-    def _parse_if(self):
-        self.advance()
-        condition = self.parse_expression()
-        then_block = self._parse_block()
-        else_block = None
-        if self.peek().kind == TokenKind.ELSE:
-            self.advance()
-            if self.peek().kind == TokenKind.IF:
-                else_block = Block([self._parse_if()])
-            else:
-                else_block = self._parse_block()
-        self.match(TokenKind.SEMI)
-        return If(condition, then_block, else_block)
 
     def _parse_function(self):
         self.advance()  # 吃 fun
@@ -460,11 +449,13 @@ class Parser:
             start = self.advance()
             condition = self.parse_expression()
             then_block = self._parse_block()
-            self.expect(TokenKind.ELSE)
-            if self.peek().kind == TokenKind.IF:
-                else_block = Block([ExpressionStatement(self.parse_primary())])
-            else:
-                else_block = self._parse_block()
+            else_block = None
+            if self.peek().kind == TokenKind.ELSE:
+                self.advance()
+                if self.peek().kind == TokenKind.IF:
+                    else_block = Block([ExpressionStatement(self.parse_primary())])
+                else:
+                    else_block = self._parse_block()
             return self.span(IfExpr(condition, then_block, else_block), start)
 
         if t.kind == TokenKind.LBRACE:

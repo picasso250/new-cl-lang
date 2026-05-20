@@ -17,7 +17,7 @@ _slice_copy_name = slice_copy_name
 
 def generate_c(program: "Program") -> str:
     from compiler.ast import (
-        FunctionDeclaration, StructDecl, EnumDecl, Switch, ForIn, Block, If, While,
+        FunctionDeclaration, StructDecl, EnumDecl, Switch, ForIn, Block, While,
         VariableDeclaration, ExpressionStatement, Assignment,
         Return, SliceExpr, ArrayLiteral, SliceLiteral, FunctionCall,
         IfExpr, BlockExpr, IntegerLiteral, StringLiteral, BoolLiteral, Identifier, BinaryOp, UnaryOp,
@@ -60,10 +60,6 @@ def generate_c(program: "Program") -> str:
                 collect(s.body.statements)
             elif isinstance(s, Block):
                 collect(s.statements)
-            elif isinstance(s, If):
-                collect(s.then_block.statements)
-                if s.else_block:
-                    collect(s.else_block.statements)
             elif isinstance(s, While):
                 collect(s.body.statements)
             elif isinstance(s, Switch):
@@ -115,8 +111,9 @@ def generate_c(program: "Program") -> str:
             collect_closure_expr(node.condition)
             for s in node.then_block.statements:
                 collect_closure_stmt(s)
-            for s in node.else_block.statements:
-                collect_closure_stmt(s)
+            if node.else_block:
+                for s in node.else_block.statements:
+                    collect_closure_stmt(s)
         elif isinstance(node, BlockExpr):
             for s in node.block.statements:
                 collect_closure_stmt(s)
@@ -138,13 +135,6 @@ def generate_c(program: "Program") -> str:
             collect_closure_expr(stmt.expr)
         elif isinstance(stmt, ExpressionStatement):
             collect_closure_expr(stmt.expr)
-        elif isinstance(stmt, If):
-            collect_closure_expr(stmt.condition)
-            for s in stmt.then_block.statements:
-                collect_closure_stmt(s)
-            if stmt.else_block:
-                for s in stmt.else_block.statements:
-                    collect_closure_stmt(s)
         elif isinstance(stmt, While):
             collect_closure_expr(stmt.condition)
             for s in stmt.body.statements:
@@ -234,8 +224,9 @@ def generate_c(program: "Program") -> str:
             collect_expr_types(node.condition)
             for s in node.then_block.statements:
                 collect_stmt_types(s)
-            for s in node.else_block.statements:
-                collect_stmt_types(s)
+            if node.else_block:
+                for s in node.else_block.statements:
+                    collect_stmt_types(s)
         elif isinstance(node, BlockExpr):
             for s in node.block.statements:
                 collect_stmt_types(s)
@@ -270,13 +261,6 @@ def generate_c(program: "Program") -> str:
             collect_expr_types(stmt.expr)
         elif isinstance(stmt, ExpressionStatement):
             collect_expr_types(stmt.expr)
-        elif isinstance(stmt, If):
-            collect_expr_types(stmt.condition)
-            for s in stmt.then_block.statements:
-                collect_stmt_types(s)
-            if stmt.else_block:
-                for s in stmt.else_block.statements:
-                    collect_stmt_types(s)
         elif isinstance(stmt, While):
             collect_expr_types(stmt.condition)
             for s in stmt.body.statements:
@@ -468,6 +452,8 @@ def generate_c(program: "Program") -> str:
             root_expr_temp(tmp, node.type, _expr_indent[0])
             return tmp
         if isinstance(node, IfExpr):
+            if getattr(node, "type", None) == "void":
+                raise NotImplementedError("void if expression has no C value")
             tmp = next_tmp("__nc_if")
             pad = '    ' * _expr_indent[0]
             _lines.append(f'{pad}{_type_to_c(node.type)} {tmp};')
@@ -535,7 +521,9 @@ def generate_c(program: "Program") -> str:
         old_indent = _expr_indent[0]
         _expr_indent[0] = indent
         pad = '    ' * indent
-        if isinstance(expr, FunctionCall) and lower_builtin_stmt(expr, gen_expr, _lines.append, pad):
+        if isinstance(expr, IfExpr):
+            gen_ifexpr_stmt(expr, indent)
+        elif isinstance(expr, FunctionCall) and lower_builtin_stmt(expr, gen_expr, _lines.append, pad):
             pass
         else:
             _lines.append(f'{pad}{gen_expr(expr)};')
@@ -549,23 +537,11 @@ def generate_c(program: "Program") -> str:
             return last.expr
         return None
 
-    def block_tail_if(block):
-        if not block.statements:
-            return None
-        last = block.statements[-1]
-        if isinstance(last, If):
-            return last
-        return None
-
     def gen_block_value_assign(block, target, indent):
         tail = block_tail_expr(block)
-        tail_if = block_tail_if(block)
-        body = block.statements[:-1] if (tail or tail_if) else block.statements
+        body = block.statements[:-1] if tail else block.statements
         for s in body:
             gen_stmt(s, indent)
-        if tail_if is not None:
-            gen_if_tail_assign(tail_if, target, indent)
-            return
         if isinstance(tail, IfExpr):
             gen_ifexpr_assign(tail, target, indent)
             return
@@ -573,13 +549,9 @@ def generate_c(program: "Program") -> str:
 
     def gen_block_value_return(block, indent):
         tail = block_tail_expr(block)
-        tail_if = block_tail_if(block)
-        body = block.statements[:-1] if (tail or tail_if) else block.statements
+        body = block.statements[:-1] if tail else block.statements
         for s in body:
             gen_stmt(s, indent)
-        if tail_if is not None:
-            gen_if_tail_return(tail_if, indent)
-            return
         if isinstance(tail, IfExpr):
             gen_ifexpr_return(tail, indent)
             return
@@ -593,12 +565,15 @@ def generate_c(program: "Program") -> str:
         gen_block_value_assign(expr.else_block, target, indent + 1)
         _lines.append(f'{pad}}}')
 
-    def gen_if_tail_assign(stmt, target, indent):
+    def gen_ifexpr_stmt(expr, indent):
         pad = '    ' * indent
-        _lines.append(f'{pad}if ({gen_expr(stmt.condition)}) {{')
-        gen_block_value_assign(stmt.then_block, target, indent + 1)
-        _lines.append(f'{pad}}} else {{')
-        gen_block_value_assign(stmt.else_block, target, indent + 1)
+        _lines.append(f'{pad}if ({gen_expr(expr.condition)}) {{')
+        for s in expr.then_block.statements:
+            gen_stmt(s, indent + 1)
+        if expr.else_block:
+            _lines.append(f'{pad}}} else {{')
+            for s in expr.else_block.statements:
+                gen_stmt(s, indent + 1)
         _lines.append(f'{pad}}}')
 
     def gen_ifexpr_return(expr, indent):
@@ -607,14 +582,6 @@ def generate_c(program: "Program") -> str:
         gen_block_value_return(expr.then_block, indent + 1)
         _lines.append(f'{pad}}} else {{')
         gen_block_value_return(expr.else_block, indent + 1)
-        _lines.append(f'{pad}}}')
-
-    def gen_if_tail_return(stmt, indent):
-        pad = '    ' * indent
-        _lines.append(f'{pad}if ({gen_expr(stmt.condition)}) {{')
-        gen_block_value_return(stmt.then_block, indent + 1)
-        _lines.append(f'{pad}}} else {{')
-        gen_block_value_return(stmt.else_block, indent + 1)
         _lines.append(f'{pad}}}')
 
     def gen_stmt(stmt, indent=1):
@@ -727,18 +694,6 @@ def generate_c(program: "Program") -> str:
             return
         if isinstance(stmt, ExpressionStatement):
             gen_expr_stmt(stmt.expr, indent)
-            _expr_indent[0] = old_indent
-            return
-        if isinstance(stmt, If):
-            cond_c = gen_expr(stmt.condition)
-            _lines.append(f'{pad}if ({cond_c}) {{')
-            for s in stmt.then_block.statements:
-                gen_stmt(s, indent + 1)
-            if stmt.else_block:
-                _lines.append(f'{pad}}} else {{')
-                for s in stmt.else_block.statements:
-                    gen_stmt(s, indent + 1)
-            _lines.append(f'{pad}}}')
             _expr_indent[0] = old_indent
             return
         if isinstance(stmt, While):
@@ -855,9 +810,6 @@ def generate_c(program: "Program") -> str:
                 if isinstance(s, ExpressionStatement):
                     emit_return_expr(s.expr, 1)
                     continue
-                if isinstance(s, If):
-                    gen_if_tail_return(s, 1)
-                    continue
             gen_stmt(s)
         _closure_env_stack.pop()
         _lines.append(f'{_return_label[0]}:')
@@ -913,9 +865,6 @@ def generate_c(program: "Program") -> str:
                 if isinstance(s, ExpressionStatement):
                     emit_return_expr(s.expr, 1)
                     continue
-                if isinstance(s, If):
-                    gen_if_tail_return(s, 1)
-                    continue
             gen_stmt(s)
         _lines.append(f'{_return_label[0]}:')
         emit_deferred(1)
@@ -942,9 +891,6 @@ def generate_c(program: "Program") -> str:
             if i == len(main_func.body.statements) - 1 and (main_func.return_type or "void") != "void":
                 if isinstance(s, ExpressionStatement):
                     emit_return_expr(s.expr, 1)
-                    continue
-                if isinstance(s, If):
-                    gen_if_tail_return(s, 1)
                     continue
             gen_stmt(s)
         _lines.append(f'{_return_label[0]}:')

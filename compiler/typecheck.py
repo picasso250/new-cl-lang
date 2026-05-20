@@ -15,7 +15,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
     """Pass 2: 标注 Program 中所有表达式和语句的类型。"""
     from compiler.ast import (
         Program, VariableDeclaration, ExpressionStatement,
-        Assignment, Block, If, While, FunctionDeclaration, Return,
+        Assignment, Block, While, FunctionDeclaration, Return,
         StructDecl, StructLiteral, FieldAccess,
         EnumDecl, EnumRef, Switch, ForIn,
         IfExpr, BlockExpr, IntegerLiteral, StringLiteral, BoolLiteral, BinaryOp, UnaryOp, FunctionCall, Identifier,
@@ -83,14 +83,6 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             return last.expr
         return None
 
-    def block_tail_if(block):
-        if not block.statements:
-            return None
-        last = block.statements[-1]
-        if isinstance(last, If) and last.else_block is not None:
-            return last
-        return None
-
     def tail_expr_type(expr):
         if isinstance(expr, FunctionCall) and expr.name == "gc_live":
             return None
@@ -108,27 +100,21 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
 
     def infer_block_value(block, context_node):
         symtab.push_scope()
-        has_tail = block_tail_expr(block) or block_tail_if(block)
+        has_tail = block_tail_expr(block)
         body = block.statements[:-1] if has_tail else block.statements
         walk_stmts(body)
         tail = block_tail_expr(block)
-        tail_if = block_tail_if(block)
-        if tail is None and tail_if is None:
+        if tail is None:
             symtab.pop_scope()
-            fail("if expression branch has no value", context_node)
-        if tail is not None:
-            walk_expr(tail)
-            tail_type = tail.type
-        else:
-            tail_type = infer_if_value(tail_if)
+            return "void"
+        walk_expr(tail)
+        tail_type = tail_expr_type(tail) or "void"
         symtab.pop_scope()
         return tail_type
 
     def infer_if_value(stmt):
-        if stmt.else_block is None:
-            fail("if expression requires else", stmt)
         then_type = infer_block_value(stmt.then_block, stmt)
-        else_type = infer_block_value(stmt.else_block, stmt)
+        else_type = infer_block_value(stmt.else_block, stmt) if stmt.else_block is not None else "void"
         require_type(else_type, then_type, "if expression branches", stmt)
         return then_type
 
@@ -225,9 +211,6 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             if current_return_type != "void" and not ends_with_return(node.body.statements):
                 if node.body.statements and isinstance(node.body.statements[-1], ExpressionStatement):
                     require_type(node.body.statements[-1].expr.type, current_return_type, "function expression tail expression", node.body.statements[-1].expr)
-                elif node.body.statements and isinstance(node.body.statements[-1], If):
-                    tail_type = infer_if_value(node.body.statements[-1])
-                    require_type(tail_type, current_return_type, "function expression tail expression", node.body.statements[-1])
                 else:
                     fail(f"function expression: missing return {current_return_type}", node)
             node.captures = list(ctx["captures"].items())
@@ -346,6 +329,8 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             if isinstance(stmt, VariableDeclaration):
                 walk_expr(stmt.initializer)
                 stmt.type = stmt.annotation or stmt.initializer.type
+                if stmt.type == "void":
+                    fail(f"let {stmt.name}: cannot bind void value", stmt)
                 require_type(stmt.initializer.type, stmt.type, f"let {stmt.name}", stmt)
                 symtab.declare(stmt.name, stmt.type)
             elif isinstance(stmt, ExpressionStatement):
@@ -357,16 +342,6 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                     fail(f"cannot assign to captured variable '{stmt.target.name}'", stmt.target)
                 walk_expr(stmt.expr)
                 require_type(stmt.expr.type, stmt.target.type, "assignment", stmt.expr)
-            elif isinstance(stmt, If):
-                walk_expr(stmt.condition)
-                require_type(stmt.condition.type, "bool", "if condition", stmt.condition)
-                symtab.push_scope()
-                walk_stmts(stmt.then_block.statements)
-                symtab.pop_scope()
-                if stmt.else_block:
-                    symtab.push_scope()
-                    walk_stmts(stmt.else_block.statements)
-                    symtab.pop_scope()
             elif isinstance(stmt, While):
                 walk_expr(stmt.condition)
                 require_type(stmt.condition.type, "bool", "for condition", stmt.condition)
@@ -392,9 +367,6 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 if current_return_type != "void" and not ends_with_return(stmt.body.statements):
                     if stmt.body.statements and isinstance(stmt.body.statements[-1], ExpressionStatement):
                         require_type(stmt.body.statements[-1].expr.type, current_return_type, f"function {stmt.name} tail expression", stmt.body.statements[-1].expr)
-                    elif stmt.body.statements and isinstance(stmt.body.statements[-1], If):
-                        tail_type = infer_if_value(stmt.body.statements[-1])
-                        require_type(tail_type, current_return_type, f"function {stmt.name} tail expression", stmt.body.statements[-1])
                     else:
                         fail(f"function {stmt.name}: missing return {current_return_type}", stmt)
                 current_return_type = prev_return_type
@@ -477,13 +449,10 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         walk_stmts(fn_node.body.statements)
 
         tail = block_tail_expr(fn_node.body)
-        tail_if = block_tail_if(fn_node.body)
         if tail is not None:
             ret_type = tail_expr_type(tail)
             if ret_type is not None:
                 inferred_return_values.append((ret_type, tail))
-        elif tail_if is not None:
-            inferred_return_values.append((infer_if_value(tail_if), tail_if))
 
         values = inferred_return_values
         saw_void = inferred_void_return

@@ -175,7 +175,9 @@ let x = if cond { 1 } else { 2 }
 let twice = fun(x: i32): i32 { x * 2 }
 ```
 
-当前 `if` 可作为表达式，必须带 `else`，分支尾表达式类型必须一致。普通 block 尚未全面表达式化。
+`if` 是表达式。带 `else` 时，所有最终分支尾表达式类型必须一致；`else if` 是 `else` 分支继续接一个 `if` 表达式。
+不带 `else` 时，隐含空 `else`，整体类型为 `void`，因此 then 分支也必须是 `void`。
+普通 block 已可作为表达式：`{ statements; tail_expr }`，其值来自最后一个尾表达式。
 
 ### 方法
 
@@ -210,10 +212,9 @@ fun (p: Point) dist(): f64 { ... }
 
 ```nc
 if x > 0 { ... } else if x < 0 { ... } else { ... }
-while i < 10 { i++ }
+for i < 10 { i++ }
 for item in items { ... }
 for i, item in items { ... }
-loop { if done { break } }
 switch x {
     0           -> ...
     1, 2, 3     -> ...
@@ -322,4 +323,6 @@ let x = 5   # 行尾注释
 | 指针类型 | 仅 `*T`，不设 `*const T` |
 | 方法定义 | 任意模块可扩展，不可重名 |
 | 顶层变量 | 禁止跨模块使用 |
-| `if` 表达式 | 必须带 `else`，分支类型一致 |
+| `if` 表达式 | 全部 `if` 都是表达式；无 `else` 时类型为 `void`；有 `else` 时分支类型一致 |
+| 条件循环 | 使用 `for condition { ... }`，无 `while` 关键字 |
+| block 表达式 | `{ statements; tail_expr }`，值来自尾表达式 |

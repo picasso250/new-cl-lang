@@ -91,7 +91,7 @@ def build_symbol_table(program: "Program") -> SymbolTable:
     """
     from compiler.ast import (
         Program, VariableDeclaration, ExpressionStatement,
-        Assignment, Block, If, While, FunctionDeclaration, Return,
+        Assignment, Block, While, FunctionDeclaration, Return,
         StructDecl, EnumDecl, Switch, ForIn,
         IfExpr, BlockExpr, BinaryOp, UnaryOp, FunctionCall, FunctionExpr,
         ArrayLiteral, IndexAccess, MethodCall, FieldAccess, StructLiteral, TryCatch, Throw, Defer
@@ -135,7 +135,7 @@ def build_symbol_table(program: "Program") -> SymbolTable:
             elif isinstance(stmt, EnumDecl):
                 table.declare_global(stmt.name, "enum")
                 table.declare_enum(stmt.name, stmt.variants)
-            elif isinstance(stmt, (If, While, Block, Switch, ForIn, TryCatch)):
+            elif isinstance(stmt, (While, Block, Switch, ForIn, TryCatch)):
                 _descend_stmt(stmt)
             elif isinstance(stmt, ExpressionStatement):
                 _walk_expr(stmt.expr)
@@ -175,15 +175,6 @@ def build_symbol_table(program: "Program") -> SymbolTable:
             table.declare(stmt.error_name, "str")
             walk_stmts(stmt.catch_block.statements)
             table.pop_scope()
-        elif isinstance(stmt, If):
-            _walk_expr(stmt.condition)
-            table.push_scope()
-            walk_stmts(stmt.then_block.statements)
-            table.pop_scope()
-            if stmt.else_block:
-                table.push_scope()
-                walk_stmts(stmt.else_block.statements)
-                table.pop_scope()
         elif isinstance(stmt, While):
             _walk_expr(stmt.condition)
             table.push_scope()
@@ -212,7 +203,8 @@ def build_symbol_table(program: "Program") -> SymbolTable:
         elif isinstance(node, IfExpr):
             _walk_expr(node.condition)
             walk_stmts(node.then_block.statements)
-            walk_stmts(node.else_block.statements)
+            if node.else_block:
+                walk_stmts(node.else_block.statements)
         elif isinstance(node, BlockExpr):
             walk_stmts(node.block.statements)
         elif isinstance(node, ArrayLiteral):
