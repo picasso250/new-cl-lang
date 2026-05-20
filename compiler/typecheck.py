@@ -286,7 +286,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                     symtab.pop_scope()
             elif isinstance(stmt, While):
                 walk_expr(stmt.condition)
-                require_type(stmt.condition.type, "bool", "while condition", stmt.condition)
+                require_type(stmt.condition.type, "bool", "for condition", stmt.condition)
                 symtab.push_scope()
                 break_depth += 1
                 walk_stmts(stmt.body.statements)

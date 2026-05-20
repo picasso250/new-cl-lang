@@ -14,7 +14,6 @@ class TokenKind(Enum):
     LET = auto()
     IF = auto()
     ELSE = auto()
-    WHILE = auto()
     FUN = auto()
     RETURN = auto()
     STRUCT = auto()
@@ -72,7 +71,6 @@ KEYWORDS = {
     "let": TokenKind.LET,
     "if": TokenKind.IF,
     "else": TokenKind.ELSE,
-    "while": TokenKind.WHILE,
     "fun": TokenKind.FUN,
     "return": TokenKind.RETURN,
     "struct": TokenKind.STRUCT,

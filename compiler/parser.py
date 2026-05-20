@@ -54,8 +54,6 @@ class Parser:
             return self._parse_let()
         if t.kind == TokenKind.IF:
             return self._parse_if()
-        if t.kind == TokenKind.WHILE:
-            return self._parse_while()
         if t.kind == TokenKind.FUN:
             return self._parse_function()
         if t.kind == TokenKind.RETURN:
@@ -67,7 +65,7 @@ class Parser:
         if t.kind == TokenKind.SWITCH:
             return self._parse_switch()
         if t.kind == TokenKind.FOR:
-            return self._parse_forin()
+            return self._parse_for()
         if t.kind == TokenKind.TRY:
             return self._parse_try()
         if t.kind == TokenKind.THROW:
@@ -126,13 +124,6 @@ class Parser:
                 else_block = self._parse_block()
         self.match(TokenKind.SEMI)
         return If(condition, then_block, else_block)
-
-    def _parse_while(self):
-        self.advance()
-        condition = self.parse_expression()
-        body = self._parse_block()
-        self.match(TokenKind.SEMI)
-        return While(condition, body)
 
     def _parse_function(self):
         self.advance()  # 吃 fun
@@ -199,8 +190,15 @@ class Parser:
         body = self._parse_block()
         return self.span(Defer(body), start)
 
-    def _parse_forin(self):
+    def _parse_for(self):
         self.advance()  # 吞 for
+        if self.peek().kind != TokenKind.IDENT:
+            condition = self.parse_expression()
+            body = self._parse_block()
+            self.match(TokenKind.SEMI)
+            return While(condition, body)
+
+        save = self.pos
         idx = self.expect(TokenKind.IDENT).value
         if self.peek().kind == TokenKind.COMMA:
             # for i, v in iterable { }
@@ -210,14 +208,20 @@ class Parser:
             iterable = self.parse_expression()
             body = self._parse_block()
             return ForIn(idx, val, iterable, body)
-        else:
+        if self.peek().kind == TokenKind.IN:
             # for i in start..end { }
-            self.expect(TokenKind.IN)
+            self.advance()
             start = self.parse_expression()
             self.expect(TokenKind.DOTDOT)
             end = self.parse_expression()
             body = self._parse_block()
             return ForIn(idx, None, None, body, start=start, end=end)
+
+        self.pos = save
+        condition = self.parse_expression()
+        body = self._parse_block()
+        self.match(TokenKind.SEMI)
+        return While(condition, body)
 
     def _parse_struct(self):
         self.advance()  # 吞 struct

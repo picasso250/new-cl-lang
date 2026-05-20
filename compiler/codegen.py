@@ -33,7 +33,7 @@ def generate_c(program: "Program") -> str:
     _return_label = [None]
     _return_var = [None]
     _return_type = ["void"]
-    _defer_stack = []
+    _defer_sites = []
     _emitting_defer = [False]
 
     # ——— 收集类型定义 ———
@@ -235,14 +235,29 @@ def generate_c(program: "Program") -> str:
         _lines.append(f'{pad}goto {_return_label[0]};')
 
     def emit_deferred(indent):
-        if not _defer_stack:
+        if not _defer_sites:
             return
         old = _emitting_defer[0]
         _emitting_defer[0] = True
-        for body in reversed(_defer_stack):
+        pad = '    ' * indent
+        _lines.append(f'{pad}while (__nc_defer_top > 0) {{')
+        _lines.append(f'{pad}    switch (__nc_defer_stack[--__nc_defer_top]) {{')
+        for site_id, body in _defer_sites:
+            _lines.append(f'{pad}        case {site_id}:')
             for s in body.statements:
-                gen_stmt(s, indent)
+                gen_stmt(s, indent + 3)
+            _lines.append(f'{pad}            break;')
+        _lines.append(f'{pad}    }}')
+        _lines.append(f'{pad}}}')
         _emitting_defer[0] = old
+
+    def defer_site_id(stmt):
+        site_id = getattr(stmt, "_defer_site_id", None)
+        if site_id is None:
+            site_id = len(_defer_sites)
+            stmt._defer_site_id = site_id
+            _defer_sites.append((site_id, stmt.body))
+        return site_id
 
     def gen_expr(node) -> str:
         if isinstance(node, IntegerLiteral):
@@ -617,7 +632,8 @@ def generate_c(program: "Program") -> str:
                 for s in stmt.body.statements:
                     gen_stmt(s, indent)
             else:
-                _defer_stack.append(stmt.body)
+                site_id = defer_site_id(stmt)
+                _lines.append(f'{pad}__nc_defer_stack[__nc_defer_top++] = {site_id};')
             _expr_indent[0] = old_indent
             return
         if isinstance(stmt, Break):
@@ -645,7 +661,7 @@ def generate_c(program: "Program") -> str:
     # ——— 输出函数 ———
     for func in other_funcs:
         _gc_vars.clear()  # 每函数独立的 GC 变量
-        _defer_stack.clear()
+        _defer_sites.clear()
         c_ret = _type_to_c(func.return_type or "void")
         _return_type[0] = c_ret
         _return_label[0] = "__nc_return"
@@ -660,6 +676,8 @@ def generate_c(program: "Program") -> str:
         params_c = ', '.join(f'{_type_to_c(t)} {n}' for n, t in all_params) or "void"
         _lines.append(f'{c_ret} {fname}({params_c}) {{')
         _lines.append('    size_t __nc_gc_mark = __nc_gc_root_mark();')
+        _lines.append('    int __nc_defer_stack[1024];')
+        _lines.append('    int __nc_defer_top = 0;')
         if c_ret != "void":
             _lines.append(f'    {c_ret} __nc_ret;')
         for i, s in enumerate(func.body.statements):
@@ -682,13 +700,15 @@ def generate_c(program: "Program") -> str:
 
     if main_func:
         _gc_vars.clear()
-        _defer_stack.clear()
+        _defer_sites.clear()
         _return_type[0] = "int"
         _return_label[0] = "__nc_main_return"
         _return_var[0] = "__nc_ret"
         _lines.append('int main(void) {')
         _lines.append('    __nc_gc_init();')
         _lines.append('    size_t __nc_gc_mark = __nc_gc_root_mark();')
+        _lines.append('    int __nc_defer_stack[1024];')
+        _lines.append('    int __nc_defer_top = 0;')
         _lines.append('    int __nc_ret = 0;')
         for i, s in enumerate(main_func.body.statements):
             if i == len(main_func.body.statements) - 1 and (main_func.return_type or "void") != "void":

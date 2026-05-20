@@ -56,7 +56,7 @@ class Block(Node):
 
 
 class While(Node):
-    """while expr { block }"""
+    """for expr { block }"""
     def __init__(self, condition, body: Block):
         self.condition = condition
         self.body = body
