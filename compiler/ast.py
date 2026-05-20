@@ -247,10 +247,12 @@ class FunctionDeclaration(Node):
     """fun name(params): return_type { body }
        或  fun (r *T) name(params): return_type { body }"""
     def __init__(self, name: str, params: list, return_type: str | None, body: Block,
-                 receiver_name: str | None = None, receiver_type: str | None = None):
+                 receiver_name: str | None = None, receiver_type: str | None = None,
+                 return_type_explicit: bool = False):
         self.name = name
         self.params = params   # [(name, type), ...]
-        self.return_type = return_type  # None = void
+        self.return_type = return_type
+        self.return_type_explicit = return_type_explicit
         self.body = body
         self.receiver_name = receiver_name  # 方法接收者名
         self.receiver_type = receiver_type  # 方法接收者类型 (如 "*Stack")
@@ -265,9 +267,11 @@ class FunctionDeclaration(Node):
 
 class FunctionExpr(Node):
     """fun(params): return_type { body } 作为表达式。"""
-    def __init__(self, params: list, return_type: str | None, body: Block):
+    def __init__(self, params: list, return_type: str | None, body: Block,
+                 return_type_explicit: bool = False):
         self.params = params
         self.return_type = return_type
+        self.return_type_explicit = return_type_explicit
         self.body = body
         self.captures = []  # [(name, type), ...] filled by typecheck
 

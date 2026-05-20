@@ -123,7 +123,7 @@ def build_symbol_table(program: "Program") -> SymbolTable:
                     table.pop_scope()
                 else:
                     table.declare(stmt.name, stmt.return_type or "void")
-                    table._functions[stmt.name] = (stmt.return_type or "void", stmt.params)
+                    table._functions[stmt.name] = (stmt.return_type, stmt.params)
                     table.push_scope()
                     for pname, ptype in stmt.params:
                         table.declare(pname, ptype)

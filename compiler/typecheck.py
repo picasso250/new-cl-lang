@@ -26,6 +26,11 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
     current_return_type = "void"
     break_depth = 0
     closure_stack = []
+    inferred_return_values = []
+    inferred_void_return = False
+    function_decls = {}
+    method_decls = {}
+    resolving_returns = []
 
     def line_col(text: str | None, pos: int) -> tuple[int, int]:
         if text is None:
@@ -82,9 +87,24 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         if not block.statements:
             return None
         last = block.statements[-1]
-        if isinstance(last, If):
+        if isinstance(last, If) and last.else_block is not None:
             return last
         return None
+
+    def tail_expr_type(expr):
+        if isinstance(expr, FunctionCall) and expr.name == "gc_live":
+            return None
+        if getattr(expr, "type", None) == "void":
+            return None
+        return expr.type
+
+    for top_stmt in program.statements:
+        if isinstance(top_stmt, FunctionDeclaration):
+            if top_stmt.receiver_name:
+                type_name = top_stmt.receiver_type.lstrip("*")
+                method_decls[(type_name, top_stmt.name)] = top_stmt
+            else:
+                function_decls[top_stmt.name] = top_stmt
 
     def infer_block_value(block, context_node):
         symtab.push_scope()
@@ -171,6 +191,8 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             funcs = getattr(symtab, "_functions", {})
             if node.name in funcs:
                 ret_type, params = funcs[node.name]
+                if ret_type is None:
+                    ret_type = resolve_function_return(node.name, node)
                 require_arg_count(node.args, len(params), node.name, node)
                 for arg, (pname, ptype) in zip(node.args, params):
                     require_type(arg.type, ptype, f"argument {pname} to {node.name}", arg)
@@ -190,6 +212,8 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         elif isinstance(node, FunctionExpr):
             nonlocal current_return_type
             prev_return_type = current_return_type
+            if not node.return_type_explicit:
+                infer_function_expr_return(node)
             current_return_type = node.return_type or "void"
             symtab.push_scope()
             for pname, ptype in node.params:
@@ -261,10 +285,12 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             methods = getattr(symtab, "_methods", {})
             if obj_type in methods and node.method in methods[obj_type]:
                 ret_type, params = methods[obj_type][node.method]
+                if ret_type is None:
+                    ret_type = resolve_method_return(obj_type, node.method, node)
                 require_arg_count(node.args, len(params), f"method {node.method}", node)
                 for arg, (pname, ptype) in zip(node.args, params):
                     require_type(arg.type, ptype, f"argument {pname} to method {node.method}", arg)
-                node.type = ret_type or "void"
+                node.type = ret_type
             else:
                 fail(f"{obj_type}: method {node.method} not found", node)
         elif isinstance(node, ArrayLiteral):
@@ -315,7 +341,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 node.type = node.array.type
 
     def walk_stmts(stmts: list):
-        nonlocal current_return_type, break_depth
+        nonlocal current_return_type, break_depth, inferred_void_return
         for stmt in stmts:
             if isinstance(stmt, VariableDeclaration):
                 walk_expr(stmt.initializer)
@@ -352,6 +378,11 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             elif isinstance(stmt, FunctionDeclaration):
                 symtab.push_scope()
                 prev_return_type = current_return_type
+                if not stmt.return_type_explicit:
+                    if stmt.receiver_name:
+                        resolve_method_return(stmt.receiver_type.lstrip("*"), stmt.name, stmt)
+                    else:
+                        resolve_function_return(stmt.name, stmt)
                 current_return_type = stmt.return_type or "void"
                 if stmt.receiver_name:
                     symtab.declare(stmt.receiver_name, stmt.receiver_type)
@@ -371,9 +402,15 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             elif isinstance(stmt, Return):
                 if stmt.expr:
                     walk_expr(stmt.expr)
-                    require_type(stmt.expr.type, current_return_type, "return", stmt)
+                    if current_return_type is None:
+                        inferred_return_values.append((stmt.expr.type, stmt))
+                    else:
+                        require_type(stmt.expr.type, current_return_type, "return", stmt)
                 elif current_return_type != "void":
-                    fail(f"return: expected {current_return_type}, got void", stmt)
+                    if current_return_type is None:
+                        inferred_void_return = True
+                    else:
+                        fail(f"return: expected {current_return_type}, got void", stmt)
             elif isinstance(stmt, StructDecl):
                 pass  # 已在 Pass 1 注册
             elif isinstance(stmt, EnumDecl):
@@ -422,5 +459,111 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 symtab.push_scope()
                 walk_stmts(stmt.statements)
                 symtab.pop_scope()
+
+    def infer_return_from_body(fn_node, display_name):
+        nonlocal current_return_type, inferred_return_values, inferred_void_return
+        prev_return_type = current_return_type
+        prev_values = inferred_return_values
+        prev_void = inferred_void_return
+        current_return_type = None
+        inferred_return_values = []
+        inferred_void_return = False
+
+        symtab.push_scope()
+        if isinstance(fn_node, FunctionDeclaration) and fn_node.receiver_name:
+            symtab.declare(fn_node.receiver_name, fn_node.receiver_type)
+        for pname, ptype in fn_node.params:
+            symtab.declare(pname, ptype)
+        walk_stmts(fn_node.body.statements)
+
+        tail = block_tail_expr(fn_node.body)
+        tail_if = block_tail_if(fn_node.body)
+        if tail is not None:
+            ret_type = tail_expr_type(tail)
+            if ret_type is not None:
+                inferred_return_values.append((ret_type, tail))
+        elif tail_if is not None:
+            inferred_return_values.append((infer_if_value(tail_if), tail_if))
+
+        values = inferred_return_values
+        saw_void = inferred_void_return
+        symtab.pop_scope()
+
+        current_return_type = prev_return_type
+        inferred_return_values = prev_values
+        inferred_void_return = prev_void
+
+        if values and saw_void:
+            fail(f"{display_name}: cannot mix value return and void return", values[0][1])
+        if not values:
+            return "void"
+        first_type = values[0][0]
+        for ret_type, ret_node in values[1:]:
+            require_type(ret_type, first_type, f"{display_name} return type", ret_node)
+        return first_type
+
+    def update_function_signature(name, ret_type):
+        symtab._functions[name] = (ret_type, symtab._functions[name][1])
+        symtab._scopes[0][name].nc_type = ret_type
+
+    def update_method_signature(type_name, method_name, ret_type):
+        params = symtab._methods[type_name][method_name][1]
+        symtab._methods[type_name][method_name] = (ret_type, params)
+        mangled = f"{type_name}_{method_name}"
+        if mangled in symtab._scopes[0]:
+            symtab._scopes[0][mangled].nc_type = ret_type
+
+    def resolve_function_return(name, node=None):
+        if name not in function_decls:
+            fail(f"Function '{name}' not found", node)
+        fn_node = function_decls[name]
+        if fn_node.return_type_explicit:
+            fn_node.return_type = fn_node.return_type or "void"
+            update_function_signature(name, fn_node.return_type)
+            return fn_node.return_type
+        if fn_node.return_type is not None:
+            return fn_node.return_type
+        key = ("function", name)
+        if key in resolving_returns:
+            fail(f"function {name}: return type inference cycle; add explicit return type", node or fn_node)
+        resolving_returns.append(key)
+        ret_type = infer_return_from_body(fn_node, f"function {name}")
+        resolving_returns.pop()
+        fn_node.return_type = ret_type
+        update_function_signature(name, ret_type)
+        return ret_type
+
+    def resolve_method_return(type_name, method_name, node=None):
+        key_name = (type_name, method_name)
+        if key_name not in method_decls:
+            fail(f"{type_name}: method {method_name} not found", node)
+        fn_node = method_decls[key_name]
+        if fn_node.return_type_explicit:
+            fn_node.return_type = fn_node.return_type or "void"
+            update_method_signature(type_name, method_name, fn_node.return_type)
+            return fn_node.return_type
+        if fn_node.return_type is not None:
+            return fn_node.return_type
+        key = ("method", type_name, method_name)
+        if key in resolving_returns:
+            fail(f"function {method_name}: return type inference cycle; add explicit return type", node or fn_node)
+        resolving_returns.append(key)
+        ret_type = infer_return_from_body(fn_node, f"function {method_name}")
+        resolving_returns.pop()
+        fn_node.return_type = ret_type
+        update_method_signature(type_name, method_name, ret_type)
+        return ret_type
+
+    def infer_function_expr_return(node):
+        ret_type = infer_return_from_body(node, "function expression")
+        node.return_type = ret_type
+        return ret_type
+
+    for top_stmt in program.statements:
+        if isinstance(top_stmt, FunctionDeclaration):
+            if top_stmt.receiver_name:
+                resolve_method_return(top_stmt.receiver_type.lstrip("*"), top_stmt.name, top_stmt)
+            else:
+                resolve_function_return(top_stmt.name, top_stmt)
 
     walk_stmts(program.statements)

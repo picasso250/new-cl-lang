@@ -180,13 +180,15 @@ class Parser:
                 params.append((pname, ptype))
         self.expect(TokenKind.RPAREN)
         return_type = None
+        return_type_explicit = False
         if self.peek().kind == TokenKind.COLON:
             self.advance()
             return_type = self._parse_type()
+            return_type_explicit = True
         body = self._parse_block()
         self.match(TokenKind.SEMI)
         return FunctionDeclaration(name, params, return_type, body,
-                                   receiver_name, receiver_type)
+                                   receiver_name, receiver_type, return_type_explicit)
 
     def _parse_function_expr(self, start):
         self.expect(TokenKind.LPAREN)
@@ -204,11 +206,13 @@ class Parser:
                 params.append((pname, ptype))
         self.expect(TokenKind.RPAREN)
         return_type = None
+        return_type_explicit = False
         if self.peek().kind == TokenKind.COLON:
             self.advance()
             return_type = self._parse_type()
+            return_type_explicit = True
         body = self._parse_block()
-        return self.span(FunctionExpr(params, return_type, body), start)
+        return self.span(FunctionExpr(params, return_type, body, return_type_explicit), start)
 
     def _parse_return(self):
         start = self.advance()

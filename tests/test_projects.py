@@ -28,6 +28,12 @@ def test_multifile_struct_run():
     assert result.stdout.strip() == "7"
 
 
+def test_multifile_inferred_return_run():
+    result = run_nc("run", os.path.join("test_cases", "project_120_multifile_infer_return"))
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "11"
+
+
 def test_build_outputs_generated_c_and_exe():
     with tempfile.TemporaryDirectory() as tmp:
         project = os.path.join(ROOT, "test_cases", "project_095_multifile")
