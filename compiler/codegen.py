@@ -21,6 +21,7 @@ def generate_c(program: "Program") -> str:
         VariableDeclaration, ExpressionStatement, Assignment,
         Return, SliceExpr, ArrayLiteral, SliceLiteral, FunctionCall,
         IfExpr, BlockExpr, IntegerLiteral, StringLiteral, BoolLiteral, Identifier, BinaryOp, UnaryOp,
+        FunctionExpr,
         EnumRef, StructLiteral, FieldAccess, IndexAccess, SliceExpr, MethodCall,
         TryCatch, Throw, Defer, Break
     )
@@ -35,6 +36,8 @@ def generate_c(program: "Program") -> str:
     _return_type = ["void"]
     _defer_sites = []
     _emitting_defer = [False]
+    _closure_env_stack = []
+    _closures = []
 
     # ——— 收集类型定义 ———
     structs = []
@@ -80,6 +83,105 @@ def generate_c(program: "Program") -> str:
 
     collect(program.statements)
 
+    def collect_closure_expr(node):
+        if isinstance(node, FunctionExpr):
+            if not hasattr(node, "closure_id"):
+                node.closure_id = len(_closures)
+                _closures.append(node)
+            collect(node.body.statements)
+            for s in node.body.statements:
+                collect_closure_stmt(s)
+        elif isinstance(node, (ArrayLiteral, SliceLiteral)):
+            for elem in node.elements:
+                collect_closure_expr(elem)
+        elif isinstance(node, SliceExpr):
+            collect_closure_expr(node.array)
+            if node.start:
+                collect_closure_expr(node.start)
+            if node.end:
+                collect_closure_expr(node.end)
+        elif isinstance(node, IndexAccess):
+            collect_closure_expr(node.obj)
+            collect_closure_expr(node.index)
+        elif isinstance(node, BinaryOp):
+            collect_closure_expr(node.left)
+            collect_closure_expr(node.right)
+        elif isinstance(node, UnaryOp):
+            collect_closure_expr(node.operand)
+        elif isinstance(node, FunctionCall):
+            for arg in node.args:
+                collect_closure_expr(arg)
+        elif isinstance(node, IfExpr):
+            collect_closure_expr(node.condition)
+            for s in node.then_block.statements:
+                collect_closure_stmt(s)
+            for s in node.else_block.statements:
+                collect_closure_stmt(s)
+        elif isinstance(node, BlockExpr):
+            for s in node.block.statements:
+                collect_closure_stmt(s)
+        elif isinstance(node, StructLiteral):
+            for _n, val in node.fields:
+                collect_closure_expr(val)
+        elif isinstance(node, FieldAccess):
+            collect_closure_expr(node.obj)
+        elif isinstance(node, MethodCall):
+            collect_closure_expr(node.obj)
+            for arg in node.args:
+                collect_closure_expr(arg)
+
+    def collect_closure_stmt(stmt):
+        if isinstance(stmt, VariableDeclaration):
+            collect_closure_expr(stmt.initializer)
+        elif isinstance(stmt, Assignment):
+            collect_closure_expr(stmt.target)
+            collect_closure_expr(stmt.expr)
+        elif isinstance(stmt, ExpressionStatement):
+            collect_closure_expr(stmt.expr)
+        elif isinstance(stmt, If):
+            collect_closure_expr(stmt.condition)
+            for s in stmt.then_block.statements:
+                collect_closure_stmt(s)
+            if stmt.else_block:
+                for s in stmt.else_block.statements:
+                    collect_closure_stmt(s)
+        elif isinstance(stmt, While):
+            collect_closure_expr(stmt.condition)
+            for s in stmt.body.statements:
+                collect_closure_stmt(s)
+        elif isinstance(stmt, ForIn):
+            if stmt.start is not None:
+                collect_closure_expr(stmt.start)
+                collect_closure_expr(stmt.end)
+            else:
+                collect_closure_expr(stmt.iterable)
+            for s in stmt.body.statements:
+                collect_closure_stmt(s)
+        elif isinstance(stmt, Switch):
+            collect_closure_expr(stmt.scrutinee)
+            for case_val, case_stmt in stmt.cases:
+                collect_closure_expr(case_val)
+                collect_closure_stmt(case_stmt)
+        elif isinstance(stmt, FunctionDeclaration):
+            for s in stmt.body.statements:
+                collect_closure_stmt(s)
+        elif isinstance(stmt, Return) and stmt.expr:
+            collect_closure_expr(stmt.expr)
+        elif isinstance(stmt, TryCatch):
+            for s in stmt.try_block.statements + stmt.catch_block.statements:
+                collect_closure_stmt(s)
+        elif isinstance(stmt, Throw):
+            collect_closure_expr(stmt.expr)
+        elif isinstance(stmt, Defer):
+            for s in stmt.body.statements:
+                collect_closure_stmt(s)
+        elif isinstance(stmt, Block):
+            for s in stmt.statements:
+                collect_closure_stmt(s)
+
+    for stmt in program.statements:
+        collect_closure_stmt(stmt)
+
     top_stmts = [s for s in program.statements
                  if not isinstance(s, (FunctionDeclaration, StructDecl, EnumDecl))]
 
@@ -87,8 +189,25 @@ def generate_c(program: "Program") -> str:
         if isinstance(nc_type, str) and nc_type.startswith("[]"):
             _slice_types.add(nc_type[2:])
 
+    _fn_types = set()
+
+    def parse_fn_type(nc_type):
+        if not isinstance(nc_type, str) or not nc_type.startswith("fn("):
+            return None
+        close = nc_type.find(")->")
+        if close < 0:
+            return None
+        args_s = nc_type[3:close]
+        args = [] if args_s == "" else args_s.split(",")
+        return args, nc_type[close + 3:]
+
+    def collect_fn_type(nc_type):
+        if parse_fn_type(nc_type) is not None:
+            _fn_types.add(nc_type)
+
     def collect_expr_types(node):
         collect_slice_type(getattr(node, "type", None))
+        collect_fn_type(getattr(node, "type", None))
         if isinstance(node, (ArrayLiteral, SliceLiteral)):
             if isinstance(node, SliceLiteral):
                 _slice_types.add(node.elem_type)
@@ -129,9 +248,21 @@ def generate_c(program: "Program") -> str:
             collect_expr_types(node.obj)
             for arg in node.args:
                 collect_expr_types(arg)
+        elif isinstance(node, FunctionExpr):
+            for _n, ptype in node.params:
+                collect_slice_type(ptype)
+                collect_fn_type(ptype)
+            collect_slice_type(node.return_type)
+            collect_fn_type(node.return_type)
+            for _n, ctype in getattr(node, "captures", []):
+                collect_slice_type(ctype)
+                collect_fn_type(ctype)
+            for s in node.body.statements:
+                collect_stmt_types(s)
 
     def collect_stmt_types(stmt):
         collect_slice_type(getattr(stmt, "type", None))
+        collect_fn_type(getattr(stmt, "type", None))
         if isinstance(stmt, VariableDeclaration):
             collect_expr_types(stmt.initializer)
         elif isinstance(stmt, Assignment):
@@ -165,8 +296,10 @@ def generate_c(program: "Program") -> str:
                 collect_stmt_types(case_stmt)
         elif isinstance(stmt, FunctionDeclaration):
             collect_slice_type(stmt.return_type)
+            collect_fn_type(stmt.return_type)
             for _n, ptype in stmt.params:
                 collect_slice_type(ptype)
+                collect_fn_type(ptype)
             for s in stmt.body.statements:
                 collect_stmt_types(s)
         elif isinstance(stmt, Return) and stmt.expr:
@@ -201,6 +334,29 @@ def generate_c(program: "Program") -> str:
     if structs:
         _lines.append('')
 
+    for fn_t in sorted(_fn_types):
+        parsed = parse_fn_type(fn_t)
+        if parsed is None:
+            continue
+        arg_types, ret_type = parsed
+        c_name = _type_to_c(fn_t)
+        c_ret = _type_to_c(ret_type)
+        fn_args = ['void* env'] + [f'{_type_to_c(t)} a{i}' for i, t in enumerate(arg_types)]
+        _lines.append(f'typedef struct {{ {c_ret} (*call)({", ".join(fn_args)}); void* env; }} {c_name};')
+    if _fn_types:
+        _lines.append('')
+
+    for closure in _closures:
+        cid = closure.closure_id
+        fields = getattr(closure, "captures", [])
+        if fields:
+            fields_c = '; '.join(f'{_type_to_c(t)} {n}' for n, t in fields) + ';'
+        else:
+            fields_c = 'char _unused;'
+        _lines.append(f'typedef struct {{ {fields_c} }} __nc_env_{cid};')
+    if _closures:
+        _lines.append('')
+
     # ——— 代码生成内部函数 ———
     def next_tmp(prefix="__nc_tmp"):
         name = f'{prefix}_{_tmp_id[0]}'
@@ -221,6 +377,9 @@ def generate_c(program: "Program") -> str:
         elif isinstance(nc_type, str) and nc_type.startswith("*"):
             _gc_vars[name] = nc_type
             _lines.append(f'{pad}__nc_gc_push_root((void*){name});')
+        elif parse_fn_type(nc_type) is not None:
+            _gc_vars[name] = nc_type
+            _lines.append(f'{pad}__nc_gc_push_root((void*){name}.env);')
 
     def emit_return_expr(expr, indent):
         pad = '    ' * indent
@@ -268,6 +427,8 @@ def generate_c(program: "Program") -> str:
             esc = node.value.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
             return f'(str){{(uint8_t*)"{esc}", {len(node.value)}}}'
         if isinstance(node, Identifier):
+            if getattr(node, "is_capture", False) and _closure_env_stack:
+                return f'{_closure_env_stack[-1]}->{node.name}'
             return node.name
         if isinstance(node, BinaryOp):
             left_c = gen_expr(node.left)
@@ -288,7 +449,24 @@ def generate_c(program: "Program") -> str:
             if builtin_c is not None:
                 return builtin_c
             args = ', '.join(gen_expr(a) for a in node.args)
+            if getattr(node, "is_closure_call", False):
+                prefix = f'{node.name}.env'
+                if args:
+                    return f'{node.name}.call({prefix}, {args})'
+                return f'{node.name}.call({prefix})'
             return f'{node.name}({args})'
+        if isinstance(node, FunctionExpr):
+            cid = node.closure_id
+            tmp = next_tmp("__nc_closure")
+            env = next_tmp("__nc_env")
+            pad = '    ' * _expr_indent[0]
+            c_t = _type_to_c(node.type)
+            _lines.append(f'{pad}__nc_env_{cid}* {env} = (__nc_env_{cid}*)__nc_gc_alloc(sizeof(__nc_env_{cid}));')
+            for cname, _ctype in getattr(node, "captures", []):
+                _lines.append(f'{pad}{env}->{cname} = {cname};')
+            _lines.append(f'{pad}{c_t} {tmp} = {{ __nc_lambda_{cid}, {env} }};')
+            root_expr_temp(tmp, node.type, _expr_indent[0])
+            return tmp
         if isinstance(node, IfExpr):
             tmp = next_tmp("__nc_if")
             pad = '    ' * _expr_indent[0]
@@ -481,6 +659,9 @@ def generate_c(program: "Program") -> str:
                 elif isinstance(stmt.type, str) and stmt.type.startswith("[]"):
                     _gc_vars[stmt.name] = stmt.type
                     _lines.append(f'{pad}__nc_gc_push_root((void*){stmt.name}.ptr);')
+                elif parse_fn_type(stmt.type) is not None:
+                    _gc_vars[stmt.name] = stmt.type
+                    _lines.append(f'{pad}__nc_gc_push_root((void*){stmt.name}.env);')
             else:
                 c_t = _type_to_c(stmt.type)
                 # 堆分配: let s = new Struct{...}
@@ -509,6 +690,9 @@ def generate_c(program: "Program") -> str:
                         _lines.append(f'{pad}__nc_gc_push_root((void*){stmt.name}.ptr);')
                     elif isinstance(stmt.type, str) and stmt.type.startswith("[]"):
                         _lines.append(f'{pad}__nc_gc_push_root((void*){stmt.name}.ptr);')
+                    elif parse_fn_type(stmt.type) is not None:
+                        _gc_vars[stmt.name] = stmt.type
+                        _lines.append(f'{pad}__nc_gc_push_root((void*){stmt.name}.env);')
             _expr_indent[0] = old_indent
             return
         if isinstance(stmt, Assignment):
@@ -523,6 +707,8 @@ def generate_c(program: "Program") -> str:
                         _lines.append(f'{pad}__nc_gc_push_root((void*){stmt.target.name}.ptr);')
                     elif isinstance(var_t, str) and var_t.startswith("[]"):
                         _lines.append(f'{pad}__nc_gc_push_root((void*){stmt.target.name}.ptr);')
+                    elif parse_fn_type(var_t) is not None:
+                        _lines.append(f'{pad}__nc_gc_push_root((void*){stmt.target.name}.env);')
             elif isinstance(stmt.target, IndexAccess):
                 obj_c = gen_expr(stmt.target.obj)
                 idx_c = gen_expr(stmt.target.index)
@@ -642,6 +828,48 @@ def generate_c(program: "Program") -> str:
             _expr_indent[0] = old_indent
             return
         raise NotImplementedError(f"gen_stmt: {type(stmt).__name__}")
+
+    # ——— 闭包 trampoline ———
+    for closure in _closures:
+        _gc_vars.clear()
+        _defer_sites.clear()
+        cid = closure.closure_id
+        c_ret = _type_to_c(closure.return_type or "void")
+        _return_type[0] = c_ret
+        _return_label[0] = f"__nc_lambda_{cid}_return"
+        _return_var[0] = "__nc_ret"
+        params_c = ', '.join([f'{_type_to_c(t)} {n}' for n, t in closure.params])
+        full_params = 'void* __nc_env_raw'
+        if params_c:
+            full_params += ', ' + params_c
+        _lines.append(f'static {c_ret} __nc_lambda_{cid}({full_params}) {{')
+        _lines.append('    size_t __nc_gc_mark = __nc_gc_root_mark();')
+        _lines.append('    int __nc_defer_stack[1024];')
+        _lines.append('    int __nc_defer_top = 0;')
+        _lines.append(f'    __nc_env_{cid}* __env = (__nc_env_{cid}*)__nc_env_raw;')
+        if c_ret != "void":
+            _lines.append(f'    {c_ret} __nc_ret;')
+        _closure_env_stack.append("__env")
+        for i, s in enumerate(closure.body.statements):
+            if i == len(closure.body.statements) - 1 and (closure.return_type or "void") != "void":
+                if isinstance(s, ExpressionStatement):
+                    emit_return_expr(s.expr, 1)
+                    continue
+                if isinstance(s, If):
+                    gen_if_tail_return(s, 1)
+                    continue
+            gen_stmt(s)
+        _closure_env_stack.pop()
+        _lines.append(f'{_return_label[0]}:')
+        emit_deferred(1)
+        _lines.append('    __nc_gc_root_rewind(__nc_gc_mark);')
+        if c_ret != "void":
+            _lines.append(f'    return {_return_var[0]};')
+        else:
+            _lines.append('    return;')
+        _lines.append('}')
+    if _closures:
+        _lines.append('')
 
     # ——— 前向声明（支持互递归） ———
     for func in other_funcs:

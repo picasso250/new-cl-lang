@@ -93,7 +93,7 @@ def build_symbol_table(program: "Program") -> SymbolTable:
         Program, VariableDeclaration, ExpressionStatement,
         Assignment, Block, If, While, FunctionDeclaration, Return,
         StructDecl, EnumDecl, Switch, ForIn,
-        IfExpr, BlockExpr, BinaryOp, UnaryOp, FunctionCall,
+        IfExpr, BlockExpr, BinaryOp, UnaryOp, FunctionCall, FunctionExpr,
         ArrayLiteral, IndexAccess, MethodCall, FieldAccess, StructLiteral, TryCatch, Throw, Defer
     )
     table = SymbolTable()
@@ -203,6 +203,12 @@ def build_symbol_table(program: "Program") -> SymbolTable:
         elif isinstance(node, FunctionCall):
             for arg in node.args:
                 _walk_expr(arg)
+        elif isinstance(node, FunctionExpr):
+            table.push_scope()
+            for pname, ptype in node.params:
+                table.declare(pname, ptype)
+            walk_stmts(node.body.statements)
+            table.pop_scope()
         elif isinstance(node, IfExpr):
             _walk_expr(node.condition)
             walk_stmts(node.then_block.statements)

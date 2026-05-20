@@ -263,6 +263,20 @@ class FunctionDeclaration(Node):
         return f"Fun({self.name}({p}){r} {self.body})"
 
 
+class FunctionExpr(Node):
+    """fun(params): return_type { body } 作为表达式。"""
+    def __init__(self, params: list, return_type: str | None, body: Block):
+        self.params = params
+        self.return_type = return_type
+        self.body = body
+        self.captures = []  # [(name, type), ...] filled by typecheck
+
+    def __repr__(self):
+        p = ', '.join(f'{n}: {t}' for n, t in self.params)
+        r = f': {self.return_type}' if self.return_type else ''
+        return f"FunExpr({p}{r} {self.body})"
+
+
 class Return(Node):
     """return expr;"""
     def __init__(self, expr = None):

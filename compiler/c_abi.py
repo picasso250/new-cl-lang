@@ -14,6 +14,8 @@ NC_TO_C = {
 
 
 def type_to_c(nc_type: str) -> str:
+    if nc_type.startswith("fn("):
+        return fn_type_name(nc_type)
     if nc_type.startswith("[]"):
         return slice_type_name(nc_type[2:])
     if nc_type.startswith("*"):
@@ -22,7 +24,14 @@ def type_to_c(nc_type: str) -> str:
 
 
 def c_ident(name: str) -> str:
-    return name.replace("*", "ptr_").replace("[]", "slice_").replace("[", "arr_").replace("]", "_")
+    return (name.replace("*", "ptr_").replace("[]", "slice_")
+            .replace("[", "arr_").replace("]", "_")
+            .replace("(", "_").replace(")", "_").replace(",", "_")
+            .replace("->", "_to_"))
+
+
+def fn_type_name(nc_type: str) -> str:
+    return f"nc_{c_ident(nc_type)}"
 
 
 def slice_type_name(elem_type: str) -> str:

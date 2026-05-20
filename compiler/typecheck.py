@@ -19,11 +19,13 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         StructDecl, StructLiteral, FieldAccess,
         EnumDecl, EnumRef, Switch, ForIn,
         IfExpr, BlockExpr, IntegerLiteral, StringLiteral, BoolLiteral, BinaryOp, UnaryOp, FunctionCall, Identifier,
+        FunctionExpr,
         ArrayLiteral, SliceLiteral, IndexAccess, SliceExpr, MethodCall, TryCatch, Throw, Defer, Break
     )
 
     current_return_type = "void"
     break_depth = 0
+    closure_stack = []
 
     def line_col(text: str | None, pos: int) -> tuple[int, int]:
         if text is None:
@@ -51,6 +53,19 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
     def require_arg_count(args, expected, context, node=None):
         if len(args) != expected:
             fail(f"{context}: expected {expected} args, got {len(args)}", node)
+
+    def fn_type(params, ret_type):
+        return f"fn({','.join(params)})->{ret_type}"
+
+    def parse_fn_type(nc_type):
+        if not isinstance(nc_type, str) or not nc_type.startswith("fn("):
+            return None
+        close = nc_type.find(")->")
+        if close < 0:
+            return None
+        args_s = nc_type[3:close]
+        args = [] if args_s == "" else args_s.split(",")
+        return args, nc_type[close + 3:]
 
     def ends_with_return(stmts):
         return bool(stmts) and isinstance(stmts[-1], Return)
@@ -111,6 +126,12 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         elif isinstance(node, Identifier):
             sym = symtab.lookup(node.name)
             node.type = sym.nc_type
+            if closure_stack and sym.scope_level < closure_stack[-1]["level"] and sym.nc_type not in ("struct", "enum"):
+                ctx = closure_stack[-1]
+                if node.name not in ctx["captures"]:
+                    ctx["captures"][node.name] = sym.nc_type
+                node.is_capture = True
+                node.capture_type = sym.nc_type
         elif isinstance(node, UnaryOp):
             walk_expr(node.operand)
             if node.op == "!":
@@ -148,13 +169,47 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 node.type = builtin_type
                 return
             funcs = getattr(symtab, "_functions", {})
-            if node.name not in funcs:
-                fail(f"Function '{node.name}' not found", node)
-            ret_type, params = funcs[node.name]
-            require_arg_count(node.args, len(params), node.name, node)
-            for arg, (pname, ptype) in zip(node.args, params):
-                require_type(arg.type, ptype, f"argument {pname} to {node.name}", arg)
-            node.type = ret_type
+            if node.name in funcs:
+                ret_type, params = funcs[node.name]
+                require_arg_count(node.args, len(params), node.name, node)
+                for arg, (pname, ptype) in zip(node.args, params):
+                    require_type(arg.type, ptype, f"argument {pname} to {node.name}", arg)
+                node.type = ret_type
+                node.is_closure_call = False
+            else:
+                sym = symtab.lookup(node.name)
+                parsed = parse_fn_type(sym.nc_type)
+                if parsed is None:
+                    fail(f"Function '{node.name}' not found", node)
+                param_types, ret_type = parsed
+                require_arg_count(node.args, len(param_types), node.name, node)
+                for i, (arg, ptype) in enumerate(zip(node.args, param_types)):
+                    require_type(arg.type, ptype, f"argument {i + 1} to {node.name}", arg)
+                node.type = ret_type
+                node.is_closure_call = True
+        elif isinstance(node, FunctionExpr):
+            nonlocal current_return_type
+            prev_return_type = current_return_type
+            current_return_type = node.return_type or "void"
+            symtab.push_scope()
+            for pname, ptype in node.params:
+                symtab.declare(pname, ptype)
+            ctx = {"level": symtab._level, "captures": {}}
+            closure_stack.append(ctx)
+            walk_stmts(node.body.statements)
+            closure_stack.pop()
+            if current_return_type != "void" and not ends_with_return(node.body.statements):
+                if node.body.statements and isinstance(node.body.statements[-1], ExpressionStatement):
+                    require_type(node.body.statements[-1].expr.type, current_return_type, "function expression tail expression", node.body.statements[-1].expr)
+                elif node.body.statements and isinstance(node.body.statements[-1], If):
+                    tail_type = infer_if_value(node.body.statements[-1])
+                    require_type(tail_type, current_return_type, "function expression tail expression", node.body.statements[-1])
+                else:
+                    fail(f"function expression: missing return {current_return_type}", node)
+            node.captures = list(ctx["captures"].items())
+            node.type = fn_type([ptype for _pname, ptype in node.params], current_return_type)
+            current_return_type = prev_return_type
+            symtab.pop_scope()
         elif isinstance(node, IfExpr):
             walk_expr(node.condition)
             require_type(node.condition.type, "bool", "if condition", node.condition)
@@ -270,8 +325,10 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             elif isinstance(stmt, ExpressionStatement):
                 walk_expr(stmt.expr)
             elif isinstance(stmt, Assignment):
-                require_assignable(stmt.target)
                 walk_expr(stmt.target)
+                require_assignable(stmt.target)
+                if isinstance(stmt.target, Identifier) and getattr(stmt.target, "is_capture", False):
+                    fail(f"cannot assign to captured variable '{stmt.target.name}'", stmt.target)
                 walk_expr(stmt.expr)
                 require_type(stmt.expr.type, stmt.target.type, "assignment", stmt.expr)
             elif isinstance(stmt, If):
