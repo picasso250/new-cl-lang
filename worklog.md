@@ -80,7 +80,7 @@
 - 设计 `match` 语句。
 - 决策：`switch` 不保留，用 `match` 统一替代。
 - `match` 是表达式（支持 `let x = match y { ... }`）。
-- v1 范围：字面量 + 通配符 `_` + guard；范围和多模式放 v1.1。
+- v1 范围：字面量 + enum 标签 + `else` 分支；暂不引入通配符 `_`、guard、范围和多模式。
 - `match` 编译为 if-else 链，不落入 C switch。
 
 ## 2026-05-21
