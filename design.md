@@ -215,14 +215,21 @@ if x > 0 { ... } else if x < 0 { ... } else { ... }
 for i < 10 { i++ }
 for item in items { ... }
 for i, item in items { ... }
-switch x {
-    0           -> ...
-    1, 2, 3     -> ...
-    4..=10      -> ...
-    if x > 100  -> ...
-    else        -> ...
+
+let label = match color {
+    Color::Red   -> "red"
+    Color::Green -> "green"
+    Color::Blue  -> "blue"
+}
+
+let size = match n {
+    0    -> "zero"
+    1    -> "one"
+    else -> "many"
 }
 ```
+
+`match` 是表达式。v1 支持字面量、`Enum::Variant` 和 `else` 分支；所有分支结果类型必须一致。enum match 无 `else` 时必须覆盖全部变体；非 enum match 必须写 `else`。v1 暂不做 enum 数据解构、变量绑定、guard、范围模式。
 
 ---
 

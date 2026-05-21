@@ -18,7 +18,7 @@ class TokenKind(Enum):
     RETURN = auto()
     STRUCT = auto()
     ENUM = auto()
-    SWITCH = auto()
+    MATCH = auto()
     FOR = auto()
     IN = auto()
     BREAK = auto()
@@ -75,7 +75,7 @@ KEYWORDS = {
     "return": TokenKind.RETURN,
     "struct": TokenKind.STRUCT,
     "enum": TokenKind.ENUM,
-    "switch": TokenKind.SWITCH,
+    "match": TokenKind.MATCH,
     "for": TokenKind.FOR,
     "in": TokenKind.IN,
     "break": TokenKind.BREAK,

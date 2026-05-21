@@ -74,3 +74,20 @@
 - 预备更新 `design.md` 中已过期的控制流与 block 表达式描述，使其和当前实现一致；随后评估是否把 `if` 统一为表达式节点。
 
 - 预备实施 if 统一表达式化：删除语句/表达式双节点语义，支持无 else 的 void if，保持 else-if 为同类型表达式链。
+
+## 2026-05-21
+
+- 设计 `match` 语句。
+- 决策：`switch` 不保留，用 `match` 统一替代。
+- `match` 是表达式（支持 `let x = match y { ... }`）。
+- v1 范围：字面量 + 通配符 `_` + guard；范围和多模式放 v1.1。
+- `match` 编译为 if-else 链，不落入 C switch。
+
+## 2026-05-21
+
+- 预备新增 `match` 表达式 v1：支持字面量 / enum 标签 / else 分支，要求表达式分支类型一致。
+- v1 暂不做 enum payload 解构、变量绑定、guard、范围模式；enum 无 else 时做穷尽性检查，非 enum 必须写 else。
+- 已实现 `match` 表达式：lexer/parser/AST/typecheck/codegen 全链路接入，降到 `if/else if/else` 链并保证 scrutinee 只求值一次。
+- 新增 case_124~134 覆盖 enum 穷尽、else、str scrutinee、tail return、block arm、函数参数和主要错误诊断；`python tests/test_basic.py` 通过 132/132，`python tests/test_projects.py` 通过。
+- 应要求彻底移除语言级 `switch`：删除 Switch AST、switch token/关键字、parser 入口、Pass1/Pass2/codegen 分支；旧 switch case 改为 match，break 错误文案改为仅 loop。
+- 清理后 `python tests/test_basic.py` 通过 132/132，`python tests/test_projects.py` 通过。

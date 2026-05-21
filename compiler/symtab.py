@@ -92,8 +92,8 @@ def build_symbol_table(program: "Program") -> SymbolTable:
     from compiler.ast import (
         Program, VariableDeclaration, ExpressionStatement,
         Assignment, Block, While, FunctionDeclaration, Return,
-        StructDecl, EnumDecl, Switch, ForIn,
-        IfExpr, BlockExpr, BinaryOp, UnaryOp, FunctionCall, FunctionExpr,
+        StructDecl, EnumDecl, ForIn,
+        IfExpr, BlockExpr, MatchExpr, BinaryOp, UnaryOp, FunctionCall, FunctionExpr,
         ArrayLiteral, IndexAccess, MethodCall, FieldAccess, StructLiteral, TryCatch, Throw, Defer
     )
     table = SymbolTable()
@@ -135,7 +135,7 @@ def build_symbol_table(program: "Program") -> SymbolTable:
             elif isinstance(stmt, EnumDecl):
                 table.declare_global(stmt.name, "enum")
                 table.declare_enum(stmt.name, stmt.variants)
-            elif isinstance(stmt, (While, Block, Switch, ForIn, TryCatch)):
+            elif isinstance(stmt, (While, Block, ForIn, TryCatch)):
                 _descend_stmt(stmt)
             elif isinstance(stmt, ExpressionStatement):
                 _walk_expr(stmt.expr)
@@ -162,11 +162,6 @@ def build_symbol_table(program: "Program") -> SymbolTable:
                 _walk_expr(stmt.iterable)
             walk_stmts(stmt.body.statements)
             table.pop_scope()
-        elif isinstance(stmt, Switch):
-            _walk_expr(stmt.scrutinee)
-            for case_val, case_stmt in stmt.cases:
-                _walk_expr(case_val)
-                walk_stmts([case_stmt])
         elif isinstance(stmt, TryCatch):
             table.push_scope()
             walk_stmts(stmt.try_block.statements)
@@ -207,6 +202,12 @@ def build_symbol_table(program: "Program") -> SymbolTable:
                 walk_stmts(node.else_block.statements)
         elif isinstance(node, BlockExpr):
             walk_stmts(node.block.statements)
+        elif isinstance(node, MatchExpr):
+            _walk_expr(node.scrutinee)
+            for pattern, body in node.arms:
+                if pattern is not None:
+                    _walk_expr(pattern)
+                _walk_expr(body)
         elif isinstance(node, ArrayLiteral):
             for elem in node.elements:
                 _walk_expr(elem)

@@ -1,11 +1,10 @@
-# STDOUT: 2
+# ERROR: match expression: missing enum variants Blue
 fun main() {
     enum Color { Red, Green, Blue }
-    let c = Color::Green
+    let c = Color::Red
     let result = match c {
         Color::Red -> 1
         Color::Green -> 2
-        Color::Blue -> 3
     }
     print(result)
 }

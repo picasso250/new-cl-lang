@@ -65,8 +65,6 @@ class Parser:
             return self._parse_struct()
         if t.kind == TokenKind.ENUM:
             return self._parse_enum()
-        if t.kind == TokenKind.SWITCH:
-            return self._parse_switch()
         if t.kind == TokenKind.FOR:
             return self._parse_for()
         if t.kind == TokenKind.TRY:
@@ -300,19 +298,6 @@ class Parser:
         self.match(TokenKind.SEMI)
         return stmt
 
-    def _parse_switch(self):
-        self.advance()  # 吞 switch
-        scrutinee = self.parse_expression()
-        self.expect(TokenKind.LBRACE)
-        cases = []
-        while self.peek().kind != TokenKind.RBRACE:
-            case_val = self.parse_expression()
-            self.expect(TokenKind.ARROW)
-            case_stmt = self.parse_statement()
-            cases.append((case_val, case_stmt))
-        self.expect(TokenKind.RBRACE)
-        return Switch(scrutinee, cases)
-
     def _parse_block(self):
         self.expect(TokenKind.LBRACE)
         stmts = []
@@ -457,6 +442,24 @@ class Parser:
                 else:
                     else_block = self._parse_block()
             return self.span(IfExpr(condition, then_block, else_block), start)
+
+        if t.kind == TokenKind.MATCH:
+            start = self.advance()
+            scrutinee = self.parse_expression()
+            self.expect(TokenKind.LBRACE)
+            arms = []
+            while self.peek().kind != TokenKind.RBRACE:
+                if self.peek().kind == TokenKind.ELSE:
+                    self.advance()
+                    pattern = None
+                else:
+                    pattern = self.parse_expression()
+                self.expect(TokenKind.ARROW)
+                body = self.parse_expression()
+                arms.append((pattern, body))
+                self.match(TokenKind.SEMI)
+            self.expect(TokenKind.RBRACE)
+            return self.span(MatchExpr(scrutinee, arms), start)
 
         if t.kind == TokenKind.LBRACE:
             start = self.peek()

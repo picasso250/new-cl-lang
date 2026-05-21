@@ -17,8 +17,8 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         Program, VariableDeclaration, ExpressionStatement,
         Assignment, Block, While, FunctionDeclaration, Return,
         StructDecl, StructLiteral, FieldAccess,
-        EnumDecl, EnumRef, Switch, ForIn,
-        IfExpr, BlockExpr, IntegerLiteral, StringLiteral, BoolLiteral, BinaryOp, UnaryOp, FunctionCall, Identifier,
+        EnumDecl, EnumRef, ForIn,
+        IfExpr, BlockExpr, MatchExpr, IntegerLiteral, StringLiteral, BoolLiteral, BinaryOp, UnaryOp, FunctionCall, Identifier,
         FunctionExpr,
         ArrayLiteral, SliceLiteral, IndexAccess, SliceExpr, MethodCall, TryCatch, Throw, Defer, Break
     )
@@ -117,6 +117,67 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         else_type = infer_block_value(stmt.else_block, stmt) if stmt.else_block is not None else "void"
         require_type(else_type, then_type, "if expression branches", stmt)
         return then_type
+
+    def match_pattern_key(pattern):
+        if isinstance(pattern, EnumRef):
+            return ("enum", pattern.enum_name, pattern.variant)
+        if isinstance(pattern, IntegerLiteral):
+            return ("int", pattern.value)
+        if isinstance(pattern, StringLiteral):
+            return ("str", pattern.value)
+        if isinstance(pattern, BoolLiteral):
+            return ("bool", pattern.value)
+        fail(f"match pattern: unsupported pattern {type(pattern).__name__}", pattern)
+
+    def infer_match_value(node):
+        walk_expr(node.scrutinee)
+        if not node.arms:
+            fail("match expression: expected at least one arm", node)
+
+        scrut_type = node.scrutinee.type
+        enum_variants = None
+        try:
+            if symtab.lookup(scrut_type).nc_type == "enum":
+                enum_variants = symtab.lookup_enum(scrut_type)
+        except NameError:
+            enum_variants = None
+
+        result_type = None
+        seen_else = False
+        seen_patterns = set()
+        seen_enum_variants = set()
+
+        for i, (pattern, body) in enumerate(node.arms):
+            if seen_else:
+                fail("match expression: else must be the last arm", pattern or body)
+            if pattern is None:
+                seen_else = True
+                if i != len(node.arms) - 1:
+                    fail("match expression: else must be the last arm", body)
+            else:
+                walk_expr(pattern)
+                match_pattern_key(pattern)
+                require_type(pattern.type, scrut_type, "match pattern", pattern)
+                key = match_pattern_key(pattern)
+                if key in seen_patterns:
+                    fail("match expression: duplicate pattern", pattern)
+                seen_patterns.add(key)
+                if isinstance(pattern, EnumRef):
+                    seen_enum_variants.add(pattern.variant)
+            walk_expr(body)
+            if result_type is None:
+                result_type = body.type
+            else:
+                require_type(body.type, result_type, "match expression arms", body)
+
+        if not seen_else:
+            if enum_variants is None:
+                fail("match expression: non-enum match requires else", node)
+            missing = enum_variants - seen_enum_variants
+            if missing:
+                fail(f"match expression: missing enum variants {', '.join(sorted(missing))}", node)
+
+        return result_type or "void"
 
     def require_assignable(target):
         if not isinstance(target, (Identifier, IndexAccess, FieldAccess)):
@@ -223,6 +284,8 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             node.type = infer_if_value(node)
         elif isinstance(node, BlockExpr):
             node.type = infer_block_value(node.block, node)
+        elif isinstance(node, MatchExpr):
+            node.type = infer_match_value(node)
         elif isinstance(node, EnumRef):
             # 验证 enum 类型存在
             symtab.lookup(node.enum_name)
@@ -387,14 +450,6 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 pass  # 已在 Pass 1 注册
             elif isinstance(stmt, EnumDecl):
                 pass  # 已在 Pass 1 注册
-            elif isinstance(stmt, Switch):
-                walk_expr(stmt.scrutinee)
-                break_depth += 1
-                for case_val, case_stmt in stmt.cases:
-                    walk_expr(case_val)
-                    require_type(case_val.type, stmt.scrutinee.type, "switch case", case_val)
-                    walk_stmts([case_stmt])
-                break_depth -= 1
             elif isinstance(stmt, ForIn):
                 if stmt.start is not None:
                     walk_expr(stmt.start)
@@ -426,7 +481,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 walk_stmts(stmt.body.statements)
             elif isinstance(stmt, Break):
                 if break_depth <= 0:
-                    fail("break outside loop or switch", stmt)
+                    fail("break outside loop", stmt)
             elif isinstance(stmt, Block):
                 symtab.push_scope()
                 walk_stmts(stmt.statements)

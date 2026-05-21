@@ -17,10 +17,10 @@ _slice_copy_name = slice_copy_name
 
 def generate_c(program: "Program") -> str:
     from compiler.ast import (
-        FunctionDeclaration, StructDecl, EnumDecl, Switch, ForIn, Block, While,
+        FunctionDeclaration, StructDecl, EnumDecl, ForIn, Block, While,
         VariableDeclaration, ExpressionStatement, Assignment,
         Return, SliceExpr, ArrayLiteral, SliceLiteral, FunctionCall,
-        IfExpr, BlockExpr, IntegerLiteral, StringLiteral, BoolLiteral, Identifier, BinaryOp, UnaryOp,
+        IfExpr, BlockExpr, MatchExpr, IntegerLiteral, StringLiteral, BoolLiteral, Identifier, BinaryOp, UnaryOp,
         FunctionExpr,
         EnumRef, StructLiteral, FieldAccess, IndexAccess, SliceExpr, MethodCall,
         TryCatch, Throw, Defer, Break
@@ -62,9 +62,6 @@ def generate_c(program: "Program") -> str:
                 collect(s.statements)
             elif isinstance(s, While):
                 collect(s.body.statements)
-            elif isinstance(s, Switch):
-                for _cv, cs in s.cases:
-                    collect([cs])
             elif isinstance(s, ForIn):
                 collect(s.body.statements)
                 if s.start is not None:
@@ -114,6 +111,12 @@ def generate_c(program: "Program") -> str:
             if node.else_block:
                 for s in node.else_block.statements:
                     collect_closure_stmt(s)
+        elif isinstance(node, MatchExpr):
+            collect_closure_expr(node.scrutinee)
+            for pattern, body in node.arms:
+                if pattern is not None:
+                    collect_closure_expr(pattern)
+                collect_closure_expr(body)
         elif isinstance(node, BlockExpr):
             for s in node.block.statements:
                 collect_closure_stmt(s)
@@ -147,11 +150,6 @@ def generate_c(program: "Program") -> str:
                 collect_closure_expr(stmt.iterable)
             for s in stmt.body.statements:
                 collect_closure_stmt(s)
-        elif isinstance(stmt, Switch):
-            collect_closure_expr(stmt.scrutinee)
-            for case_val, case_stmt in stmt.cases:
-                collect_closure_expr(case_val)
-                collect_closure_stmt(case_stmt)
         elif isinstance(stmt, FunctionDeclaration):
             for s in stmt.body.statements:
                 collect_closure_stmt(s)
@@ -227,6 +225,12 @@ def generate_c(program: "Program") -> str:
             if node.else_block:
                 for s in node.else_block.statements:
                     collect_stmt_types(s)
+        elif isinstance(node, MatchExpr):
+            collect_expr_types(node.scrutinee)
+            for pattern, body in node.arms:
+                if pattern is not None:
+                    collect_expr_types(pattern)
+                collect_expr_types(body)
         elif isinstance(node, BlockExpr):
             for s in node.block.statements:
                 collect_stmt_types(s)
@@ -273,11 +277,6 @@ def generate_c(program: "Program") -> str:
                 collect_expr_types(stmt.iterable)
             for s in stmt.body.statements:
                 collect_stmt_types(s)
-        elif isinstance(stmt, Switch):
-            collect_expr_types(stmt.scrutinee)
-            for case_val, case_stmt in stmt.cases:
-                collect_expr_types(case_val)
-                collect_stmt_types(case_stmt)
         elif isinstance(stmt, FunctionDeclaration):
             collect_slice_type(stmt.return_type)
             collect_fn_type(stmt.return_type)
@@ -460,6 +459,15 @@ def generate_c(program: "Program") -> str:
             gen_ifexpr_assign(node, tmp, _expr_indent[0])
             root_expr_temp(tmp, node.type, _expr_indent[0])
             return tmp
+        if isinstance(node, MatchExpr):
+            if getattr(node, "type", None) == "void":
+                raise NotImplementedError("void match expression has no C value")
+            tmp = next_tmp("__nc_match")
+            pad = '    ' * _expr_indent[0]
+            _lines.append(f'{pad}{_type_to_c(node.type)} {tmp};')
+            gen_matchexpr_assign(node, tmp, _expr_indent[0])
+            root_expr_temp(tmp, node.type, _expr_indent[0])
+            return tmp
         if isinstance(node, BlockExpr):
             tmp = next_tmp("__nc_block")
             pad = '    ' * _expr_indent[0]
@@ -523,6 +531,8 @@ def generate_c(program: "Program") -> str:
         pad = '    ' * indent
         if isinstance(expr, IfExpr):
             gen_ifexpr_stmt(expr, indent)
+        elif isinstance(expr, MatchExpr):
+            gen_matchexpr_stmt(expr, indent)
         elif isinstance(expr, FunctionCall) and lower_builtin_stmt(expr, gen_expr, _lines.append, pad):
             pass
         else:
@@ -545,6 +555,9 @@ def generate_c(program: "Program") -> str:
         if isinstance(tail, IfExpr):
             gen_ifexpr_assign(tail, target, indent)
             return
+        if isinstance(tail, MatchExpr):
+            gen_matchexpr_assign(tail, target, indent)
+            return
         _lines.append(f'{"    " * indent}{target} = {gen_expr(tail)};')
 
     def gen_block_value_return(block, indent):
@@ -554,6 +567,9 @@ def generate_c(program: "Program") -> str:
             gen_stmt(s, indent)
         if isinstance(tail, IfExpr):
             gen_ifexpr_return(tail, indent)
+            return
+        if isinstance(tail, MatchExpr):
+            gen_matchexpr_return(tail, indent)
             return
         emit_return_expr(tail, indent)
 
@@ -583,6 +599,67 @@ def generate_c(program: "Program") -> str:
         _lines.append(f'{pad}}} else {{')
         gen_block_value_return(expr.else_block, indent + 1)
         _lines.append(f'{pad}}}')
+
+    def emit_match_chain(expr, indent, emit_arm):
+        pad = '    ' * indent
+        scrut_tmp = next_tmp("__nc_match_scrut")
+        _lines.append(f'{pad}{_type_to_c(expr.scrutinee.type)} {scrut_tmp} = {gen_expr(expr.scrutinee)};')
+        root_expr_temp(scrut_tmp, expr.scrutinee.type, indent)
+        emitted_cond = False
+        for pattern, body in expr.arms:
+            if pattern is None:
+                if emitted_cond:
+                    _lines.append(f'{pad}}} else {{')
+                else:
+                    _lines.append(f'{pad}{{')
+            else:
+                cond = match_condition(scrut_tmp, expr.scrutinee.type, pattern)
+                if emitted_cond:
+                    _lines.append(f'{pad}}} else if ({cond}) {{')
+                else:
+                    _lines.append(f'{pad}if ({cond}) {{')
+                emitted_cond = True
+            emit_arm(body, indent + 1)
+        _lines.append(f'{pad}}}')
+
+    def match_condition(scrut_tmp, scrut_type, pattern):
+        pat_c = gen_expr(pattern)
+        if scrut_type == "str":
+            return f'__nc_str_eq({scrut_tmp}, {pat_c})'
+        return f'{scrut_tmp} == {pat_c}'
+
+    def gen_expr_value_assign(expr, target, indent):
+        if isinstance(expr, IfExpr):
+            gen_ifexpr_assign(expr, target, indent)
+            return
+        if isinstance(expr, MatchExpr):
+            gen_matchexpr_assign(expr, target, indent)
+            return
+        if isinstance(expr, BlockExpr):
+            gen_block_value_assign(expr.block, target, indent)
+            return
+        _lines.append(f'{"    " * indent}{target} = {gen_expr(expr)};')
+
+    def gen_expr_value_return(expr, indent):
+        if isinstance(expr, IfExpr):
+            gen_ifexpr_return(expr, indent)
+            return
+        if isinstance(expr, MatchExpr):
+            gen_matchexpr_return(expr, indent)
+            return
+        if isinstance(expr, BlockExpr):
+            gen_block_value_return(expr.block, indent)
+            return
+        emit_return_expr(expr, indent)
+
+    def gen_matchexpr_assign(expr, target, indent):
+        emit_match_chain(expr, indent, lambda body, body_indent: gen_expr_value_assign(body, target, body_indent))
+
+    def gen_matchexpr_stmt(expr, indent):
+        emit_match_chain(expr, indent, lambda body, body_indent: gen_expr_stmt(body, body_indent))
+
+    def gen_matchexpr_return(expr, indent):
+        emit_match_chain(expr, indent, gen_expr_value_return)
 
     def gen_stmt(stmt, indent=1):
         old_indent = _expr_indent[0]
@@ -701,17 +778,6 @@ def generate_c(program: "Program") -> str:
             _lines.append(f'{pad}while ({cond_c}) {{')
             for s in stmt.body.statements:
                 gen_stmt(s, indent + 1)
-            _lines.append(f'{pad}}}')
-            _expr_indent[0] = old_indent
-            return
-        if isinstance(stmt, Switch):
-            scrut_c = gen_expr(stmt.scrutinee)
-            _lines.append(f'{pad}switch ({scrut_c}) {{')
-            for case_val, case_stmt in stmt.cases:
-                val_c = gen_expr(case_val)
-                _lines.append(f'{pad}    case {val_c}:')
-                gen_stmt(case_stmt, indent + 2)
-                _lines.append(f'{pad}        break;')
             _lines.append(f'{pad}}}')
             _expr_indent[0] = old_indent
             return

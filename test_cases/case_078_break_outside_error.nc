@@ -1,4 +1,4 @@
-# ERROR: break outside loop or switch
+# ERROR: break outside loop
 fun main() {
     break
 }

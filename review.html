@@ -235,12 +235,10 @@ while i < 10 { print(i); i++ }
 for item in items { print(item) }
 for i, item in items { print("{i}: {item}") }
 loop { if done { break } }
-switch x {
-    0           -> print("zero")
-    1, 2, 3     -> print("small")
-    4..=10      -> print("medium")
-    if x > 100  -> print("large")
-    else        -> print("unknown")
+let label = match x {
+    0    -> "zero"
+    1    -> "one"
+    else -> "many"
 }</code></pre>
 `
   },

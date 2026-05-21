@@ -65,17 +65,6 @@ class While(Node):
         return f"While({self.condition} {self.body})"
 
 
-class Switch(Node):
-    """switch expr { case -> stmt; ... }"""
-    def __init__(self, scrutinee, cases: list):
-        self.scrutinee = scrutinee
-        self.cases = cases  # [(value_expr, statement), ...]
-
-    def __repr__(self):
-        cs = ', '.join(f"{v} -> {s}" for v, s in self.cases)
-        return f"Switch({self.scrutinee} {{ {cs} }})"
-
-
 class Break(Node):
     """break;"""
     def __repr__(self):
@@ -311,6 +300,17 @@ class BlockExpr(Node):
 
     def __repr__(self):
         return f"BlockExpr({self.block})"
+
+
+class MatchExpr(Node):
+    """match expr { pattern -> expr; else -> expr } 作为表达式。"""
+    def __init__(self, scrutinee, arms: list):
+        self.scrutinee = scrutinee
+        self.arms = arms  # [(pattern_expr | None, body_expr), ...]; None 表示 else
+
+    def __repr__(self):
+        arms = ', '.join(f"{p if p is not None else 'else'} -> {b}" for p, b in self.arms)
+        return f"MatchExpr({self.scrutinee} {{ {arms} }})"
 
 class StringLiteral(Node):
     def __init__(self, value: str):
