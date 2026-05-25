@@ -1,3 +1,4 @@
+import io
 # STDOUT: hello
 
 fun make() {
@@ -7,5 +8,5 @@ fun make() {
 
 fun main() {
     let f = make()
-    print(f())
+    io.println(f())
 }

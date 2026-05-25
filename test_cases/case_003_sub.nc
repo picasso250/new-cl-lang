@@ -1,2 +1,3 @@
+import io
 # STDOUT: 6
-fun main() { print(10-4) }
+fun main() { io.println(10-4) }

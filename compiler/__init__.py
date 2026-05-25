@@ -16,6 +16,8 @@ from compiler.ast import (
     Identifier, StructLiteral, EnumRef, MethodCall
 )
 
+BUILTIN_MODULES = {"io"}
+
 
 def parse_module_sources(sources: "list[tuple[str, str]]") -> Module:
     """Parse source tuples as one directory module.
@@ -143,8 +145,7 @@ def _rewrite_import_calls(module: Module):
                 repl.source_file = node.source_file
             if hasattr(node, "span"):
                 repl.span = node.span
-            for arg in repl.args:
-                walk(arg)
+            repl.args = [walk(arg) for arg in repl.args]
             return repl
         for key, value in list(node.__dict__.items()):
             if isinstance(value, SourceFile):
@@ -160,6 +161,7 @@ def parse_project_sources(sources: "list[tuple[str, str]]") -> Module:
     """Parse an entry directory and its imported sibling modules."""
     entry = parse_module_sources(sources)
     if not entry.root:
+        _rewrite_import_calls(entry)
         return entry
     project_root = os.path.dirname(entry.root)
     loaded: dict[str, Module] = {}
@@ -175,6 +177,8 @@ def parse_project_sources(sources: "list[tuple[str, str]]") -> Module:
         stack.append(module.name)
         loaded[module.name] = module
         for imp in _module_imports(module):
+            if imp.module_name in BUILTIN_MODULES:
+                continue
             mod_dir = os.path.join(project_root, imp.module_name)
             if not os.path.isdir(mod_dir):
                 raise RuntimeError(f"module '{imp.module_name}' not found: {mod_dir}")

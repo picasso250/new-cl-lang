@@ -36,7 +36,7 @@ class VariableDeclaration(Node):
 
 
 class ExpressionStatement(Node):
-    """表达式语句，如 print(x);"""
+    """表达式语句，如 io.println(x);"""
     def __init__(self, expr):
         self.expr = expr
 

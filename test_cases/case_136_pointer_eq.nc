@@ -1,3 +1,4 @@
+import io
 # STDOUT: 1
 struct Point { x: i32 }
 
@@ -8,8 +9,8 @@ fun same(a: *Point, b: *Point): bool {
 fun main() {
     let p = new Point { x: 1 }
     if same(p, p) {
-        print(1)
+        io.println(1)
     } else {
-        print(0)
+        io.println(0)
     }
 }

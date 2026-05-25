@@ -1,4 +1,5 @@
+import io
 # STDOUT: yes
 fun main() {
-    print(if true { "yes" } else { "no" })
+    io.println(if true { "yes" } else { "no" })
 }

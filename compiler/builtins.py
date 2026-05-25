@@ -15,8 +15,8 @@ def infer_builtin_call(node, require_arg_count, require_type, fail) -> str | Non
     name = node.name
     args = node.args
 
-    if name == "print":
-        require_arg_count(args, 1, "print", node)
+    if name == "io.println":
+        require_arg_count(args, 1, "io.println", node)
         return "void"
     if name == "read_file":
         require_arg_count(args, 1, "read_file", node)
@@ -125,7 +125,7 @@ def lower_builtin_stmt(expr, gen_expr, emit_line, pad) -> bool:
         path_c = f'"{path.value}"' if type(path).__name__ == "StringLiteral" else f'{gen_expr(path)}.ptr'
         emit_line(f'{pad}__nc_write_file({path_c}, {gen_expr(content)});')
         return True
-    if name == "print":
+    if name == "io.println":
         arg = expr.args[0]
         arg_type = getattr(arg, "type", "i32")
         if arg_type == "str":

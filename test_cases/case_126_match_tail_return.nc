@@ -1,3 +1,4 @@
+import io
 # STDOUT: one
 fun describe(n: i32): str {
     match n {
@@ -8,5 +9,5 @@ fun describe(n: i32): str {
 }
 
 fun main() {
-    print(describe(1))
+    io.println(describe(1))
 }

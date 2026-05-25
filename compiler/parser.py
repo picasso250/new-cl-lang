@@ -420,6 +420,7 @@ class Parser:
                 else:
                     raise ParseError("Only named functions and closure variables can be called")
             elif self.peek().kind == TokenKind.DOT:
+                start_pos = getattr(expr, "span", (self.peek().pos, self.peek().pos))[0]
                 self.advance()
                 field = self.expect(TokenKind.IDENT).value
                 if self.peek().kind == TokenKind.LPAREN:
@@ -433,6 +434,7 @@ class Parser:
                             args.append(self.parse_expression())
                     self.expect(TokenKind.RPAREN)
                     expr = MethodCall(expr, field, args)
+                    expr.span = (start_pos, self.tokens[self.pos - 1].pos)
                 else:
                     expr = FieldAccess(expr, field)
             elif self.peek().kind == TokenKind.LBRACKET:

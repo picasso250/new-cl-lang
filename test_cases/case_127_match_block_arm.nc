@@ -1,3 +1,4 @@
+import io
 # STDOUT: 7
 fun main() {
     let n = 1
@@ -8,5 +9,5 @@ fun main() {
             base + 4
         }
     }
-    print(result)
+    io.println(result)
 }

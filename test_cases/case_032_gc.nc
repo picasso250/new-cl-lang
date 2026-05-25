@@ -1,9 +1,10 @@
+import io
 # STDOUT: before gc: alive
 # STDOUT: after gc: alive
 
 fun main() {
     let s = "alive"
-    print("before gc: " + s)
+    io.println("before gc: " + s)
     gc_collect()
-    print("after gc: " + s)
+    io.println("after gc: " + s)
 }

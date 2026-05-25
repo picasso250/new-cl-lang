@@ -1,3 +1,4 @@
+import io
 # ERROR: cannot assign to captured variable 'base'
 fun main() {
     let base = 10
@@ -5,5 +6,5 @@ fun main() {
         base = 2
         base
     }
-    print(f())
+    io.println(f())
 }

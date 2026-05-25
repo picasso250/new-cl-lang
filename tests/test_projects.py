@@ -73,7 +73,7 @@ def test_import_function_and_multifile_module_run():
         math = os.path.join(tmp, "math")
         os.mkdir(main)
         os.mkdir(math)
-        write_file(os.path.join(main, "main.nc"), "import math\nfun main() { print(math.add_twice(2, 3)) }\n")
+        write_file(os.path.join(main, "main.nc"), "import io\nimport math\nfun main() { io.println(math.add_twice(2, 3)) }\n")
         write_file(os.path.join(math, "a.nc"), "fun add_twice(a: i32, b: i32): i32 { return add(a, b) }\n")
         write_file(os.path.join(math, "b.nc"), "fun add(a: i32, b: i32): i32 { return a + b }\n")
 
@@ -93,10 +93,11 @@ def test_import_struct_and_enum_run():
         os.mkdir(color)
         write_file(os.path.join(main, "main.nc"), """import model
 import color
+import io
 fun main() {
   let u: model.User = model.User { age: 7 }
   let c: color.Color = color.pick()
-  print(u.age)
+  io.println(u.age)
 }
 """)
         write_file(os.path.join(model, "model.nc"), "struct User { age: i32 }\n")
@@ -116,7 +117,7 @@ def test_import_same_public_names_do_not_conflict():
         os.mkdir(main)
         os.mkdir(a)
         os.mkdir(b)
-        write_file(os.path.join(main, "main.nc"), "import a\nimport b\nfun value(): i32 { return 1 }\nfun main() { print(value() + a.value() + b.value()) }\n")
+        write_file(os.path.join(main, "main.nc"), "import io\nimport a\nimport b\nfun value(): i32 { return 1 }\nfun main() { io.println(value() + a.value() + b.value()) }\n")
         write_file(os.path.join(a, "a.nc"), "fun value(): i32 { return 2 }\n")
         write_file(os.path.join(b, "b.nc"), "fun value(): i32 { return 3 }\n")
 
@@ -132,7 +133,7 @@ def test_import_private_symbol_error():
         foo = os.path.join(tmp, "foo")
         os.mkdir(main)
         os.mkdir(foo)
-        write_file(os.path.join(main, "main.nc"), "import foo\nfun main() { print(foo._helper()) }\n")
+        write_file(os.path.join(main, "main.nc"), "import io\nimport foo\nfun main() { io.println(foo._helper()) }\n")
         write_file(os.path.join(foo, "foo.nc"), "fun _helper(): i32 { return 1 }\n")
 
         result = run_nc("compile", main)
@@ -178,7 +179,7 @@ def test_import_not_visible_without_namespace_and_not_allowed_in_block():
         os.mkdir(main)
         os.mkdir(foo)
         write_file(os.path.join(foo, "foo.nc"), "fun add(): i32 { return 1 }\n")
-        write_file(os.path.join(main, "main.nc"), "import foo\nfun main() { print(add()) }\n")
+        write_file(os.path.join(main, "main.nc"), "import io\nimport foo\nfun main() { io.println(add()) }\n")
         result = run_nc("compile", main)
         assert result.returncode != 0
         assert "Function 'add' not found" in result.stderr
@@ -187,3 +188,46 @@ def test_import_not_visible_without_namespace_and_not_allowed_in_block():
         result = run_nc("compile", main)
         assert result.returncode != 0
         assert "import is only allowed at top level" in result.stderr
+
+
+def test_builtin_io_module_println_run_without_directory():
+    with tempfile.TemporaryDirectory() as tmp:
+        main = os.path.join(tmp, "main")
+        os.mkdir(main)
+        write_file(os.path.join(main, "main.nc"), "import io\nfun main() { io.println(1) }\n")
+
+        result = run_nc("run", main)
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "1"
+
+
+def test_builtin_io_module_preempts_sibling_directory():
+    with tempfile.TemporaryDirectory() as tmp:
+        main = os.path.join(tmp, "main")
+        io_dir = os.path.join(tmp, "io")
+        os.mkdir(main)
+        os.mkdir(io_dir)
+        write_file(os.path.join(main, "main.nc"), "import io\nfun main() { io.println(1) }\n")
+        write_file(os.path.join(io_dir, "io.nc"), "fun println(x: i32) { bad() }\n")
+
+        result = run_nc("run", main)
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "1"
+
+
+def test_bare_print_and_unimported_io_println_errors():
+    with tempfile.TemporaryDirectory() as tmp:
+        main = os.path.join(tmp, "main")
+        os.mkdir(main)
+
+        write_file(os.path.join(main, "main.nc"), "fun main() { print(1) }\n")
+        result = run_nc("compile", main)
+        assert result.returncode != 0
+        assert "Function 'print' not found" in result.stderr
+
+        write_file(os.path.join(main, "main.nc"), "fun main() { io.println(1) }\n")
+        result = run_nc("compile", main)
+        assert result.returncode != 0
+        assert "Variable 'io' not found" in result.stderr

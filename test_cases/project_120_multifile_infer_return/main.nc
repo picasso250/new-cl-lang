@@ -1,4 +1,5 @@
+import io
 # STDOUT: 11
 fun main() {
-    print(add3(8))
+    io.println(add3(8))
 }

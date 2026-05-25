@@ -1,3 +1,4 @@
+import io
 # STDOUT: 8
 fun apply(f: (i32) -> i32, x: i32): i32 {
     f(x)
@@ -6,5 +7,5 @@ fun apply(f: (i32) -> i32, x: i32): i32 {
 fun main() {
     let base = 3
     let add = fun(x: i32): i32 { x + base }
-    print(apply(add, 5))
+    io.println(apply(add, 5))
 }

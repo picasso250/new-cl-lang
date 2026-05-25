@@ -1,3 +1,4 @@
+import io
 # STDOUT: 7
 
 fun add(x: i32, y: i32) {
@@ -5,5 +6,5 @@ fun add(x: i32, y: i32) {
 }
 
 fun main() {
-    print(add(3, 4))
+    io.println(add(3, 4))
 }

@@ -1,3 +1,4 @@
+import io
 # STDOUT: error: bad path
 
 fun risky(path: str): str {
@@ -10,8 +11,8 @@ fun risky(path: str): str {
 fun main() {
     try {
         let s = risky("")
-        print(s)
+        io.println(s)
     } catch e {
-        print("error: " + e)
+        io.println("error: " + e)
     }
 }

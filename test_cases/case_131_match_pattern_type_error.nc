@@ -1,3 +1,4 @@
+import io
 # ERROR: match pattern: expected i32, got str
 fun main() {
     let n = 1
@@ -5,5 +6,5 @@ fun main() {
         "one" -> 1
         else -> 2
     }
-    print(result)
+    io.println(result)
 }

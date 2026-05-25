@@ -1,6 +1,7 @@
-# ERROR: 4:9: print: expected 1 args, got 2
+import io
+# ERROR: 5:9: io.println: expected 1 args, got 2
 fun main() {
     defer {
-        print(1, 2)
+        io.println(1, 2)
     }
 }

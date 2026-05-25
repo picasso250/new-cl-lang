@@ -1,7 +1,8 @@
+import io
 # STDOUT: 9
 
 fun main() {
-    print(next(8))
+    io.println(next(8))
 }
 
 fun next(x: i32) {

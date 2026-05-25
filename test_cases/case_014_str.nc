@@ -1,2 +1,3 @@
+import io
 # STDOUT: hello
-fun main() { print("hello") }
+fun main() { io.println("hello") }

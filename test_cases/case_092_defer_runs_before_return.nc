@@ -1,8 +1,9 @@
+import io
 # STDOUT: 9
 # RC: 7
 fun main(): i32 {
     defer {
-        print(9)
+        io.println(9)
     }
     return 7
 }

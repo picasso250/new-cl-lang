@@ -1,3 +1,4 @@
+import io
 # STDOUT: hello
 fun make(): () -> str {
     let s = "hello"
@@ -6,5 +7,5 @@ fun make(): () -> str {
 
 fun main() {
     let f = make()
-    print(f())
+    io.println(f())
 }

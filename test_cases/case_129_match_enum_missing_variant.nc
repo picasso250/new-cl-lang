@@ -1,3 +1,4 @@
+import io
 # ERROR: match expression: missing enum variants Blue
 fun main() {
     enum Color { Red, Green, Blue }
@@ -6,5 +7,5 @@ fun main() {
         Color::Red -> 1
         Color::Green -> 2
     }
-    print(result)
+    io.println(result)
 }

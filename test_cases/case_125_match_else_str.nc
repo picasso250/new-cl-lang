@@ -1,3 +1,4 @@
+import io
 # STDOUT: many
 fun main() {
     let n = 3
@@ -6,5 +7,5 @@ fun main() {
         1 -> "one"
         else -> "many"
     }
-    print(label)
+    io.println(label)
 }

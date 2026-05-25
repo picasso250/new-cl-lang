@@ -1,3 +1,4 @@
+import io
 # STDOUT: ok
 
 fun helper() {
@@ -8,5 +9,5 @@ fun helper() {
 fun main() {
     helper()
     gc_collect()
-    print("ok")
+    io.println("ok")
 }

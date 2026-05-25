@@ -1,7 +1,8 @@
+import io
 # STDOUT: 3
 
 fun log(x: i32) {
-    print(x)
+    io.println(x)
 }
 
 fun main() {

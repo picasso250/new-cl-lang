@@ -115,3 +115,10 @@
 - 已接通限定函数调用、类型标注、struct literal / `new`、enum variant，C 后端将限定名降为下划线 C 符号；跨模块 `_` 顶层符号禁止访问。
 - 新增项目级测试覆盖函数、跨模块多文件、struct、enum、同名符号隔离、私有符号、missing/empty/cycle、非顶层 import 与不支持语法；`python tests/test_basic.py` 通过 151/151，`python -m pytest tests/test_projects.py -q` 通过 11/11。`python tests/test_projects.py` 按计划运行成功但该脚本本身无输出。
 
+
+## 2026-05-25
+
+- 预备迁移标准输出到内置一级模块 io：import io + io.println(value)；不保留裸 print(...) 兼容，并批量迁移现有 case 与项目测试。
+
+- 已迁移标准输出边界：io 作为内置一级标准模块，import io 不查找同级目录且优先于真实 io/；io.println(value) 识别为唯一输出 builtin，裸 print(...) 不再识别。
+- 已批量迁移现有 case 和项目测试到 import io + io.println(...)，并补覆盖无 io/ 目录、同级 io/ 冲突、裸 print 失败、未 import io 失败；python tests/test_basic.py 通过 151/151，python -m pytest tests/test_projects.py tests/test_builtin_boundary.py -q 通过 17/17。

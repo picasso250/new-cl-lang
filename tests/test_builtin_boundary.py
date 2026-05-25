@@ -16,6 +16,7 @@ def test_typecheck_uses_builtin_boundary():
 
     assert "infer_builtin_call(" in source
     assert 'node.name == "print"' not in source
+    assert 'node.name == "io.println"' not in source
     assert 'node.name == "read_file"' not in source
     assert 'node.name == "append"' not in source
 
@@ -27,3 +28,11 @@ def test_codegen_uses_builtin_boundary():
     assert "lower_builtin_stmt(" in source
     assert 'node.name == "read_file"' not in source
     assert 'expr.name == "print"' not in source
+    assert 'expr.name == "io.println"' not in source
+
+
+def test_io_println_is_the_only_output_builtin():
+    source = _read("compiler/builtins.py")
+
+    assert 'name == "io.println"' in source
+    assert 'name == "print"' not in source

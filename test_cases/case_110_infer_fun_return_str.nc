@@ -1,3 +1,4 @@
+import io
 # STDOUT: hello
 
 fun greet() {
@@ -5,5 +6,5 @@ fun greet() {
 }
 
 fun main() {
-    print(greet())
+    io.println(greet())
 }

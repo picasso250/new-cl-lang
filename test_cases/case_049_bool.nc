@@ -1,12 +1,13 @@
+import io
 # STDOUT: 1
 # STDOUT: 0
 # STDOUT: ok
 fun main() {
     let t: bool = true
     let f: bool = false
-    print(t)
-    print(f)
+    io.println(t)
+    io.println(f)
     if t && !f {
-        print("ok")
+        io.println("ok")
     }
 }

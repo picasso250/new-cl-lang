@@ -1,5 +1,6 @@
+import io
 fun main() {
-  print(1 + 2i64)
+  io.println(1 + 2i64)
 }
 
 # ERROR: binary operator +: expected i32, got i64

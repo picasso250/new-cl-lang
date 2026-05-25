@@ -1,2 +1,3 @@
+import io
 # STDOUT: 21
-fun main() { print(3*7) }
+fun main() { io.println(3*7) }

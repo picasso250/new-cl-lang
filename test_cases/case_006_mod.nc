@@ -1,2 +1,3 @@
+import io
 # STDOUT: 1
-fun main() { print(10%3) }
+fun main() { io.println(10%3) }

@@ -1,5 +1,6 @@
+import io
 fun f(x: f64) {
-  print(x)
+  io.println(x)
 }
 
 fun main() {

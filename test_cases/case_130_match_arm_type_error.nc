@@ -1,3 +1,4 @@
+import io
 # ERROR: match expression arms: expected i32, got str
 fun main() {
     let n = 1
@@ -5,5 +6,5 @@ fun main() {
         1 -> 10
         else -> "many"
     }
-    print(result)
+    io.println(result)
 }

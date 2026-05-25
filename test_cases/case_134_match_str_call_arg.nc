@@ -1,3 +1,4 @@
+import io
 # STDOUT: 4
 fun id(x: i32): i32 {
     return x
@@ -5,7 +6,7 @@ fun id(x: i32): i32 {
 
 fun main() {
     let name = "nc"
-    print(id(match name {
+    io.println(id(match name {
         "c" -> 1
         "nc" -> 4
         else -> 0

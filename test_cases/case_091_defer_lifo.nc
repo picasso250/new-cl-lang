@@ -1,12 +1,13 @@
+import io
 # STDOUT: 3
 # STDOUT: 2
 # STDOUT: 1
 fun main() {
     defer {
-        print(1)
+        io.println(1)
     }
     defer {
-        print(2)
+        io.println(2)
     }
-    print(3)
+    io.println(3)
 }

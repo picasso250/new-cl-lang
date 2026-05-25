@@ -1,6 +1,7 @@
+import io
 # STDOUT: 1
 fun main() {
     enum Color { Red, Green, Blue }
     let c = Color::Green
-    if c == Color::Green { print(1) }
+    if c == Color::Green { io.println(1) }
 }

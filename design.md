@@ -13,7 +13,7 @@
 | 内存管理 | **GC**（自动管理，不搞所有权 / borrow checker） |
 | 构建系统 | **自带**（无需外部 make/cmake） |
 | 入口点 | `fun main()` —— 程序从 main 函数启动 |
-| 标准库 | `print` / `println` 在 `std.io` 中，需 `import std.io` |
+| 标准库 | `println` 在内置一级模块 `io` 中，需 `import io` 后用 `io.println(value)` |
 | 并发 | 延迟决策，不走语言级关键字，后续以库函数提供 |
 
 ---
@@ -42,6 +42,7 @@ src/
 ```nc
 # 导入
 import http              # v1：导入同级 http 模块（目录）
+import io                # 内置标准模块，不要求存在同级 io/ 目录
 ```
 
 当前 import v1 边界：
@@ -49,6 +50,7 @@ import http              # v1：导入同级 http 模块（目录）
 - CLI 目标目录是入口模块目录；`import foo` 解析为入口模块目录的同级 `foo/` 目录。
 - 只支持一级模块名：`import foo`。不支持 `import foo.bar`、`import "net/http"`、`import foo { serve }`、别名导入。
 - import 只能出现在顶层。
+- `io` 是保留的内置标准模块名；`import io` 不走同级目录查找，不参与 import cycle，且优先于真实同级 `io/` 目录。
 - 导入模块后，跨模块符号必须命名空间限定访问：`foo.add()`、`foo.User`、`foo.User { ... }`、`new foo.User { ... }`、`foo.Color::Red`。
 - 同目录 `.nc` 文件仍自动共享命名空间，无需 import。
 - 导入图递归加载；重复 import 只加载一次；import cycle 报错。
@@ -183,7 +185,8 @@ let MAX = 256          # 编译期常量（let 初始值为编译期已知量）
 
 ```nc
 fun add(x: i32, y: i32): i32 { return x + y }
-fun greet(name: str) { print("Hello, {name}") }
+import io
+fun greet(name: str) { io.println("Hello, {name}") }
 
 fun choose(b: bool): i32 {
     if b { 1 } else { 3 }   # 函数尾表达式作为返回值
@@ -294,7 +297,7 @@ fun process(path: str) {
 try {
     let data = read_file("config.nc")
 } catch e {
-    print("error: {e}")
+    io.println("error: {e}")
 }
 ```
 

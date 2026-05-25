@@ -1,3 +1,4 @@
+import io
 # STDOUT: 2
 fun main() {
     enum Color { Red, Green, Blue }
@@ -7,5 +8,5 @@ fun main() {
         Color::Green -> 2
         Color::Blue -> 3
     }
-    print(result)
+    io.println(result)
 }

@@ -1,4 +1,5 @@
+import io
 # STDOUT: hell"o
 fun main() {
-    print("hell\"o")
+    io.println("hell\"o")
 }

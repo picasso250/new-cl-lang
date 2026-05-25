@@ -1,3 +1,4 @@
+import io
 # STDOUT: 42
 
 struct Box { value: i32 }
@@ -8,5 +9,5 @@ fun (b *Box) get() {
 
 fun main() {
     let b = new Box { value: 42 }
-    print(b.get())
+    io.println(b.get())
 }

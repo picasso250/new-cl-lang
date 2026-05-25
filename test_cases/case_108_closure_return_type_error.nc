@@ -1,3 +1,4 @@
+import io
 # ERROR: return: expected fn(i32)->i32, got fn(i32)->str
 fun bad(): (i32) -> i32 {
     return fun(x: i32): str { "bad" }
@@ -5,5 +6,5 @@ fun bad(): (i32) -> i32 {
 
 fun main() {
     let f = bad()
-    print(f(1))
+    io.println(f(1))
 }

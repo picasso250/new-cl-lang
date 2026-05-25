@@ -1,3 +1,4 @@
+import io
 # ERROR: match expression: else must be the last arm
 fun main() {
     let n = 1
@@ -5,5 +6,5 @@ fun main() {
         else -> 10
         1 -> 20
     }
-    print(result)
+    io.println(result)
 }

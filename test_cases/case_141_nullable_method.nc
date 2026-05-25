@@ -1,3 +1,4 @@
+import io
 # STDOUT: 7
 struct Point { x: i32 }
 
@@ -16,5 +17,5 @@ fun f(p: ?*Point): i32 {
 fun main() {
     let p = new Point { x: 7 }
     let q: ?*Point = p
-    print(f(q))
+    io.println(f(q))
 }
