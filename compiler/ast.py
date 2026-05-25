@@ -15,6 +15,14 @@ class Program(Node):
 
 # ===== 语句 =====
 
+class ImportDecl(Node):
+    """import module_name"""
+    def __init__(self, module_name: str):
+        self.module_name = module_name
+
+    def __repr__(self):
+        return f"Import({self.module_name})"
+
 class VariableDeclaration(Node):
     """let x = expr;  或  let x: T = expr;"""
     def __init__(self, name: str, initializer, annotation: str | None = None):

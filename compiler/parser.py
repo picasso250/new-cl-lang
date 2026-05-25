@@ -42,6 +42,9 @@ class Parser:
     def parse_program(self) -> Program:
         stmts = []
         while self.peek().kind != TokenKind.EOF:
+            if self.peek().kind == TokenKind.IMPORT:
+                stmts.append(self._parse_import())
+                continue
             stmts.append(self.parse_statement())
         return Program(stmts)
 
@@ -50,6 +53,8 @@ class Parser:
     def parse_statement(self):
         t = self.peek()
 
+        if t.kind == TokenKind.IMPORT:
+            raise ParseError("import is only allowed at top level")
         if t.kind == TokenKind.LET:
             return self._parse_let()
         if t.kind == TokenKind.IF:
@@ -112,6 +117,17 @@ class Parser:
         self.match(TokenKind.SEMI)
         return stmt
 
+    def _parse_import(self):
+        start = self.advance()
+        name = self.expect(TokenKind.IDENT).value
+        if self.peek().kind == TokenKind.DOT:
+            raise ParseError("import v1 only supports one-level module names")
+        if self.peek().kind == TokenKind.LBRACE:
+            raise ParseError("selective import is not supported in import v1")
+        stmt = self.span(ImportDecl(name), start)
+        self.match(TokenKind.SEMI)
+        return stmt
+
     def _parse_type(self) -> str:
         if self.peek().kind == TokenKind.QUESTION:
             self.advance()
@@ -143,7 +159,11 @@ class Parser:
             self.expect(TokenKind.RBRACKET)
             elem = self._parse_type()
             return f"[]{elem}" if length is None else f"[{length}]{elem}"
-        return self.expect(TokenKind.IDENT).value
+        name = self.expect(TokenKind.IDENT).value
+        if self.peek().kind == TokenKind.DOT:
+            self.advance()
+            name = f"{name}.{self.expect(TokenKind.IDENT).value}"
+        return name
 
     def _parse_function(self):
         self.advance()  # 吃 fun
@@ -506,6 +526,9 @@ class Parser:
         if t.kind == TokenKind.NEW:
             self.advance()
             name = self.expect(TokenKind.IDENT).value
+            if self.peek().kind == TokenKind.DOT:
+                self.advance()
+                name = f"{name}.{self.expect(TokenKind.IDENT).value}"
             self.expect(TokenKind.LBRACE)
             fields = []
             if self.peek().kind != TokenKind.RBRACE:
@@ -525,6 +548,33 @@ class Parser:
         if t.kind == TokenKind.IDENT:
             start = self.advance()
             name = start.value
+            if (self.peek().kind == TokenKind.DOT
+                    and self.pos + 2 < len(self.tokens)
+                    and self.tokens[self.pos + 1].kind == TokenKind.IDENT
+                    and self.tokens[self.pos + 2].kind in (TokenKind.COLONCOLON, TokenKind.LBRACE)):
+                self.advance()
+                qname = f"{name}.{self.expect(TokenKind.IDENT).value}"
+                if self.peek().kind == TokenKind.COLONCOLON:
+                    self.advance()
+                    variant = self.expect(TokenKind.IDENT).value
+                    return EnumRef(qname, variant)
+                if self.peek().kind == TokenKind.LBRACE:
+                    self.advance()
+                    fields = []
+                    if self.peek().kind != TokenKind.RBRACE:
+                        fname = self.expect(TokenKind.IDENT).value
+                        self.expect(TokenKind.COLON)
+                        fval = self.parse_expression()
+                        fields.append((fname, fval))
+                        while self.peek().kind == TokenKind.COMMA:
+                            self.advance()
+                            fname = self.expect(TokenKind.IDENT).value
+                            self.expect(TokenKind.COLON)
+                            fval = self.parse_expression()
+                            fields.append((fname, fval))
+                    self.expect(TokenKind.RBRACE)
+                    return self.span(StructLiteral(qname, fields), start)
+                return self.span(Identifier(qname), start)
             # EnumRef: Name::Variant
             if self.peek().kind == TokenKind.COLONCOLON:
                 self.advance()

@@ -15,7 +15,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
     """Pass 2: 标注 Program 中所有表达式和语句的类型。"""
     from compiler.ast import (
         Program, VariableDeclaration, ExpressionStatement,
-        Assignment, Block, While, FunctionDeclaration, Return,
+        Assignment, Block, While, FunctionDeclaration, Return, ImportDecl,
         StructDecl, StructLiteral, FieldAccess,
         EnumDecl, EnumRef, ForIn,
         IfExpr, BlockExpr, MatchExpr, IntegerLiteral, FloatLiteral, StringLiteral, BoolLiteral, NilLiteral, BinaryOp, UnaryOp, FunctionCall, Identifier,
@@ -208,6 +208,10 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
     def is_numeric_type(t):
         return t in NUMERIC_TYPES
 
+    def require_public_qualified(name, node=None):
+        if isinstance(name, str) and "." in name and name.rsplit(".", 1)[1].startswith("_"):
+            fail(f"symbol '{name}' is private", node)
+
     def is_integer_type(t):
         return t in {"i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"}
 
@@ -314,6 +318,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             require_type(node.right.type, node.left.type, f"binary operator {node.op}", node)
             node.type = node.left.type
         elif isinstance(node, FunctionCall):
+            require_public_qualified(node.name, node)
             for arg in node.args:
                 walk_expr(arg)
             builtin_type = infer_builtin_call(node, require_arg_count, require_type, fail)
@@ -331,7 +336,10 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 node.type = ret_type
                 node.is_closure_call = False
             else:
-                sym = symtab.lookup(node.name)
+                try:
+                    sym = symtab.lookup(node.name)
+                except NameError:
+                    fail(f"Function '{node.name}' not found", node)
                 parsed = parse_fn_type(sym.nc_type)
                 if parsed is None:
                     fail(f"Function '{node.name}' not found", node)
@@ -375,6 +383,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         elif isinstance(node, MatchExpr):
             node.type = infer_match_value(node)
         elif isinstance(node, EnumRef):
+            require_public_qualified(node.enum_name, node)
             # 验证 enum 类型存在
             symtab.lookup(node.enum_name)
             variants = symtab.lookup_enum(node.enum_name)
@@ -382,6 +391,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 fail(f"enum {node.enum_name}: unknown variant {node.variant}", node)
             node.type = node.enum_name
         elif isinstance(node, StructLiteral):
+            require_public_qualified(node.name, node)
             if node.heap:
                 node.type = "*" + node.name
             else:
@@ -484,6 +494,8 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         nonlocal current_return_type, break_depth, inferred_void_return
         for stmt in stmts:
             if isinstance(stmt, VariableDeclaration):
+                if stmt.annotation:
+                    require_public_qualified(stmt.annotation, stmt)
                 walk_expr(stmt.initializer)
                 stmt.type = stmt.annotation or stmt.initializer.type
                 if stmt.type == "void" or stmt.type == "__nil":
@@ -546,6 +558,8 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 pass  # 已在 Pass 1 注册
             elif isinstance(stmt, EnumDecl):
                 pass  # 已在 Pass 1 注册
+            elif isinstance(stmt, ImportDecl):
+                pass
             elif isinstance(stmt, ForIn):
                 if stmt.start is not None:
                     walk_expr(stmt.start)

@@ -92,7 +92,7 @@ def build_symbol_table(program: "Program") -> SymbolTable:
     from compiler.ast import (
         Program, VariableDeclaration, ExpressionStatement,
         Assignment, Block, While, FunctionDeclaration, Return,
-        StructDecl, EnumDecl, ForIn,
+        StructDecl, EnumDecl, ForIn, ImportDecl,
         IfExpr, BlockExpr, MatchExpr, BinaryOp, UnaryOp, FunctionCall, FunctionExpr,
         ArrayLiteral, IndexAccess, MethodCall, FieldAccess, StructLiteral, TryCatch, Throw, Defer
     )
@@ -135,6 +135,8 @@ def build_symbol_table(program: "Program") -> SymbolTable:
             elif isinstance(stmt, EnumDecl):
                 table.declare_global(stmt.name, "enum")
                 table.declare_enum(stmt.name, stmt.variants)
+            elif isinstance(stmt, ImportDecl):
+                pass
             elif isinstance(stmt, (While, Block, ForIn, TryCatch)):
                 _descend_stmt(stmt)
             elif isinstance(stmt, ExpressionStatement):

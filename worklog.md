@@ -107,3 +107,11 @@
 - 预备落地全基础数值类型：支持 `i8/i16/i32/i64/u8/u16/u32/u64/f32/f64`、整数/浮点字面量后缀、显式数值转换，并禁止算术、比较、赋值、传参、返回、容器元素中的隐式数值提升。
 
 - 已落地全基础数值类型：lexer/parser 支持整数与浮点后缀，typecheck 将默认整数定为 `i32`、默认浮点定为 `f64`，算术/比较/赋值/传参/返回/struct/array/slice 均要求数值类型完全一致，所有基础数值类型支持显式转换，C 后端补齐类型映射、浮点字面量和 print 输出。新增 case_147~153 覆盖正向与错误路径；`python tests/test_basic.py` 通过 151/151，`python tests/test_projects.py` 通过。
+
+## 2026-05-25
+
+- 预备实现 import v1：一级同级目录模块、命名空间限定访问、导入模块独立顶层命名空间、下划线顶层私有；保持同目录 .nc 自动互见。
+- 已实现 import v1：lexer/parser 支持顶层 `import foo`，项目加载器按入口目录父级递归加载同级模块并检测 missing/empty/cycle，合并前将非入口模块顶层符号降为 `module.symbol` 命名空间。
+- 已接通限定函数调用、类型标注、struct literal / `new`、enum variant，C 后端将限定名降为下划线 C 符号；跨模块 `_` 顶层符号禁止访问。
+- 新增项目级测试覆盖函数、跨模块多文件、struct、enum、同名符号隔离、私有符号、missing/empty/cycle、非顶层 import 与不支持语法；`python tests/test_basic.py` 通过 151/151，`python -m pytest tests/test_projects.py -q` 通过 11/11。`python tests/test_projects.py` 按计划运行成功但该脚本本身无输出。
+

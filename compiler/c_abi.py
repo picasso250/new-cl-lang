@@ -34,11 +34,12 @@ def type_to_c(nc_type: str) -> str:
         return type_to_c(nc_type[2:]) + "*"
     if nc_type.startswith("*"):
         return type_to_c(nc_type[1:]) + "*"
-    return NC_TO_C.get(nc_type, nc_type)
+    return NC_TO_C.get(nc_type, c_user_ident(nc_type))
 
 
 def c_ident(name: str) -> str:
     return (name.replace("*", "ptr_").replace("[]", "slice_")
+            .replace(".", "_")
             .replace("?", "nullable_")
             .replace("[", "arr_").replace("]", "_")
             .replace("(", "_").replace(")", "_").replace(",", "_")

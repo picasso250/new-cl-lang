@@ -41,10 +41,18 @@ src/
 
 ```nc
 # 导入
-import http              # 导入 http 模块（目录）
-import http { serve }    # 选择性导入
-import "net/http"        # 带路径的模块
+import http              # v1：导入同级 http 模块（目录）
 ```
+
+当前 import v1 边界：
+
+- CLI 目标目录是入口模块目录；`import foo` 解析为入口模块目录的同级 `foo/` 目录。
+- 只支持一级模块名：`import foo`。不支持 `import foo.bar`、`import "net/http"`、`import foo { serve }`、别名导入。
+- import 只能出现在顶层。
+- 导入模块后，跨模块符号必须命名空间限定访问：`foo.add()`、`foo.User`、`foo.User { ... }`、`new foo.User { ... }`、`foo.Color::Red`。
+- 同目录 `.nc` 文件仍自动共享命名空间，无需 import。
+- 导入图递归加载；重复 import 只加载一次；import cycle 报错。
+- 编译仍生成单个 C 文件；非入口模块顶层 C 符号用模块名前缀降名，例如 `foo.add` → `foo_add`、`foo.User` → `foo_User`。
 
 ---
 

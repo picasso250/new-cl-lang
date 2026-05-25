@@ -60,3 +60,130 @@ def test_multifile_diagnostic_uses_source_file():
         assert result.returncode != 0
         assert bad_path in result.stderr
         assert ":2:3: let x: expected i32, got str" in result.stderr
+
+
+def write_file(path, text):
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
+def test_import_function_and_multifile_module_run():
+    with tempfile.TemporaryDirectory() as tmp:
+        main = os.path.join(tmp, "main")
+        math = os.path.join(tmp, "math")
+        os.mkdir(main)
+        os.mkdir(math)
+        write_file(os.path.join(main, "main.nc"), "import math\nfun main() { print(math.add_twice(2, 3)) }\n")
+        write_file(os.path.join(math, "a.nc"), "fun add_twice(a: i32, b: i32): i32 { return add(a, b) }\n")
+        write_file(os.path.join(math, "b.nc"), "fun add(a: i32, b: i32): i32 { return a + b }\n")
+
+        result = run_nc("run", main)
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "5"
+
+
+def test_import_struct_and_enum_run():
+    with tempfile.TemporaryDirectory() as tmp:
+        main = os.path.join(tmp, "main")
+        model = os.path.join(tmp, "model")
+        color = os.path.join(tmp, "color")
+        os.mkdir(main)
+        os.mkdir(model)
+        os.mkdir(color)
+        write_file(os.path.join(main, "main.nc"), """import model
+import color
+fun main() {
+  let u: model.User = model.User { age: 7 }
+  let c: color.Color = color.pick()
+  print(u.age)
+}
+""")
+        write_file(os.path.join(model, "model.nc"), "struct User { age: i32 }\n")
+        write_file(os.path.join(color, "color.nc"), "enum Color { Red, Blue }\nfun pick(): Color { return Color::Red }\n")
+
+        result = run_nc("run", main)
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "7"
+
+
+def test_import_same_public_names_do_not_conflict():
+    with tempfile.TemporaryDirectory() as tmp:
+        main = os.path.join(tmp, "main")
+        a = os.path.join(tmp, "a")
+        b = os.path.join(tmp, "b")
+        os.mkdir(main)
+        os.mkdir(a)
+        os.mkdir(b)
+        write_file(os.path.join(main, "main.nc"), "import a\nimport b\nfun value(): i32 { return 1 }\nfun main() { print(value() + a.value() + b.value()) }\n")
+        write_file(os.path.join(a, "a.nc"), "fun value(): i32 { return 2 }\n")
+        write_file(os.path.join(b, "b.nc"), "fun value(): i32 { return 3 }\n")
+
+        result = run_nc("run", main)
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "6"
+
+
+def test_import_private_symbol_error():
+    with tempfile.TemporaryDirectory() as tmp:
+        main = os.path.join(tmp, "main")
+        foo = os.path.join(tmp, "foo")
+        os.mkdir(main)
+        os.mkdir(foo)
+        write_file(os.path.join(main, "main.nc"), "import foo\nfun main() { print(foo._helper()) }\n")
+        write_file(os.path.join(foo, "foo.nc"), "fun _helper(): i32 { return 1 }\n")
+
+        result = run_nc("compile", main)
+
+        assert result.returncode != 0
+        assert "symbol 'foo._helper' is private" in result.stderr
+
+
+def test_import_missing_empty_cycle_and_nested_import_errors():
+    with tempfile.TemporaryDirectory() as tmp:
+        main = os.path.join(tmp, "main")
+        os.mkdir(main)
+        write_file(os.path.join(main, "main.nc"), "import missing\nfun main() {}\n")
+        result = run_nc("compile", main)
+        assert result.returncode != 0
+        assert "module 'missing' not found" in result.stderr
+
+        empty = os.path.join(tmp, "empty")
+        os.mkdir(empty)
+        write_file(os.path.join(main, "main.nc"), "import empty\nfun main() {}\n")
+        result = run_nc("compile", main)
+        assert result.returncode != 0
+        assert "module 'empty' has no .nc files" in result.stderr
+
+        a = os.path.join(tmp, "a")
+        os.mkdir(a)
+        write_file(os.path.join(main, "main.nc"), "import a\nfun main() {}\n")
+        write_file(os.path.join(a, "a.nc"), "import main\n")
+        result = run_nc("compile", main)
+        assert result.returncode != 0
+        assert "import cycle: main -> a -> main" in result.stderr
+
+        write_file(os.path.join(main, "main.nc"), "import foo.bar\nfun main() {}\n")
+        result = run_nc("compile", main)
+        assert result.returncode != 0
+        assert "import v1 only supports one-level module names" in result.stderr
+
+
+def test_import_not_visible_without_namespace_and_not_allowed_in_block():
+    with tempfile.TemporaryDirectory() as tmp:
+        main = os.path.join(tmp, "main")
+        foo = os.path.join(tmp, "foo")
+        os.mkdir(main)
+        os.mkdir(foo)
+        write_file(os.path.join(foo, "foo.nc"), "fun add(): i32 { return 1 }\n")
+        write_file(os.path.join(main, "main.nc"), "import foo\nfun main() { print(add()) }\n")
+        result = run_nc("compile", main)
+        assert result.returncode != 0
+        assert "Function 'add' not found" in result.stderr
+
+        write_file(os.path.join(main, "main.nc"), "fun main() { import foo }\n")
+        result = run_nc("compile", main)
+        assert result.returncode != 0
+        assert "import is only allowed at top level" in result.stderr

@@ -29,6 +29,7 @@ class TokenKind(Enum):
     THROW = auto()
     DEFER = auto()
     NIL = auto()
+    IMPORT = auto()
     # 运算符
     PLUS = auto()
     MINUS = auto()
@@ -88,6 +89,7 @@ KEYWORDS = {
     "throw": TokenKind.THROW,
     "defer": TokenKind.DEFER,
     "nil": TokenKind.NIL,
+    "import": TokenKind.IMPORT,
     "true": TokenKind.BOOL,
     "false": TokenKind.BOOL,
 }

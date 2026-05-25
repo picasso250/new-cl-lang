@@ -17,7 +17,7 @@ _slice_copy_name = slice_copy_name
 
 def generate_c(program: "Program") -> str:
     from compiler.ast import (
-        FunctionDeclaration, StructDecl, EnumDecl, ForIn, Block, While,
+        FunctionDeclaration, StructDecl, EnumDecl, ImportDecl, ForIn, Block, While,
         VariableDeclaration, ExpressionStatement, Assignment,
         Return, SliceExpr, ArrayLiteral, SliceLiteral, FunctionCall,
         IfExpr, BlockExpr, MatchExpr, IntegerLiteral, FloatLiteral, StringLiteral, BoolLiteral, NilLiteral, Identifier, BinaryOp, UnaryOp,
@@ -171,7 +171,7 @@ def generate_c(program: "Program") -> str:
         collect_closure_stmt(stmt)
 
     top_stmts = [s for s in program.statements
-                 if not isinstance(s, (FunctionDeclaration, StructDecl, EnumDecl))]
+                 if not isinstance(s, (FunctionDeclaration, StructDecl, EnumDecl, ImportDecl))]
 
     def collect_slice_type(nc_type):
         if isinstance(nc_type, str) and nc_type.startswith("[]"):
@@ -305,15 +305,18 @@ def generate_c(program: "Program") -> str:
     # ——— 输出头部 + runtime 类型定义 ———
     _lines.extend(emit_runtime(_slice_types))
 
+    def enum_variant_c(enum_name, variant):
+        return f'{c_user_ident(enum_name).upper()}_{variant.upper()}'
+
     for e in enums:
-        vs = ', '.join(f'{e.name.upper()}_{v.upper()}' for v in e.variants)
-        _lines.append(f'typedef enum {{ {vs} }} {e.name};')
+        vs = ', '.join(enum_variant_c(e.name, v) for v in e.variants)
+        _lines.append(f'typedef enum {{ {vs} }} {_type_to_c(e.name)};')
     if enums:
         _lines.append('')
 
     for s in structs:
         fields_c = '; '.join(f'{_type_to_c(t)} {n}' for n, t in s.fields) + ';'
-        _lines.append(f'typedef struct {{ {fields_c} }} {s.name};')
+        _lines.append(f'typedef struct {{ {fields_c} }} {_type_to_c(s.name)};')
     if structs:
         _lines.append('')
 
@@ -432,7 +435,7 @@ def generate_c(program: "Program") -> str:
         if isinstance(node, UnaryOp):
             return f'({node.op}{gen_expr(node.operand)})'
         if isinstance(node, EnumRef):
-            return f'{node.enum_name.upper()}_{node.variant.upper()}'
+            return enum_variant_c(node.enum_name, node.variant)
         if isinstance(node, FunctionCall):
             builtin_c = lower_builtin_expr(node, gen_expr, _slice_append_name)
             if builtin_c is not None:
@@ -484,7 +487,7 @@ def generate_c(program: "Program") -> str:
             return tmp
         if isinstance(node, StructLiteral):
             vals = ', '.join(gen_expr(v) for _n, v in node.fields)
-            return f'({node.name}){{{vals}}}'
+            return f'({_type_to_c(node.name)}){{{vals}}}'
         if isinstance(node, FieldAccess):
             obj_c = gen_expr(node.obj)
             obj_type = getattr(node.obj, "type", "")
@@ -675,7 +678,7 @@ def generate_c(program: "Program") -> str:
         _expr_indent[0] = indent
         pad = '    ' * indent
 
-        if isinstance(stmt, (StructDecl, EnumDecl)):
+        if isinstance(stmt, (StructDecl, EnumDecl, ImportDecl)):
             _expr_indent[0] = old_indent
             return
         if isinstance(stmt, VariableDeclaration):
@@ -724,7 +727,8 @@ def generate_c(program: "Program") -> str:
                 # 堆分配: let s = new Struct{...}
                 if isinstance(stmt.initializer, StructLiteral) and stmt.initializer.heap:
                     sname = stmt.initializer.name
-                    _lines.append(f'{pad}{c_t} {c_name} = ({sname}*)__nc_gc_alloc(sizeof({sname}));')
+                    sname_c = _type_to_c(sname)
+                    _lines.append(f'{pad}{c_t} {c_name} = ({sname_c}*)__nc_gc_alloc(sizeof({sname_c}));')
                     for fname, fval in stmt.initializer.fields:
                         _lines.append(f'{pad}{c_name}->{fname} = {gen_expr(fval)};')
                     _gc_vars[stmt.name] = stmt.name  # 指针自身即根
