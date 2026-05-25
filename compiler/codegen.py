@@ -7,6 +7,7 @@ str 是胖指针 {ptr, len}，打印用 %.*s。
 
 from compiler.builtins import lower_builtin_expr, lower_builtin_stmt
 from compiler.c_abi import c_user_ident, slice_append_name, slice_copy_name, type_to_c
+from compiler.codegen_collect import collect_codegen_inputs, parse_fn_type
 from compiler.runtime import emit_runtime
 
 
@@ -26,8 +27,9 @@ def generate_c(program: "Program") -> str:
         TryCatch, Throw, Defer, Break
     )
 
+    collected = collect_codegen_inputs(program)
     _lines = []
-    _slice_types = set()
+    _slice_types = collected.slice_types
     _gc_vars = {}  # 变量名 → 类型 (str/nc_map) 用于 GC 根追踪
     _tmp_id = [0]
     _expr_indent = [1]
@@ -37,270 +39,13 @@ def generate_c(program: "Program") -> str:
     _defer_sites = []
     _emitting_defer = [False]
     _closure_env_stack = []
-    _closures = []
-
-    # ——— 收集类型定义 ———
-    structs = []
-    enums = []
-    other_funcs = []
-    main_func = None
-
-    def collect(stmts):
-        nonlocal main_func
-        for s in stmts:
-            if isinstance(s, StructDecl):
-                structs.append(s)
-            elif isinstance(s, EnumDecl):
-                enums.append(s)
-            elif isinstance(s, FunctionDeclaration):
-                if s.name == "main":
-                    main_func = s
-                else:
-                    other_funcs.append(s)
-                collect(s.body.statements)
-            elif isinstance(s, Block):
-                collect(s.statements)
-            elif isinstance(s, While):
-                collect(s.body.statements)
-            elif isinstance(s, ForIn):
-                collect(s.body.statements)
-                if s.start is not None:
-                    pass  # range expressions don't contain inner decls
-                else:
-                    pass
-            elif isinstance(s, TryCatch):
-                collect(s.try_block.statements)
-                collect(s.catch_block.statements)
-            elif isinstance(s, Defer):
-                collect(s.body.statements)
-
-    collect(program.statements)
-
-    def collect_closure_expr(node):
-        if isinstance(node, FunctionExpr):
-            if not hasattr(node, "closure_id"):
-                node.closure_id = len(_closures)
-                _closures.append(node)
-            collect(node.body.statements)
-            for s in node.body.statements:
-                collect_closure_stmt(s)
-        elif isinstance(node, (ArrayLiteral, SliceLiteral)):
-            for elem in node.elements:
-                collect_closure_expr(elem)
-        elif isinstance(node, SliceExpr):
-            collect_closure_expr(node.array)
-            if node.start:
-                collect_closure_expr(node.start)
-            if node.end:
-                collect_closure_expr(node.end)
-        elif isinstance(node, IndexAccess):
-            collect_closure_expr(node.obj)
-            collect_closure_expr(node.index)
-        elif isinstance(node, BinaryOp):
-            collect_closure_expr(node.left)
-            collect_closure_expr(node.right)
-        elif isinstance(node, UnaryOp):
-            collect_closure_expr(node.operand)
-        elif isinstance(node, FunctionCall):
-            for arg in node.args:
-                collect_closure_expr(arg)
-        elif isinstance(node, IfExpr):
-            collect_closure_expr(node.condition)
-            for s in node.then_block.statements:
-                collect_closure_stmt(s)
-            if node.else_block:
-                for s in node.else_block.statements:
-                    collect_closure_stmt(s)
-        elif isinstance(node, MatchExpr):
-            collect_closure_expr(node.scrutinee)
-            for pattern, body in node.arms:
-                if pattern is not None:
-                    collect_closure_expr(pattern)
-                collect_closure_expr(body)
-        elif isinstance(node, BlockExpr):
-            for s in node.block.statements:
-                collect_closure_stmt(s)
-        elif isinstance(node, StructLiteral):
-            for _n, val in node.fields:
-                collect_closure_expr(val)
-        elif isinstance(node, FieldAccess):
-            collect_closure_expr(node.obj)
-        elif isinstance(node, MethodCall):
-            collect_closure_expr(node.obj)
-            for arg in node.args:
-                collect_closure_expr(arg)
-
-    def collect_closure_stmt(stmt):
-        if isinstance(stmt, VariableDeclaration):
-            collect_closure_expr(stmt.initializer)
-        elif isinstance(stmt, Assignment):
-            collect_closure_expr(stmt.target)
-            collect_closure_expr(stmt.expr)
-        elif isinstance(stmt, ExpressionStatement):
-            collect_closure_expr(stmt.expr)
-        elif isinstance(stmt, While):
-            collect_closure_expr(stmt.condition)
-            for s in stmt.body.statements:
-                collect_closure_stmt(s)
-        elif isinstance(stmt, ForIn):
-            if stmt.start is not None:
-                collect_closure_expr(stmt.start)
-                collect_closure_expr(stmt.end)
-            else:
-                collect_closure_expr(stmt.iterable)
-            for s in stmt.body.statements:
-                collect_closure_stmt(s)
-        elif isinstance(stmt, FunctionDeclaration):
-            for s in stmt.body.statements:
-                collect_closure_stmt(s)
-        elif isinstance(stmt, Return) and stmt.expr:
-            collect_closure_expr(stmt.expr)
-        elif isinstance(stmt, TryCatch):
-            for s in stmt.try_block.statements + stmt.catch_block.statements:
-                collect_closure_stmt(s)
-        elif isinstance(stmt, Throw):
-            collect_closure_expr(stmt.expr)
-        elif isinstance(stmt, Defer):
-            for s in stmt.body.statements:
-                collect_closure_stmt(s)
-        elif isinstance(stmt, Block):
-            for s in stmt.statements:
-                collect_closure_stmt(s)
-
-    for stmt in program.statements:
-        collect_closure_stmt(stmt)
-
-    top_stmts = [s for s in program.statements
-                 if not isinstance(s, (FunctionDeclaration, StructDecl, EnumDecl, ImportDecl))]
-
-    def collect_slice_type(nc_type):
-        if isinstance(nc_type, str) and nc_type.startswith("[]"):
-            _slice_types.add(nc_type[2:])
-
-    _fn_types = set()
-
-    def parse_fn_type(nc_type):
-        if not isinstance(nc_type, str) or not nc_type.startswith("fn("):
-            return None
-        close = nc_type.find(")->")
-        if close < 0:
-            return None
-        args_s = nc_type[3:close]
-        args = [] if args_s == "" else args_s.split(",")
-        return args, nc_type[close + 3:]
-
-    def collect_fn_type(nc_type):
-        if parse_fn_type(nc_type) is not None:
-            _fn_types.add(nc_type)
-
-    def collect_expr_types(node):
-        collect_slice_type(getattr(node, "type", None))
-        collect_fn_type(getattr(node, "type", None))
-        if isinstance(node, (ArrayLiteral, SliceLiteral)):
-            if isinstance(node, SliceLiteral):
-                _slice_types.add(node.elem_type)
-            for elem in node.elements:
-                collect_expr_types(elem)
-        elif isinstance(node, SliceExpr):
-            collect_expr_types(node.array)
-            if node.start:
-                collect_expr_types(node.start)
-            if node.end:
-                collect_expr_types(node.end)
-        elif isinstance(node, IndexAccess):
-            collect_expr_types(node.obj)
-            collect_expr_types(node.index)
-        elif isinstance(node, BinaryOp):
-            collect_expr_types(node.left)
-            collect_expr_types(node.right)
-        elif isinstance(node, UnaryOp):
-            collect_expr_types(node.operand)
-        elif isinstance(node, FunctionCall):
-            for arg in node.args:
-                collect_expr_types(arg)
-        elif isinstance(node, IfExpr):
-            collect_expr_types(node.condition)
-            for s in node.then_block.statements:
-                collect_stmt_types(s)
-            if node.else_block:
-                for s in node.else_block.statements:
-                    collect_stmt_types(s)
-        elif isinstance(node, MatchExpr):
-            collect_expr_types(node.scrutinee)
-            for pattern, body in node.arms:
-                if pattern is not None:
-                    collect_expr_types(pattern)
-                collect_expr_types(body)
-        elif isinstance(node, BlockExpr):
-            for s in node.block.statements:
-                collect_stmt_types(s)
-        elif isinstance(node, StructLiteral):
-            for _n, val in node.fields:
-                collect_expr_types(val)
-        elif isinstance(node, FieldAccess):
-            collect_expr_types(node.obj)
-        elif isinstance(node, MethodCall):
-            collect_expr_types(node.obj)
-            for arg in node.args:
-                collect_expr_types(arg)
-        elif isinstance(node, FunctionExpr):
-            for _n, ptype in node.params:
-                collect_slice_type(ptype)
-                collect_fn_type(ptype)
-            collect_slice_type(node.return_type)
-            collect_fn_type(node.return_type)
-            for _n, ctype in getattr(node, "captures", []):
-                collect_slice_type(ctype)
-                collect_fn_type(ctype)
-            for s in node.body.statements:
-                collect_stmt_types(s)
-
-    def collect_stmt_types(stmt):
-        collect_slice_type(getattr(stmt, "type", None))
-        collect_fn_type(getattr(stmt, "type", None))
-        if isinstance(stmt, VariableDeclaration):
-            collect_expr_types(stmt.initializer)
-        elif isinstance(stmt, Assignment):
-            collect_expr_types(stmt.target)
-            collect_expr_types(stmt.expr)
-        elif isinstance(stmt, ExpressionStatement):
-            collect_expr_types(stmt.expr)
-        elif isinstance(stmt, While):
-            collect_expr_types(stmt.condition)
-            for s in stmt.body.statements:
-                collect_stmt_types(s)
-        elif isinstance(stmt, ForIn):
-            if stmt.start is not None:
-                collect_expr_types(stmt.start)
-                collect_expr_types(stmt.end)
-            else:
-                collect_expr_types(stmt.iterable)
-            for s in stmt.body.statements:
-                collect_stmt_types(s)
-        elif isinstance(stmt, FunctionDeclaration):
-            collect_slice_type(stmt.return_type)
-            collect_fn_type(stmt.return_type)
-            for _n, ptype in stmt.params:
-                collect_slice_type(ptype)
-                collect_fn_type(ptype)
-            for s in stmt.body.statements:
-                collect_stmt_types(s)
-        elif isinstance(stmt, Return) and stmt.expr:
-            collect_expr_types(stmt.expr)
-        elif isinstance(stmt, TryCatch):
-            for s in stmt.try_block.statements + stmt.catch_block.statements:
-                collect_stmt_types(s)
-        elif isinstance(stmt, Throw):
-            collect_expr_types(stmt.expr)
-        elif isinstance(stmt, Defer):
-            for s in stmt.body.statements:
-                collect_stmt_types(s)
-        elif isinstance(stmt, Block):
-            for s in stmt.statements:
-                collect_stmt_types(s)
-
-    for stmt in program.statements:
-        collect_stmt_types(stmt)
+    _closures = collected.closures
+    structs = collected.structs
+    enums = collected.enums
+    other_funcs = collected.other_funcs
+    main_func = collected.main_func
+    top_stmts = collected.top_stmts
+    _fn_types = collected.fn_types
 
     # ——— 输出头部 + runtime 类型定义 ———
     _lines.extend(emit_runtime(_slice_types))

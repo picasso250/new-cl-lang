@@ -56,6 +56,13 @@ import io                # 内置标准模块，不要求存在同级 io/ 目录
 - 导入图递归加载；重复 import 只加载一次；import cycle 报错。
 - 编译仍生成单个 C 文件；非入口模块顶层 C 符号用模块名前缀降名，例如 `foo.add` → `foo_add`、`foo.User` → `foo_User`。
 
+当前内置标准模块边界：
+
+- `io.println(value)` 是当前唯一落地的标准输出 API，自动追加换行。
+- `io.println` 支持输出 `str`、`bool`、有符号整数、无符号整数和浮点数。
+- 裸 `print(...)` 不是语言内建，也不向前兼容。
+- 其他临时内建函数（如 `len`、`append`、数值转换、GC 测试钩子、文件 IO）尚未迁入标准模块。
+
 ---
 
 ## 三、可见性

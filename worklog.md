@@ -1,5 +1,13 @@
 # worklog
 
+## 当前状态快照 (2026-05-25)
+
+- import/module namespace 已落地为 import v1：同级目录一级模块、命名空间限定访问、导入图递归加载、重复加载去重、cycle 报错、跨模块 `_` 顶层私有。
+- 标准输出已从裸 `print(...)` 迁移到内置一级模块 `io`：需 `import io` 后调用 `io.println(value)`；裸 `print(...)` 不再识别为 builtin。
+- `io` 是保留标准模块名：`import io` 不查找同级 `io/` 目录，不参与 import cycle，且优先于真实同级 `io/`。
+- 早期 worklog 中“显式 import/module namespace 尚未落地”“print 仍是 builtin/magic boundary”等记录是历史状态，不代表当前缺口。
+- 仍未解决的结构性债：C 复合字面量仍偏位置式、defer/throw/return 与未来自动 GC root 生命周期仍需系统处理、代码生成仍未拆分为多文件输出。
+
 ## 2026-05-16
 
 - 项目初始化。代号：NC（New C）。
@@ -122,3 +130,14 @@
 
 - 已迁移标准输出边界：io 作为内置一级标准模块，import io 不查找同级目录且优先于真实 io/；io.println(value) 识别为唯一输出 builtin，裸 print(...) 不再识别。
 - 已批量迁移现有 case 和项目测试到 import io + io.println(...)，并补覆盖无 io/ 目录、同级 io/ 冲突、裸 print 失败、未 import io 失败；python tests/test_basic.py 通过 151/151，python -m pytest tests/test_projects.py tests/test_builtin_boundary.py -q 通过 17/17。
+
+## 2026-05-25
+
+- 预备整理文档当前状态：不改历史记录，只追加当前状态快照，标明 import/module namespace 与标准输出边界已落地，避免早期 worklog 债项误导后续工作。
+
+## 2026-05-25
+
+- 预备拆分 compiler/codegen.py：先只抽离 codegen 前置收集阶段，保持 C 输出行为不变，避免一次性重构整个 codegen pass。
+
+- 已抽离 codegen 前置收集阶段到 compiler/codegen_collect.py：顶层定义、闭包、slice 类型、函数值类型统一由 collect_codegen_inputs() 产出；compiler/codegen.py 从 947 行降到 706 行，C 输出行为不变。
+- 验证通过：python tests/test_basic.py 通过 151/151，python -m pytest tests/test_projects.py tests/test_builtin_boundary.py -q 通过 17/17。
