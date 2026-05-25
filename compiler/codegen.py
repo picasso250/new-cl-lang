@@ -20,7 +20,7 @@ def generate_c(program: "Program") -> str:
         FunctionDeclaration, StructDecl, EnumDecl, ForIn, Block, While,
         VariableDeclaration, ExpressionStatement, Assignment,
         Return, SliceExpr, ArrayLiteral, SliceLiteral, FunctionCall,
-        IfExpr, BlockExpr, MatchExpr, IntegerLiteral, StringLiteral, BoolLiteral, NilLiteral, Identifier, BinaryOp, UnaryOp,
+        IfExpr, BlockExpr, MatchExpr, IntegerLiteral, FloatLiteral, StringLiteral, BoolLiteral, NilLiteral, Identifier, BinaryOp, UnaryOp,
         FunctionExpr,
         EnumRef, StructLiteral, FieldAccess, IndexAccess, SliceExpr, MethodCall,
         TryCatch, Throw, Defer, Break
@@ -404,6 +404,10 @@ def generate_c(program: "Program") -> str:
     def gen_expr(node) -> str:
         if isinstance(node, IntegerLiteral):
             return str(node.value)
+        if isinstance(node, FloatLiteral):
+            if getattr(node, "type", None) == "f32":
+                return f'((float)({node.value}))'
+            return node.value
         if isinstance(node, BoolLiteral):
             return '1' if node.value else '0'
         if isinstance(node, NilLiteral):

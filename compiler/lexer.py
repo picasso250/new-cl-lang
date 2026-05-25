@@ -6,6 +6,7 @@ from enum import Enum, auto
 
 class TokenKind(Enum):
     INTEGER = auto()
+    FLOAT = auto()
     STRING = auto()
     CHAR = auto()
     BOOL = auto()
@@ -92,6 +93,10 @@ KEYWORDS = {
 }
 
 
+INTEGER_SUFFIXES = {"i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"}
+FLOAT_SUFFIXES = {"f32", "f64"}
+
+
 def lex(source: str):
     """生成器，逐 token 产出。"""
     i = 0
@@ -116,7 +121,26 @@ def lex(source: str):
             start = i
             while i < n and source[i].isdigit():
                 i += 1
-            yield Token(TokenKind.INTEGER, int(source[start:i]), start)
+            is_float = False
+            if i < n and source[i] == "." and not (i + 1 < n and source[i + 1] == "."):
+                is_float = True
+                i += 1
+                if i >= n or not source[i].isdigit():
+                    raise SyntaxError(f"Invalid float literal at position {start}")
+                while i < n and source[i].isdigit():
+                    i += 1
+            suffix_start = i
+            while i < n and (source[i].isalnum() or source[i] == "_"):
+                i += 1
+            suffix = source[suffix_start:i] or None
+            if is_float:
+                if suffix is not None and suffix not in FLOAT_SUFFIXES:
+                    raise SyntaxError(f"Invalid float literal suffix '{suffix}' at position {suffix_start}")
+                yield Token(TokenKind.FLOAT, (source[start:suffix_start], suffix), start)
+            else:
+                if suffix is not None and suffix not in INTEGER_SUFFIXES:
+                    raise SyntaxError(f"Invalid integer literal suffix '{suffix}' at position {suffix_start}")
+                yield Token(TokenKind.INTEGER, (int(source[start:suffix_start]), suffix), start)
             continue
 
         # 字符串

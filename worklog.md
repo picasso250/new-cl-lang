@@ -103,3 +103,7 @@
 - 预备实施 nil 语义重构：`*T` 改为非空指针，新增 `?*T` nullable pointer；`nil` 仅允许用于 nullable pointer，并支持 `if p != nil` 块内轻量收窄。
 
 - 已实施 nil 语义重构：lexer/parser 支持 `nil` 与 `?*T`，typecheck 支持 nullable pointer 赋值兼容、nil 比较、非空收窄和收窄块内禁止重赋值，codegen 将 `nil` 降为 `NULL` 且 `?*T` 沿用指针布局。新增 case_140~146 覆盖正向与错误路径；`python tests/test_basic.py` 通过 144/144。
+
+- 预备落地全基础数值类型：支持 `i8/i16/i32/i64/u8/u16/u32/u64/f32/f64`、整数/浮点字面量后缀、显式数值转换，并禁止算术、比较、赋值、传参、返回、容器元素中的隐式数值提升。
+
+- 已落地全基础数值类型：lexer/parser 支持整数与浮点后缀，typecheck 将默认整数定为 `i32`、默认浮点定为 `f64`，算术/比较/赋值/传参/返回/struct/array/slice 均要求数值类型完全一致，所有基础数值类型支持显式转换，C 后端补齐类型映射、浮点字面量和 print 输出。新增 case_147~153 覆盖正向与错误路径；`python tests/test_basic.py` 通过 151/151，`python tests/test_projects.py` 通过。

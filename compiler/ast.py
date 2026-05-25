@@ -321,11 +321,23 @@ class StringLiteral(Node):
 
 
 class IntegerLiteral(Node):
-    def __init__(self, value: int):
+    def __init__(self, value: int, suffix_type: str | None = None):
         self.value = value
+        self.suffix_type = suffix_type
 
     def __repr__(self):
-        return f"Integer({self.value})"
+        suffix = self.suffix_type or ""
+        return f"Integer({self.value}{suffix})"
+
+
+class FloatLiteral(Node):
+    def __init__(self, value: str, suffix_type: str | None = None):
+        self.value = value
+        self.suffix_type = suffix_type
+
+    def __repr__(self):
+        suffix = self.suffix_type or ""
+        return f"Float({self.value}{suffix})"
 
 
 class BoolLiteral(Node):

@@ -1,8 +1,12 @@
 """C ABI naming and type mapping for generated code."""
 
 NC_TO_C = {
+    "i8": "int8_t",
+    "i16": "int16_t",
     "i32": "int",
     "i64": "long long",
+    "u8": "uint8_t",
+    "u16": "uint16_t",
     "u32": "unsigned int",
     "u64": "unsigned long long",
     "f32": "float",

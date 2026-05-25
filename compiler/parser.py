@@ -136,7 +136,10 @@ class Parser:
             self.advance()
             length = None
             if self.peek().kind != TokenKind.RBRACKET:
-                length = self.expect(TokenKind.INTEGER).value
+                length_value = self.expect(TokenKind.INTEGER).value
+                length, suffix = length_value if isinstance(length_value, tuple) else (length_value, None)
+                if suffix is not None:
+                    raise ParseError("array length literal cannot have a type suffix")
             self.expect(TokenKind.RBRACKET)
             elem = self._parse_type()
             return f"[]{elem}" if length is None else f"[{length}]{elem}"
@@ -476,7 +479,13 @@ class Parser:
 
         if t.kind == TokenKind.INTEGER:
             start = self.advance()
-            return self.span(IntegerLiteral(t.value), start)
+            value, suffix = t.value if isinstance(t.value, tuple) else (t.value, None)
+            return self.span(IntegerLiteral(value, suffix), start)
+
+        if t.kind == TokenKind.FLOAT:
+            start = self.advance()
+            value, suffix = t.value
+            return self.span(FloatLiteral(value, suffix), start)
 
         if t.kind == TokenKind.BOOL:
             start = self.advance()
@@ -556,7 +565,10 @@ class Parser:
             start = self.advance()  # 吞 [
             length = None
             if self.peek().kind != TokenKind.RBRACKET:
-                length = self.expect(TokenKind.INTEGER).value
+                length_value = self.expect(TokenKind.INTEGER).value
+                length, suffix = length_value if isinstance(length_value, tuple) else (length_value, None)
+                if suffix is not None:
+                    raise ParseError("array length literal cannot have a type suffix")
             self.expect(TokenKind.RBRACKET)
             elem_type = self.expect(TokenKind.IDENT).value
             self.expect(TokenKind.LBRACE)

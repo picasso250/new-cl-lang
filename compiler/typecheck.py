@@ -4,7 +4,7 @@
 """
 
 
-from compiler.builtins import infer_builtin_call
+from compiler.builtins import NUMERIC_TYPES, infer_builtin_call
 
 
 class TypeCheckError(Exception):
@@ -18,7 +18,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         Assignment, Block, While, FunctionDeclaration, Return,
         StructDecl, StructLiteral, FieldAccess,
         EnumDecl, EnumRef, ForIn,
-        IfExpr, BlockExpr, MatchExpr, IntegerLiteral, StringLiteral, BoolLiteral, NilLiteral, BinaryOp, UnaryOp, FunctionCall, Identifier,
+        IfExpr, BlockExpr, MatchExpr, IntegerLiteral, FloatLiteral, StringLiteral, BoolLiteral, NilLiteral, BinaryOp, UnaryOp, FunctionCall, Identifier,
         FunctionExpr,
         ArrayLiteral, SliceLiteral, IndexAccess, SliceExpr, MethodCall, TryCatch, Throw, Defer, Break
     )
@@ -205,6 +205,12 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
     def is_nil_type(t):
         return t == "__nil"
 
+    def is_numeric_type(t):
+        return t in NUMERIC_TYPES
+
+    def is_integer_type(t):
+        return t in {"i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"}
+
     def is_assignable_type(actual, expected):
         if actual == expected:
             return True
@@ -240,7 +246,9 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
 
     def walk_expr(node):
         if isinstance(node, IntegerLiteral):
-            node.type = "i32"
+            node.type = node.suffix_type or "i32"
+        elif isinstance(node, FloatLiteral):
+            node.type = node.suffix_type or "f64"
         elif isinstance(node, StringLiteral):
             node.type = "str"
         elif isinstance(node, BoolLiteral):
@@ -289,12 +297,20 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 if (is_pointer_type(node.left.type) or is_pointer_type(node.right.type)
                         or is_nullable_pointer_type(node.left.type) or is_nullable_pointer_type(node.right.type)):
                     fail(f"pointer type {node.left.type}: operator {node.op} is not allowed", node)
+                if not (is_numeric_type(node.left.type) and is_numeric_type(node.right.type)):
+                    fail(f"comparison: expected numeric operands, got {node.left.type} and {node.right.type}", node)
                 require_type(node.right.type, node.left.type, "comparison", node)
                 node.type = "bool"
                 return
             if (is_pointer_type(node.left.type) or is_pointer_type(node.right.type)
                     or is_nullable_pointer_type(node.left.type) or is_nullable_pointer_type(node.right.type)):
                 fail(f"pointer type {node.left.type}: operator {node.op} is not allowed", node)
+            if node.op in ("+", "-", "*", "/"):
+                if not (is_numeric_type(node.left.type) and is_numeric_type(node.right.type)):
+                    fail(f"binary operator {node.op}: expected numeric operands, got {node.left.type} and {node.right.type}", node)
+            if node.op == "%":
+                if not (is_integer_type(node.left.type) and is_integer_type(node.right.type)):
+                    fail(f"binary operator %: expected integer operands, got {node.left.type} and {node.right.type}", node)
             require_type(node.right.type, node.left.type, f"binary operator {node.op}", node)
             node.type = node.left.type
         elif isinstance(node, FunctionCall):
