@@ -336,6 +336,11 @@ class BoolLiteral(Node):
         return "Bool(true)" if self.value else "Bool(false)"
 
 
+class NilLiteral(Node):
+    def __repr__(self):
+        return "Nil"
+
+
 class BinaryOp(Node):
     def __init__(self, left, op: str, right):
         self.left = left

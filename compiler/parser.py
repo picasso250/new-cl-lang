@@ -113,6 +113,10 @@ class Parser:
         return stmt
 
     def _parse_type(self) -> str:
+        if self.peek().kind == TokenKind.QUESTION:
+            self.advance()
+            self.expect(TokenKind.STAR)
+            return "?*" + self._parse_type()
         if self.peek().kind == TokenKind.LPAREN:
             self.advance()
             params = []
@@ -477,6 +481,10 @@ class Parser:
         if t.kind == TokenKind.BOOL:
             start = self.advance()
             return self.span(BoolLiteral(t.value), start)
+
+        if t.kind == TokenKind.NIL:
+            start = self.advance()
+            return self.span(NilLiteral(), start)
 
         if t.kind == TokenKind.FUN:
             start = self.advance()

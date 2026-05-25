@@ -18,7 +18,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         Assignment, Block, While, FunctionDeclaration, Return,
         StructDecl, StructLiteral, FieldAccess,
         EnumDecl, EnumRef, ForIn,
-        IfExpr, BlockExpr, MatchExpr, IntegerLiteral, StringLiteral, BoolLiteral, BinaryOp, UnaryOp, FunctionCall, Identifier,
+        IfExpr, BlockExpr, MatchExpr, IntegerLiteral, StringLiteral, BoolLiteral, NilLiteral, BinaryOp, UnaryOp, FunctionCall, Identifier,
         FunctionExpr,
         ArrayLiteral, SliceLiteral, IndexAccess, SliceExpr, MethodCall, TryCatch, Throw, Defer, Break
     )
@@ -52,7 +52,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         raise TypeCheckError(message)
 
     def require_type(actual, expected, context, node=None):
-        if actual != expected:
+        if not is_assignable_type(actual, expected):
             fail(f"{context}: expected {expected}, got {actual}", node)
 
     def require_arg_count(args, expected, context, node=None):
@@ -100,15 +100,25 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
 
     def infer_block_value(block, context_node):
         symtab.push_scope()
+        narrowed = getattr(block, "_narrowed_vars", None)
+        if narrowed:
+            narrowed_read_stack.append(narrowed)
+            narrowed_assign_forbidden.append(set(narrowed.keys()))
         has_tail = block_tail_expr(block)
         body = block.statements[:-1] if has_tail else block.statements
         walk_stmts(body)
         tail = block_tail_expr(block)
         if tail is None:
+            if narrowed:
+                narrowed_assign_forbidden.pop()
+                narrowed_read_stack.pop()
             symtab.pop_scope()
             return "void"
         walk_expr(tail)
         tail_type = tail_expr_type(tail) or "void"
+        if narrowed:
+            narrowed_assign_forbidden.pop()
+            narrowed_read_stack.pop()
         symtab.pop_scope()
         return tail_type
 
@@ -183,6 +193,51 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         if not isinstance(target, (Identifier, IndexAccess, FieldAccess)):
             fail(f"invalid assignment target: {type(target).__name__}", target)
 
+    def is_pointer_type(t):
+        return isinstance(t, str) and t.startswith("*")
+
+    def is_nullable_pointer_type(t):
+        return isinstance(t, str) and t.startswith("?*")
+
+    def nonnullable_pointer_type(t):
+        return "*" + t[2:] if is_nullable_pointer_type(t) else t
+
+    def is_nil_type(t):
+        return t == "__nil"
+
+    def is_assignable_type(actual, expected):
+        if actual == expected:
+            return True
+        if is_nil_type(actual):
+            return is_nullable_pointer_type(expected)
+        if is_pointer_type(actual) and is_nullable_pointer_type(expected):
+            return actual[1:] == expected[2:]
+        return False
+
+    def maybe_narrow_condition(condition):
+        if not isinstance(condition, BinaryOp) or condition.op != "!=":
+            return None
+        left_is_var = isinstance(condition.left, Identifier) and is_nil_type(getattr(condition.right, "type", None))
+        right_is_var = isinstance(condition.right, Identifier) and is_nil_type(getattr(condition.left, "type", None))
+        var = condition.left if left_is_var else condition.right if right_is_var else None
+        if var is None:
+            return None
+        if not is_nullable_pointer_type(var.type):
+            return None
+        return var.name, nonnullable_pointer_type(var.type)
+
+    narrowed_read_stack = []
+    narrowed_assign_forbidden = []
+
+    def lookup_narrowed(name):
+        for narrowed in reversed(narrowed_read_stack):
+            if name in narrowed:
+                return narrowed[name]
+        return None
+
+    def is_assignment_forbidden(name):
+        return any(name in scope for scope in narrowed_assign_forbidden)
+
     def walk_expr(node):
         if isinstance(node, IntegerLiteral):
             node.type = "i32"
@@ -190,9 +245,11 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             node.type = "str"
         elif isinstance(node, BoolLiteral):
             node.type = "bool"
+        elif isinstance(node, NilLiteral):
+            node.type = "__nil"
         elif isinstance(node, Identifier):
             sym = symtab.lookup(node.name)
-            node.type = sym.nc_type
+            node.type = lookup_narrowed(node.name) or sym.nc_type
             if closure_stack and sym.scope_level < closure_stack[-1]["level"] and sym.nc_type not in ("struct", "enum"):
                 ctx = closure_stack[-1]
                 if node.name not in ctx["captures"]:
@@ -219,13 +276,25 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 node.type = "str"
                 return
             if node.op in ("==", "!="):
+                if is_nil_type(node.left.type) or is_nil_type(node.right.type):
+                    other_type = node.right.type if is_nil_type(node.left.type) else node.left.type
+                    if not is_nullable_pointer_type(other_type):
+                        fail(f"nil comparison requires nullable pointer, got {other_type}", node)
+                    node.type = "bool"
+                    return
                 require_type(node.right.type, node.left.type, "comparison", node)
                 node.type = "bool"
                 return
             if node.op in ("<", ">", "<=", ">="):
+                if (is_pointer_type(node.left.type) or is_pointer_type(node.right.type)
+                        or is_nullable_pointer_type(node.left.type) or is_nullable_pointer_type(node.right.type)):
+                    fail(f"pointer type {node.left.type}: operator {node.op} is not allowed", node)
                 require_type(node.right.type, node.left.type, "comparison", node)
                 node.type = "bool"
                 return
+            if (is_pointer_type(node.left.type) or is_pointer_type(node.right.type)
+                    or is_nullable_pointer_type(node.left.type) or is_nullable_pointer_type(node.right.type)):
+                fail(f"pointer type {node.left.type}: operator {node.op} is not allowed", node)
             require_type(node.right.type, node.left.type, f"binary operator {node.op}", node)
             node.type = node.left.type
         elif isinstance(node, FunctionCall):
@@ -281,6 +350,9 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         elif isinstance(node, IfExpr):
             walk_expr(node.condition)
             require_type(node.condition.type, "bool", "if condition", node.condition)
+            narrowed = maybe_narrow_condition(node.condition)
+            if narrowed is not None:
+                node.then_block._narrowed_vars = {narrowed[0]: narrowed[1]}
             node.type = infer_if_value(node)
         elif isinstance(node, BlockExpr):
             node.type = infer_block_value(node.block, node)
@@ -315,6 +387,8 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         elif isinstance(node, FieldAccess):
             walk_expr(node.obj)
             obj_type = node.obj.type
+            if is_nullable_pointer_type(obj_type):
+                fail(f"nullable pointer type {obj_type}: field access requires if p != nil narrowing", node)
             if obj_type.startswith("*"):
                 obj_type = obj_type[1:]
             fields = symtab.lookup_struct(obj_type)
@@ -326,6 +400,8 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             for arg in node.args:
                 walk_expr(arg)
             obj_type = node.obj.type
+            if is_nullable_pointer_type(obj_type):
+                fail(f"nullable pointer type {obj_type}: method call requires if p != nil narrowing", node)
             if obj_type.startswith("*"):
                 obj_type = obj_type[1:]
             methods = getattr(symtab, "_methods", {})
@@ -366,6 +442,8 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             elif node.obj.type.startswith("["):
                 require_type(node.index.type, "i32", "index", node.index)
                 node.type = node.obj.type.split("]", 1)[1]
+            elif is_pointer_type(node.obj.type) or is_nullable_pointer_type(node.obj.type):
+                fail(f"pointer type {node.obj.type}: indexing is not allowed", node)
             else:
                 require_type(node.index.type, "i32", "index", node.index)
                 node.type = node.obj.type
@@ -392,7 +470,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             if isinstance(stmt, VariableDeclaration):
                 walk_expr(stmt.initializer)
                 stmt.type = stmt.annotation or stmt.initializer.type
-                if stmt.type == "void":
+                if stmt.type == "void" or stmt.type == "__nil":
                     fail(f"let {stmt.name}: cannot bind void value", stmt)
                 require_type(stmt.initializer.type, stmt.type, f"let {stmt.name}", stmt)
                 symtab.declare(stmt.name, stmt.type)
@@ -401,6 +479,8 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             elif isinstance(stmt, Assignment):
                 walk_expr(stmt.target)
                 require_assignable(stmt.target)
+                if isinstance(stmt.target, Identifier) and is_assignment_forbidden(stmt.target.name):
+                    fail(f"cannot assign to narrowed nullable pointer '{stmt.target.name}' inside non-nil block", stmt.target)
                 if isinstance(stmt.target, Identifier) and getattr(stmt.target, "is_capture", False):
                     fail(f"cannot assign to captured variable '{stmt.target.name}'", stmt.target)
                 walk_expr(stmt.expr)
@@ -484,7 +564,14 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                     fail("break outside loop", stmt)
             elif isinstance(stmt, Block):
                 symtab.push_scope()
+                narrowed = getattr(stmt, "_narrowed_vars", None)
+                if narrowed:
+                    narrowed_read_stack.append(narrowed)
+                    narrowed_assign_forbidden.append(set(narrowed.keys()))
                 walk_stmts(stmt.statements)
+                if narrowed:
+                    narrowed_assign_forbidden.pop()
+                    narrowed_read_stack.pop()
                 symtab.pop_scope()
 
     def infer_return_from_body(fn_node, display_name):

@@ -91,3 +91,15 @@
 - 新增 case_124~134 覆盖 enum 穷尽、else、str scrutinee、tail return、block arm、函数参数和主要错误诊断；`python tests/test_basic.py` 通过 132/132，`python tests/test_projects.py` 通过。
 - 应要求彻底移除语言级 `switch`：删除 Switch AST、switch token/关键字、parser 入口、Pass1/Pass2/codegen 分支；旧 switch case 改为 match，break 错误文案改为仅 loop。
 - 清理后 `python tests/test_basic.py` 通过 132/132，`python tests/test_projects.py` 通过。
+
+## 2026-05-25
+
+- 预备清理旧 `switch` 残留：旧 case 文件名改为 `match` 语义，并补一个 `switch` 已移除的语法错误 case，避免后续误读为仍支持旧语法。
+- 修正方向：`switch` 不应作为保留关键字报错；既然语言级 `switch` 已移除，就退回普通标识符。新增 case 覆盖 `let switch = 7`。
+- 预备收紧指针边界：禁止 `*T` 参与算术、索引和大小比较；同类型指针仅允许 `==` / `!=`，避免 NC 指针退化成 C 指针运算。
+
+## 2026-05-25
+
+- 预备实施 nil 语义重构：`*T` 改为非空指针，新增 `?*T` nullable pointer；`nil` 仅允许用于 nullable pointer，并支持 `if p != nil` 块内轻量收窄。
+
+- 已实施 nil 语义重构：lexer/parser 支持 `nil` 与 `?*T`，typecheck 支持 nullable pointer 赋值兼容、nil 比较、非空收窄和收窄块内禁止重赋值，codegen 将 `nil` 降为 `NULL` 且 `?*T` 沿用指针布局。新增 case_140~146 覆盖正向与错误路径；`python tests/test_basic.py` 通过 144/144。

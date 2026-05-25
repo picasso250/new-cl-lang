@@ -12,12 +12,22 @@ NC_TO_C = {
     "str": "str",
 }
 
+C_KEYWORDS = {
+    "auto", "break", "case", "char", "const", "continue", "default", "do",
+    "double", "else", "enum", "extern", "float", "for", "goto", "if",
+    "inline", "int", "long", "register", "restrict", "return", "short",
+    "signed", "sizeof", "static", "struct", "switch", "typedef", "union",
+    "unsigned", "void", "volatile", "while",
+}
+
 
 def type_to_c(nc_type: str) -> str:
     if nc_type.startswith("fn("):
         return fn_type_name(nc_type)
     if nc_type.startswith("[]"):
         return slice_type_name(nc_type[2:])
+    if nc_type.startswith("?*"):
+        return type_to_c(nc_type[2:]) + "*"
     if nc_type.startswith("*"):
         return type_to_c(nc_type[1:]) + "*"
     return NC_TO_C.get(nc_type, nc_type)
@@ -25,9 +35,17 @@ def type_to_c(nc_type: str) -> str:
 
 def c_ident(name: str) -> str:
     return (name.replace("*", "ptr_").replace("[]", "slice_")
+            .replace("?", "nullable_")
             .replace("[", "arr_").replace("]", "_")
             .replace("(", "_").replace(")", "_").replace(",", "_")
             .replace("->", "_to_"))
+
+
+def c_user_ident(name: str) -> str:
+    ident = c_ident(name)
+    if ident in C_KEYWORDS or ident.startswith("__nc_"):
+        return f"nc_{ident}"
+    return ident
 
 
 def fn_type_name(nc_type: str) -> str:

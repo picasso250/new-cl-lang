@@ -27,6 +27,7 @@ class TokenKind(Enum):
     CATCH = auto()
     THROW = auto()
     DEFER = auto()
+    NIL = auto()
     # 运算符
     PLUS = auto()
     MINUS = auto()
@@ -43,6 +44,7 @@ class TokenKind(Enum):
     AND = auto()
     OR = auto()
     NOT = auto()
+    QUESTION = auto()
     # 分隔符
     LPAREN = auto()
     RPAREN = auto()
@@ -84,6 +86,7 @@ KEYWORDS = {
     "catch": TokenKind.CATCH,
     "throw": TokenKind.THROW,
     "defer": TokenKind.DEFER,
+    "nil": TokenKind.NIL,
     "true": TokenKind.BOOL,
     "false": TokenKind.BOOL,
 }
@@ -231,6 +234,8 @@ def lex(source: str):
             yield Token(TokenKind.RBRACKET, "]", i); i += 1; continue
         if ch == "!":
             yield Token(TokenKind.NOT, "!", i); i += 1; continue
+        if ch == "?":
+            yield Token(TokenKind.QUESTION, "?", i); i += 1; continue
 
         raise SyntaxError(f"Unexpected character '{ch}' at position {i}")
 
