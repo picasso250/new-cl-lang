@@ -141,3 +141,10 @@
 
 - 已抽离 codegen 前置收集阶段到 compiler/codegen_collect.py：顶层定义、闭包、slice 类型、函数值类型统一由 collect_codegen_inputs() 产出；compiler/codegen.py 从 947 行降到 706 行，C 输出行为不变。
 - 验证通过：python tests/test_basic.py 通过 151/151，python -m pytest tests/test_projects.py tests/test_builtin_boundary.py -q 通过 17/17。
+
+## 2026-05-26
+
+- 预备继续拆分 compiler/codegen.py：抽离 codegen 运行上下文中低风险的临时变量编号、表达式缩进和 GC root 追踪辅助，保持 C 输出行为不变。
+
+- 已抽离 codegen 运行上下文到 compiler/codegen_context.py：集中管理临时变量编号、表达式生成缩进、函数级 GC root 追踪和 root push 规则；compiler/codegen.py 从 706 行降到 659 行，C 输出行为不变。
+- 验证通过：python tests/test_basic.py 通过 151/151，python -m pytest tests/test_projects.py tests/test_builtin_boundary.py -q 通过 17/17。
