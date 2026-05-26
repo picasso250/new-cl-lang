@@ -186,3 +186,12 @@
 - 已扩 LLVM 覆盖率到定长数组基础能力：支持 [N]T 类型、数组字面量（含非常量元素）、索引读取和索引赋值；test_cases/case_020_array.nc 已可用 --backend llvm 运行。
 - 新增 LLVM 测试覆盖数组字面量/索引和索引赋值。
 
+
+## 2026-05-26
+
+- 预备扩 LLVM 覆盖到 struct 值类型基础能力：支持 struct 声明布局、字段名顺序初始化、字段读取和字段赋值，目标覆盖 case_016_struct 和字段赋值基础路径；本轮不做 new 指针/方法/GC root。
+
+
+- 已扩 LLVM 覆盖率到 struct 值类型基础能力：支持 struct 声明布局、按字段名顺序初始化、字段读取、字段赋值、struct 参数/返回；同时补非 void 函数尾表达式返回。
+- 当前仍未做 struct 指针/new、方法、GC root 聚合保活；这些不是本轮放弃点，而是后续迁移项。已验证 --backend llvm 可运行 case_016_struct、case_056_struct_literal_order、case_074_field_assign、case_079_struct_param_return。
+

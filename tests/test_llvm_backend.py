@@ -98,6 +98,37 @@ fun main() {
     assert (stdout.strip(), stderr.strip(), rc) == ("11", "", 0)
 
 
+def test_llvm_struct_literal_field_access_and_assign():
+    source = """import io
+fun main() {
+    struct Point { x: i32, y: i32 }
+    let p = Point { y: 4, x: 3 }
+    io.println(p.x)
+    p.y = 9
+    io.println(p.y)
+}
+"""
+    llvm_ir = compile_nc_to_llvm_ir(source)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    assert (stdout.strip(), stderr.strip(), rc) == ("3\n9", "", 0)
+
+
+def test_llvm_struct_param_and_return():
+    source = """import io
+struct Pair { a: i32, b: i32 }
+fun make_pair(): Pair { return Pair { a: 2, b: 5 } }
+fun move(p: Pair, delta: i32): Pair { Pair { a: p.a + delta, b: p.b } }
+fun sum(p: Pair): i32 { p.a + p.b }
+fun main() {
+    let p = move(make_pair(), 1)
+    io.println(sum(p))
+}
+"""
+    llvm_ir = compile_nc_to_llvm_ir(source)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    assert (stdout.strip(), stderr.strip(), rc) == ("8", "", 0)
+
+
 def test_llvm_build_writes_ir_obj_and_exe(tmp_path):
     llvm_ir = compile_nc_to_llvm_ir("import io\nfun main() { io.println(42) }")
     ll_path, obj_path, exe_path = build_llvm_ir(llvm_ir, str(tmp_path), "main")

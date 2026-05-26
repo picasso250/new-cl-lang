@@ -13,9 +13,9 @@ from llvmlite import binding, ir
 
 from compiler.ast import (
     ArrayLiteral, Assignment, BinaryOp, Block, BoolLiteral, ExpressionStatement,
-    FloatLiteral, FunctionCall, FunctionDeclaration, Identifier, IfExpr,
-    IndexAccess, IntegerLiteral, Return, StringLiteral, UnaryOp,
-    VariableDeclaration, While,
+    FieldAccess, FloatLiteral, FunctionCall, FunctionDeclaration, Identifier,
+    IfExpr, IndexAccess, IntegerLiteral, Return, StringLiteral, StructDecl,
+    StructLiteral, UnaryOp, VariableDeclaration, While,
 )
 from compiler.c_abi import c_user_ident
 from compiler.codegen_collect import collect_codegen_inputs
@@ -38,6 +38,9 @@ FLOAT_TYPES = {"f32": ir.FloatType(), "f64": ir.DoubleType()}
 DEFAULT_TRIPLE = "x86_64-w64-windows-gnu"
 I8PTR = ir.IntType(8).as_pointer()
 STR_TYPE = ir.LiteralStructType([I8PTR, ir.IntType(64)])
+STRUCT_TYPES: dict[str, ir.LiteralStructType] = {}
+STRUCT_FIELDS: dict[str, list[tuple[str, str]]] = {}
+STRUCT_FIELD_INDEX: dict[str, dict[str, int]] = {}
 
 
 def llvm_type(nc_type: str | None):
@@ -50,6 +53,8 @@ def llvm_type(nc_type: str | None):
         return FLOAT_TYPES[nc_type]
     if nc_type == "str":
         return STR_TYPE
+    if nc_type in STRUCT_TYPES:
+        return STRUCT_TYPES[nc_type]
     array_info = parse_array_type(nc_type)
     if array_info is not None:
         length, elem_type = array_info
@@ -82,9 +87,11 @@ class LLVMCodegen:
         collected = collect_codegen_inputs(program)
         if collected.top_stmts:
             raise NotImplementedError("LLVM backend v1 does not support top-level statements")
-        unsupported = collected.structs or collected.enums or collected.closures
+        unsupported = collected.enums or collected.closures
         if unsupported:
-            raise NotImplementedError("LLVM backend v1 does not support structs, enums, or closures")
+            raise NotImplementedError("LLVM backend v1 does not support enums or closures")
+
+        self.register_structs(collected.structs)
 
         funcs = collected.other_funcs + ([collected.main_func] if collected.main_func else [])
         for fn in funcs:
@@ -92,6 +99,20 @@ class LLVMCodegen:
         for fn in funcs:
             self.emit_function(fn)
         return str(self.module)
+
+    def register_structs(self, structs: list[StructDecl]):
+        STRUCT_TYPES.clear()
+        STRUCT_FIELDS.clear()
+        STRUCT_FIELD_INDEX.clear()
+        for struct in structs:
+            STRUCT_FIELDS[struct.name] = list(struct.fields)
+            STRUCT_FIELD_INDEX[struct.name] = {
+                field_name: i for i, (field_name, _field_type) in enumerate(struct.fields)
+            }
+        for struct in structs:
+            STRUCT_TYPES[struct.name] = ir.LiteralStructType([
+                llvm_type(field_type) for _field_name, field_type in struct.fields
+            ])
 
     def declare_function(self, fn: FunctionDeclaration):
         if fn.receiver_name:
@@ -114,7 +135,7 @@ class LLVMCodegen:
             self.builder.store(arg, slot)
             self.vars[param_name] = (slot, param_type)
 
-        self.emit_block(fn.body)
+        self.emit_function_body(fn)
         if not self.builder.block.is_terminated:
             if fn.name == "main" and (fn.return_type or "void") == "void":
                 self.builder.ret(ir.Constant(ir.IntType(32), 0))
@@ -122,6 +143,17 @@ class LLVMCodegen:
                 self.builder.ret_void()
             else:
                 raise RuntimeError(f"missing return in function {fn.name}")
+
+    def emit_function_body(self, fn: FunctionDeclaration):
+        stmts = fn.body.statements
+        return_type = fn.return_type or "void"
+        if return_type != "void" and stmts and isinstance(stmts[-1], ExpressionStatement):
+            for stmt in stmts[:-1]:
+                self.emit_stmt(stmt)
+            if not self.builder.block.is_terminated:
+                self.builder.ret(self.cast_to(self.emit_expr(stmts[-1].expr), return_type))
+            return
+        self.emit_block(fn.body)
 
     def alloca_at_entry(self, name, typ):
         return self.builder.alloca(typ, name=name)
@@ -131,6 +163,8 @@ class LLVMCodegen:
             self.emit_stmt(stmt)
 
     def emit_stmt(self, stmt):
+        if isinstance(stmt, StructDecl):
+            return
         if isinstance(stmt, VariableDeclaration):
             typ = llvm_type(stmt.type)
             slot = self.alloca_at_entry(c_user_ident(stmt.name), typ)
@@ -187,6 +221,11 @@ class LLVMCodegen:
         if isinstance(node, Identifier):
             slot, _typ = self.vars[node.name]
             return self.builder.load(slot, name=c_user_ident(node.name))
+        if isinstance(node, StructLiteral):
+            return self.emit_struct_literal(node)
+        if isinstance(node, FieldAccess):
+            ptr, _field_type = self.emit_lvalue(node)
+            return self.builder.load(ptr, name="field")
         if isinstance(node, ArrayLiteral):
             value = ir.Constant(llvm_type(node.type), ir.Undefined)
             for i, elem in enumerate(node.elements):
@@ -213,9 +252,30 @@ class LLVMCodegen:
             return self.emit_call(node)
         raise NotImplementedError(f"LLVM backend v1 does not support expression: {type(node).__name__}")
 
+    def emit_struct_literal(self, node: StructLiteral):
+        if node.heap:
+            raise NotImplementedError("LLVM backend v1 does not support heap struct literals")
+        fields = STRUCT_FIELDS[node.name]
+        given = {name: value for name, value in node.fields}
+        value = ir.Constant(llvm_type(node.type), ir.Undefined)
+        for i, (field_name, field_type) in enumerate(fields):
+            field_value = self.cast_to(self.emit_expr(given[field_name]), field_type)
+            value = self.builder.insert_value(value, field_value, [i], name="struct.ins")
+        return value
+
     def emit_lvalue(self, node):
         if isinstance(node, Identifier):
             return self.vars[node.name]
+        if isinstance(node, FieldAccess):
+            obj_ptr, obj_type = self.emit_lvalue(node.obj)
+            if obj_type.startswith("*") or obj_type.startswith("?*"):
+                raise NotImplementedError("LLVM backend v1 does not support pointer field access")
+            field_index = STRUCT_FIELD_INDEX[obj_type][node.field]
+            field_type = STRUCT_FIELDS[obj_type][field_index][1]
+            zero = ir.Constant(ir.IntType(32), 0)
+            index = ir.Constant(ir.IntType(32), field_index)
+            field_ptr = self.builder.gep(obj_ptr, [zero, index], inbounds=True, name="field.ptr")
+            return field_ptr, field_type
         if isinstance(node, IndexAccess):
             array_ptr, array_type = self.emit_lvalue(node.obj)
             array_info = parse_array_type(array_type)
