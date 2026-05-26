@@ -297,3 +297,8 @@
 
 - 已扩 LLVM 覆盖到 struct 指针与方法基础能力：支持 new Struct、*Struct 字段读取、指针 receiver 方法声明和 obj.method(args) 调用，已覆盖 case_033_method。分配仍用 libc malloc，未接 GC allocator/root。
 
+
+## 2026-05-26
+
+- 放弃点/延期点：LLVM 本轮不实现 throw/try/catch/defer。原因是正确语义需要跨函数 unwinding、异常 frame 栈、setjmp/longjmp ABI 与 defer 栈统一运行时；在 runtime C object/ABI 边界落地前，半套实现会偏离 C 后端语义。后续继续推进非异常能力，默认 LLVM 达标前必须回补该项或重新设计异常 runtime。
+
