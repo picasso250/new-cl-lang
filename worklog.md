@@ -167,3 +167,13 @@
 - LLVM object 生成使用 llvmlite 0.47，注册 all targets/asmprinters，固定 MinGW GNU triple x86_64-w64-windows-gnu 与 reloc=static，避免 MSVC triple 下 MinGW 链接 __chkstk 问题。
 - 新增 tests/test_llvm_backend.py 覆盖空 main、println/control-flow/function call、IR/object/exe 产物。验证通过：python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py -q。
 
+
+## 2026-05-26
+
+- 预备按目标调整路线：文档改为目标 LLVM、C 暂为全集/权威后端；本轮扩 LLVM 覆盖到 str 字面量与 io.println(str)，为后续 runtime C ABI/GC/slice 迁移铺路。
+
+
+- 已调整设计定位：LLVM 是目标默认后端，C 当前仍是全集/权威回归后端；记录了 LLVM 切默认门槛和放弃/延期能力必须写文档的规则。
+- 已扩 LLVM 覆盖率：新增 str LLVM 布局、字符串字面量、io.println(str)、len(str)、str ==/!=（memcmp）、基础数值显式转换。新增 tests/test_llvm_backend.py 覆盖字符串输出、长度/相等和 numeric casts。
+- 验证通过：python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py -q。
+

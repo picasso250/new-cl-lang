@@ -14,7 +14,7 @@ from llvmlite import binding, ir
 from compiler.ast import (
     Assignment, BinaryOp, Block, BoolLiteral, ExpressionStatement, FloatLiteral,
     FunctionCall, FunctionDeclaration, Identifier, IfExpr, IntegerLiteral,
-    Return, UnaryOp, VariableDeclaration, While,
+    Return, StringLiteral, UnaryOp, VariableDeclaration, While,
 )
 from compiler.c_abi import c_user_ident
 from compiler.codegen_collect import collect_codegen_inputs
@@ -35,6 +35,8 @@ SIGNED_INT_TYPES = {"i8", "i16", "i32", "i64"}
 UNSIGNED_INT_TYPES = {"u8", "u16", "u32", "u64", "bool"}
 FLOAT_TYPES = {"f32": ir.FloatType(), "f64": ir.DoubleType()}
 DEFAULT_TRIPLE = "x86_64-w64-windows-gnu"
+I8PTR = ir.IntType(8).as_pointer()
+STR_TYPE = ir.LiteralStructType([I8PTR, ir.IntType(64)])
 
 
 def llvm_type(nc_type: str | None):
@@ -45,6 +47,8 @@ def llvm_type(nc_type: str | None):
         return INT_TYPES[nc_type]
     if nc_type in FLOAT_TYPES:
         return FLOAT_TYPES[nc_type]
+    if nc_type == "str":
+        return STR_TYPE
     raise NotImplementedError(f"LLVM backend does not support type: {nc_type}")
 
 
@@ -56,6 +60,7 @@ class LLVMCodegen:
         self.func = None
         self.vars: dict[str, tuple[ir.AllocaInstr, str]] = {}
         self.printf = None
+        self.memcmp = None
         self.strings: dict[tuple[str, str], ir.GlobalVariable] = {}
         self.fn_decls: dict[str, FunctionDeclaration] = {}
 
@@ -161,6 +166,12 @@ class LLVMCodegen:
             return ir.Constant(llvm_type(node.type), float(node.value))
         if isinstance(node, BoolLiteral):
             return ir.Constant(ir.IntType(1), 1 if node.value else 0)
+        if isinstance(node, StringLiteral):
+            ptr = self.global_c_string(node.value, "str_lit")
+            return ir.Constant.literal_struct([
+                ptr,
+                ir.Constant(ir.IntType(64), len(node.value.encode("utf-8"))),
+            ])
         if isinstance(node, Identifier):
             slot, _typ = self.vars[node.name]
             return self.builder.load(slot, name=c_user_ident(node.name))
@@ -185,6 +196,11 @@ class LLVMCodegen:
         left = self.emit_expr(node.left)
         right = self.emit_expr(node.right)
         typ = node.left.type
+        if typ == "str" and node.op in ("==", "!="):
+            eq = self.emit_str_eq(left, right)
+            if node.op == "!=":
+                return self.builder.not_(eq)
+            return eq
         if typ in FLOAT_TYPES:
             return self.emit_float_binary(left, node.op, right)
         if node.op == "+":
@@ -265,6 +281,18 @@ class LLVMCodegen:
             if len(node.args) != 1:
                 raise RuntimeError("io.println expects one argument")
             return self.emit_println(node.args[0])
+        if node.name == "len":
+            if len(node.args) != 1:
+                raise RuntimeError("len expects one argument")
+            arg = self.emit_expr(node.args[0])
+            if node.args[0].type == "str":
+                length64 = self.builder.extract_value(arg, 1)
+                return self.builder.trunc(length64, ir.IntType(32))
+            raise NotImplementedError(f"LLVM backend v1 cannot take len of {node.args[0].type}")
+        if node.name in INT_TYPES or node.name in FLOAT_TYPES:
+            if len(node.args) != 1:
+                raise RuntimeError(f"{node.name} expects one argument")
+            return self.cast_numeric(self.emit_expr(node.args[0]), node.args[0].type, node.name)
         if node.name not in self.fn_decls:
             raise NotImplementedError(f"LLVM backend v1 cannot call {node.name}")
         fn = self.module.globals[c_user_ident(node.name)]
@@ -274,6 +302,12 @@ class LLVMCodegen:
         self.ensure_printf()
         val = self.emit_expr(arg)
         typ = arg.type
+        if typ == "str":
+            fmt = self.global_c_string("%.*s\n", "fmt_str")
+            ptr = self.builder.extract_value(val, 0)
+            length64 = self.builder.extract_value(val, 1)
+            length32 = self.builder.trunc(length64, ir.IntType(32))
+            return self.builder.call(self.printf, [fmt, length32, ptr])
         if typ == "bool":
             true_s = self.global_c_string("true", "bool_true")
             false_s = self.global_c_string("false", "bool_false")
@@ -296,6 +330,25 @@ class LLVMCodegen:
         if self.printf is None:
             i8ptr = ir.IntType(8).as_pointer()
             self.printf = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [i8ptr], var_arg=True), name="printf")
+
+    def ensure_memcmp(self):
+        if self.memcmp is None:
+            self.memcmp = ir.Function(
+                self.module,
+                ir.FunctionType(ir.IntType(32), [I8PTR, I8PTR, ir.IntType(64)]),
+                name="memcmp",
+            )
+
+    def emit_str_eq(self, left, right):
+        self.ensure_memcmp()
+        left_ptr = self.builder.extract_value(left, 0)
+        left_len = self.builder.extract_value(left, 1)
+        right_ptr = self.builder.extract_value(right, 0)
+        right_len = self.builder.extract_value(right, 1)
+        len_eq = self.builder.icmp_unsigned("==", left_len, right_len)
+        cmp_val = self.builder.call(self.memcmp, [left_ptr, right_ptr, left_len])
+        bytes_eq = self.builder.icmp_signed("==", cmp_val, ir.Constant(ir.IntType(32), 0))
+        return self.builder.and_(len_eq, bytes_eq)
 
     def global_c_string(self, text: str, hint: str):
         key = (hint, text)
@@ -325,6 +378,27 @@ class LLVMCodegen:
             if value.type.width > target.width:
                 return self.builder.trunc(value, target)
         return value
+
+    def cast_numeric(self, value, from_type, to_type):
+        target = llvm_type(to_type)
+        if value.type == target:
+            return value
+        if from_type in INT_TYPES and to_type in INT_TYPES:
+            if value.type.width < target.width:
+                return self.builder.sext(value, target) if from_type in SIGNED_INT_TYPES else self.builder.zext(value, target)
+            if value.type.width > target.width:
+                return self.builder.trunc(value, target)
+            return value
+        if from_type in INT_TYPES and to_type in FLOAT_TYPES:
+            return self.builder.sitofp(value, target) if from_type in SIGNED_INT_TYPES else self.builder.uitofp(value, target)
+        if from_type in FLOAT_TYPES and to_type in INT_TYPES:
+            return self.builder.fptosi(value, target) if to_type in SIGNED_INT_TYPES else self.builder.fptoui(value, target)
+        if from_type in FLOAT_TYPES and to_type in FLOAT_TYPES:
+            if from_type == "f32" and to_type == "f64":
+                return self.builder.fpext(value, target)
+            if from_type == "f64" and to_type == "f32":
+                return self.builder.fptrunc(value, target)
+        raise NotImplementedError(f"LLVM backend v1 cannot cast {from_type} to {to_type}")
 
 
 def generate_llvm_ir(program) -> str:

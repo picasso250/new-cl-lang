@@ -1,17 +1,17 @@
 # NC (New C) — 语言设计文档
 
-> 代号：NC。目标：更好的 C，带 GC，编译到 C，自带构建系统。
+> 代号：NC。目标：更好的 C，带 GC，以 LLVM 为目标后端，自带构建系统。
 
 ## 一、核心定位
 
 | 项 | 决策 |
 |-----|------|
-| 编译目标 | 默认**编译到 C**，另有显式 LLVM Lite 后端 v1 |
-| 运行时 | **自带运行时库**（GC），打入生成代码 |
+| 编译目标 | **目标默认后端为 LLVM**；当前迁移期默认仍为 C，LLVM Lite 后端逐步追平 |
+| 运行时 | **自带运行时库**（GC）；迁移目标是独立 runtime C ABI，供 LLVM 后端链接 |
 | 性能级别 | **Go 级性能**即可（非 C 级零开销），接受胖指针、间接调用 |
-| 调试 | 需做 source map（NC 行号 → 生成的 C 行号） |
+| 调试 | 迁移期保留 NC 行号 → 生成产物定位；LLVM 后端后续接 debug metadata |
 | 内存管理 | **GC**（自动管理，不搞所有权 / borrow checker） |
-| 构建系统 | **自带**（无需外部 make/cmake）；C 后端生成 `build/main.c` + exe，LLVM 后端生成 `build/main.ll` + `build/main.obj` + exe |
+| 构建系统 | **自带**（无需外部 make/cmake）；迁移期 C 后端生成 `build/main.c` + exe，LLVM 后端生成 `build/main.ll` + `build/main.obj` + exe |
 | 入口点 | `fun main()` —— 程序从 main 函数启动 |
 | 标准库 | `println` 在内置一级模块 `io` 中，需 `import io` 后用 `io.println(value)` |
 | 并发 | 延迟决策，不走语言级关键字，后续以库函数提供 |
@@ -65,11 +65,19 @@ import io                # 内置标准模块，不要求存在同级 io/ 目录
 
 当前后端边界：
 
-- 默认后端仍是 C：`compile` 输出 C，`build` 输出 `build/main.c` 与 `build/main.exe`。
+- 迁移目标：LLVM 成为默认后端；C 后端降为 reference/debug 后端，是否删除需在 LLVM 达标并稳定后再决策。
+- 当前默认后端仍是 C：`compile` 输出 C，`build` 输出 `build/main.c` 与 `build/main.exe`。
 - 显式 `--backend llvm` 走 LLVM Lite 后端：`compile` 输出 LLVM IR，`build` 输出 `build/main.ll`、`build/main.obj` 与 `build/main.exe`。
-- LLVM 后端 v1 只承诺基础闭环：基础数值/bool 类型、字面量、算术/比较、`let`、重赋值、函数、`return`、`if`、条件 `for`、函数调用与 `io.println`。
+- LLVM 后端 v1 当前承诺基础闭环：基础数值/bool 类型、`str` 字面量、数值转换、`len(str)`、`str ==/!=`、算术/比较、`let`、重赋值、函数、`return`、`if`、条件 `for`、函数调用与 `io.println`。
 - LLVM 后端当前使用 MinGW GNU triple `x86_64-w64-windows-gnu` 生成 Windows COFF object，并用 `gcc` 链接。
 - C 后端仍是语言全集和回归权威；LLVM 后端不向前兼容未声明支持的节点，遇到未支持语义应明确报错。
+
+LLVM 默认后端达标门槛：
+
+- LLVM 后端通过全部 `test_cases` 正向/错误用例，以及项目级 import/module 测试。
+- str、slice、array、struct、enum、match、nullable pointer、closure/function value、defer/throw/try/catch、GC root 保活、runtime helper 链接路径均有 LLVM 覆盖。
+- `python nc.py compile <target>`、`python nc.py build <target>` 切到默认 LLVM 后，仍可用 `--backend c` 运行 C 后端回归。
+- 若迁移中确认某能力暂时放弃或延期，必须在 worklog/design 中记录放弃点、原因和替代边界。
 
 ---
 
