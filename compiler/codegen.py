@@ -30,6 +30,7 @@ def generate_c(program: "Program") -> str:
 
     collected = collect_codegen_inputs(program)
     ctx = CodegenContext()
+    ctx.set_structs(collected.structs)
     _lines = []
     _slice_types = collected.slice_types
     _return_label = [None]
@@ -90,13 +91,12 @@ def generate_c(program: "Program") -> str:
     # ——— 代码生成内部函数 ———
     def root_expr_temp(name, nc_type, indent):
         pad = '    ' * indent
-        line = ctx.tracked_root_expr(name, nc_type)
-        if line is not None:
+        lines = ctx.tracked_root_expr(name, nc_type)
+        for line in lines:
             _lines.append(f'{pad}{line}')
 
     def emit_root_push(c_name, nc_type, indent):
-        line = ctx.root_push_for_type(c_name, nc_type)
-        if line is not None:
+        for line in ctx.root_push_for_type(c_name, nc_type):
             _lines.append(f'{"    " * indent}{line}')
 
     def emit_return_expr(expr, indent):
@@ -420,6 +420,7 @@ def generate_c(program: "Program") -> str:
                 c_et = _type_to_c(arr.elem_type)
                 elems = ', '.join(gen_expr(e) for e in arr.elements)
                 _lines.append(f'{pad}{c_et} {c_name}[{arr.length}] = {{{elems}}};')
+                root_expr_temp(c_name, stmt.type, indent)
             elif isinstance(stmt.initializer, SliceLiteral):
                 sl = stmt.initializer
                 c_t = _type_to_c(stmt.type)
@@ -431,20 +432,16 @@ def generate_c(program: "Program") -> str:
                     _lines.append(f'{pad}{c_name}.len = {n}; {c_name}.cap = {n};')
                     for i, elem in enumerate(sl.elements):
                         _lines.append(f'{pad}{c_name}.ptr[{i}] = {gen_expr(elem)};')
-                    ctx.track_var(stmt.name, stmt.name)
-                    emit_root_push(c_name, stmt.type, indent)
+                    root_expr_temp(c_name, stmt.type, indent)
             elif isinstance(stmt.initializer, SliceExpr):
                 c_t = _type_to_c(stmt.type)
                 _lines.append(f'{pad}{c_t} {c_name} = {gen_expr(stmt.initializer)};')
-                ctx.track_var(stmt.name, stmt.type)
-                emit_root_push(c_name, stmt.type, indent)
+                root_expr_temp(c_name, stmt.type, indent)
             elif isinstance(stmt.initializer, IfExpr):
                 c_t = _type_to_c(stmt.type)
                 _lines.append(f'{pad}{c_t} {c_name};')
                 gen_ifexpr_assign(stmt.initializer, c_name, indent)
-                line = ctx.tracked_root_expr(stmt.name, stmt.type)
-                if line is not None:
-                    emit_root_push(c_name, stmt.type, indent)
+                root_expr_temp(c_name, stmt.type, indent)
             else:
                 c_t = _type_to_c(stmt.type)
                 # 堆分配: let s = new Struct{...}
@@ -454,27 +451,20 @@ def generate_c(program: "Program") -> str:
                     _lines.append(f'{pad}{c_t} {c_name} = ({sname_c}*)__nc_gc_alloc(sizeof({sname_c}));')
                     for fname, fval in stmt.initializer.fields:
                         _lines.append(f'{pad}{c_name}->{fname} = {gen_expr(fval)};')
-                    ctx.track_var(stmt.name, stmt.type)
-                    emit_root_push(c_name, stmt.type, indent)
+                    root_expr_temp(c_name, stmt.type, indent)
                 else:
                     init_c = gen_expr(stmt.initializer)
                     if stmt.type == "nc_map":
                         _lines.append(f'{pad}{c_t} {c_name}; __nc_map_init(&{c_name});')
                     else:
                         _lines.append(f'{pad}{c_t} {c_name} = {init_c};')
-                    line = ctx.tracked_root_expr(stmt.name, stmt.type)
-                    if line is not None:
-                        emit_root_push(c_name, stmt.type, indent)
+                    root_expr_temp(c_name, stmt.type, indent)
             ctx.expr_indent = old_indent
             return
         if isinstance(stmt, Assignment):
             if isinstance(stmt.target, Identifier):
                 target_name = c_user_ident(stmt.target.name)
                 _lines.append(f'{pad}{target_name} = {gen_expr(stmt.expr)};')
-                # GC 根刷新
-                if stmt.target.name in ctx.gc_vars:
-                    var_t = ctx.gc_vars[stmt.target.name]
-                    emit_root_push(target_name, var_t, indent)
             elif isinstance(stmt.target, IndexAccess):
                 obj_c = gen_expr(stmt.target.obj)
                 idx_c = gen_expr(stmt.target.index)
@@ -543,6 +533,7 @@ def generate_c(program: "Program") -> str:
             _lines.append(f'{pad}    }} else {{')
             _lines.append(f'{pad}        __nc_ex_top = __nc_f.prev;')
             _lines.append(f'{pad}        str {stmt.error_name} = __nc_f.ex;')
+            root_expr_temp(c_user_ident(stmt.error_name), "str", indent + 2)
             for s in stmt.catch_block.statements:
                 gen_stmt(s, indent + 2)
             _lines.append(f'{pad}    }}')
@@ -552,8 +543,11 @@ def generate_c(program: "Program") -> str:
         if isinstance(stmt, Throw):
             pad = '    ' * indent
             ex_c = gen_expr(stmt.expr)
+            ex_tmp = ctx.next_tmp("__nc_throw_ex")
+            _lines.append(f'{pad}str {ex_tmp} = {ex_c};')
+            root_expr_temp(ex_tmp, "str", indent)
             emit_deferred(indent)
-            _lines.append(f'{pad}__nc_throw({ex_c});')
+            _lines.append(f'{pad}__nc_throw({ex_tmp});')
             ctx.expr_indent = old_indent
             return
         if isinstance(stmt, Defer):
@@ -590,8 +584,12 @@ def generate_c(program: "Program") -> str:
         _lines.append('    int __nc_defer_stack[1024];')
         _lines.append('    int __nc_defer_top = 0;')
         _lines.append(f'    __nc_env_{cid}* __env = (__nc_env_{cid}*)__nc_env_raw;')
+        root_expr_temp("__env", f"*__nc_env_{cid}", 1)
+        for n, t in closure.params:
+            root_expr_temp(c_user_ident(n), t, 1)
         if c_ret != "void":
-            _lines.append(f'    {c_ret} __nc_ret;')
+            _lines.append(f'    {c_ret} __nc_ret = {{0}};')
+            root_expr_temp("__nc_ret", closure.return_type or "void", 1)
         _closure_env_stack.append("__env")
         for i, s in enumerate(closure.body.statements):
             if i == len(closure.body.statements) - 1 and (closure.return_type or "void") != "void":
@@ -646,8 +644,11 @@ def generate_c(program: "Program") -> str:
         _lines.append('    size_t __nc_gc_mark = __nc_gc_root_mark();')
         _lines.append('    int __nc_defer_stack[1024];')
         _lines.append('    int __nc_defer_top = 0;')
+        for n, t in all_params:
+            root_expr_temp(c_user_ident(n), t, 1)
         if c_ret != "void":
-            _lines.append(f'    {c_ret} __nc_ret;')
+            _lines.append(f'    {c_ret} __nc_ret = {{0}};')
+            root_expr_temp("__nc_ret", func.return_type or "void", 1)
         for i, s in enumerate(func.body.statements):
             if i == len(func.body.statements) - 1 and (func.return_type or "void") != "void":
                 if isinstance(s, ExpressionStatement):

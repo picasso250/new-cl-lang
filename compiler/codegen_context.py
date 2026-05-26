@@ -6,6 +6,7 @@ from compiler.codegen_collect import parse_fn_type
 class CodegenContext:
     def __init__(self):
         self.gc_vars = {}
+        self.struct_fields = {}
         self.tmp_id = 0
         self.expr_indent = 1
 
@@ -17,36 +18,52 @@ class CodegenContext:
     def reset_function_state(self):
         self.gc_vars.clear()
 
-    def tracked_root_expr(self, name, nc_type):
+    def set_structs(self, structs):
+        self.struct_fields = {s.name: list(s.fields) for s in structs}
+
+    def _array_parts(self, nc_type):
+        if not (isinstance(nc_type, str) and nc_type.startswith("[")):
+            return None
+        size, elem = nc_type[1:].split("]", 1)
+        return int(size), elem
+
+    def root_slot_lines_for_type(self, c_name, nc_type):
+        lines = []
         if nc_type == "nc_map":
-            self.gc_vars[name] = nc_type
-            return f"__nc_gc_push_root((void*){name}.entries);"
+            lines.append(f"__nc_gc_push_root_slot((void*)&{c_name}.entries);")
+            return lines
         if nc_type == "str":
-            self.gc_vars[name] = nc_type
-            return f"__nc_gc_push_root((void*){name}.ptr);"
+            lines.append(f"__nc_gc_push_root_slot((void*)&{c_name}.ptr);")
+            return lines
         if isinstance(nc_type, str) and nc_type.startswith("[]"):
-            self.gc_vars[name] = nc_type
-            return f"__nc_gc_push_root((void*){name}.ptr);"
+            lines.append(f"__nc_gc_push_root_slot((void*)&{c_name}.ptr);")
+            return lines
         if isinstance(nc_type, str) and (nc_type.startswith("*") or nc_type.startswith("?*")):
-            self.gc_vars[name] = nc_type
-            return f"__nc_gc_push_root((void*){name});"
+            lines.append(f"__nc_gc_push_root_slot((void*)&{c_name});")
+            return lines
         if parse_fn_type(nc_type) is not None:
+            lines.append(f"__nc_gc_push_root_slot((void*)&{c_name}.env);")
+            return lines
+        if isinstance(nc_type, str) and nc_type in self.struct_fields:
+            for fname, ftype in self.struct_fields[nc_type]:
+                lines.extend(self.root_slot_lines_for_type(f"{c_name}.{fname}", ftype))
+            return lines
+        arr = self._array_parts(nc_type)
+        if arr is not None:
+            n, elem_t = arr
+            for i in range(n):
+                lines.extend(self.root_slot_lines_for_type(f"{c_name}[{i}]", elem_t))
+            return lines
+        return lines
+
+    def tracked_root_expr(self, name, nc_type):
+        lines = self.root_slot_lines_for_type(name, nc_type)
+        if lines:
             self.gc_vars[name] = nc_type
-            return f"__nc_gc_push_root((void*){name}.env);"
-        return None
+        return lines
 
     def root_push_for_type(self, c_name, nc_type):
-        if nc_type == "nc_map":
-            return f"__nc_gc_push_root((void*){c_name}.entries);"
-        if nc_type == "str":
-            return f"__nc_gc_push_root((void*){c_name}.ptr);"
-        if isinstance(nc_type, str) and nc_type.startswith("[]"):
-            return f"__nc_gc_push_root((void*){c_name}.ptr);"
-        if parse_fn_type(nc_type) is not None:
-            return f"__nc_gc_push_root((void*){c_name}.env);"
-        if isinstance(nc_type, str) and (nc_type.startswith("*") or nc_type.startswith("?*")):
-            return f"__nc_gc_push_root((void*){c_name});"
-        return None
+        return self.root_slot_lines_for_type(c_name, nc_type)
 
     def track_var(self, name, nc_type):
         self.gc_vars[name] = nc_type

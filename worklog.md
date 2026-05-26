@@ -148,3 +148,11 @@
 
 - 已抽离 codegen 运行上下文到 compiler/codegen_context.py：集中管理临时变量编号、表达式生成缩进、函数级 GC root 追踪和 root push 规则；compiler/codegen.py 从 706 行降到 659 行，C 输出行为不变。
 - 验证通过：python tests/test_basic.py 通过 151/151，python -m pytest tests/test_projects.py tests/test_builtin_boundary.py -q 通过 17/17。
+
+## 2026-05-26
+
+- 预备实施 GC 正确性补强 v1：修复显式 gc_collect 模型下参数/聚合字段/slice 重赋值/return 与 throw defer 路径/root 与 gray 容量/GC 管理内存 free 等误回收和 UB 风险；不引入后台线程、自动触发或并行 GC。
+
+- 已实施 GC 正确性补强 v1：runtime root 改为动态 root slot 表，gray 栈动态扩容，GC 分配/root/gray 扩容失败 abort；codegen 对参数、receiver、closure env/参数、返回槽、catch/throw 值、局部变量以及 struct/[N]T 聚合内 GC 引用递归建立 root slot；slice/str/map/pointer/function env 重赋值通过槽读取最新值，不再重复 push 旧值。
+- 已移除 map rehash/free 对 GC 管理 entries 的直接 free，旧 entries 交由 GC 回收。新增 case_154~163 覆盖参数临时值、slice 重赋值、struct 字段、数组元素、return/throw defer、map rehash、字段/数组赋值和 root/gray 扩容。
+- 验证通过：python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py -q。
