@@ -34,6 +34,18 @@ def test_multifile_inferred_return_run():
     assert result.stdout.strip() == "11"
 
 
+def test_llvm_multifile_project_runs():
+    cases = [
+        ("project_095_multifile", "5"),
+        ("project_096_multifile_struct", "7"),
+        ("project_120_multifile_infer_return", "11"),
+    ]
+    for case, expected in cases:
+        result = run_nc("run", "--backend", "llvm", os.path.join("test_cases", case))
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == expected
+
+
 def test_build_outputs_generated_c_and_exe():
     with tempfile.TemporaryDirectory() as tmp:
         project = os.path.join(ROOT, "test_cases", "project_095_multifile")
@@ -123,6 +135,56 @@ def test_import_same_public_names_do_not_conflict():
 
         result = run_nc("run", main)
 
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "6"
+
+
+def test_llvm_import_projects_run():
+    with tempfile.TemporaryDirectory() as tmp:
+        main = os.path.join(tmp, "main")
+        math = os.path.join(tmp, "math")
+        os.mkdir(main)
+        os.mkdir(math)
+        write_file(os.path.join(main, "main.nc"), "import io\nimport math\nfun main() { io.println(math.add_twice(2, 3)) }\n")
+        write_file(os.path.join(math, "a.nc"), "fun add_twice(a: i32, b: i32): i32 { return add(a, b) }\n")
+        write_file(os.path.join(math, "b.nc"), "fun add(a: i32, b: i32): i32 { return a + b }\n")
+        result = run_nc("run", "--backend", "llvm", main)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "5"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        main = os.path.join(tmp, "main")
+        model = os.path.join(tmp, "model")
+        color = os.path.join(tmp, "color")
+        os.mkdir(main)
+        os.mkdir(model)
+        os.mkdir(color)
+        write_file(os.path.join(main, "main.nc"), """import model
+import color
+import io
+fun main() {
+  let u: model.User = model.User { age: 7 }
+  let c: color.Color = color.pick()
+  io.println(u.age)
+}
+""")
+        write_file(os.path.join(model, "model.nc"), "struct User { age: i32 }\n")
+        write_file(os.path.join(color, "color.nc"), "enum Color { Red, Blue }\nfun pick(): Color { return Color::Red }\n")
+        result = run_nc("run", "--backend", "llvm", main)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "7"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        main = os.path.join(tmp, "main")
+        a = os.path.join(tmp, "a")
+        b = os.path.join(tmp, "b")
+        os.mkdir(main)
+        os.mkdir(a)
+        os.mkdir(b)
+        write_file(os.path.join(main, "main.nc"), "import io\nimport a\nimport b\nfun value(): i32 { return 1 }\nfun main() { io.println(value() + a.value() + b.value()) }\n")
+        write_file(os.path.join(a, "a.nc"), "fun value(): i32 { return 2 }\n")
+        write_file(os.path.join(b, "b.nc"), "fun value(): i32 { return 3 }\n")
+        result = run_nc("run", "--backend", "llvm", main)
         assert result.returncode == 0, result.stderr
         assert result.stdout.strip() == "6"
 

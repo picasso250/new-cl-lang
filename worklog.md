@@ -318,3 +318,11 @@
 
 - 已扩 LLVM 覆盖到 nullable pointer 基础能力：支持 nil 字面量、?*T 初始化、nil 比较以及 typecheck 窄化后的字段/方法访问；已验证 case_140_nullable_nil、case_141_nullable_method。
 
+
+## 2026-05-26
+
+- 预备补 LLVM 项目级回归：把多文件同模块、跨模块 import、跨模块 struct/enum、同名 public 符号隔离纳入 --backend llvm pytest，锁住默认后端达标门槛中的项目级证据。
+
+
+- 已补 LLVM 项目级回归：多文件同模块 fixture、跨模块函数 import、跨模块 struct/enum、同名 public 符号隔离均纳入 --backend llvm pytest；现有项目级 LLVM 正向路径已锁定。
+
