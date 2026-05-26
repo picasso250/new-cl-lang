@@ -204,3 +204,12 @@
 - 已扩 LLVM 覆盖率到 enum 与 match 表达式基础能力：enum 降为 i32 tag，支持 Enum::Variant、enum 比较，以及整数/字符串/bool/enum match 表达式与 else 分支。
 - 新增 LLVM 测试覆盖 enum + match、match else 返回 str；已验证 --backend llvm 可运行 case_018_enum、case_019_match_enum、case_124_match_enum_expr、case_125_match_else_str。
 
+
+## 2026-05-26
+
+- 预备扩 LLVM 覆盖到 block 表达式与 match/block/tail 组合：支持 { statements; tail_expr } 作为普通表达式、函数参数和 match arm body，并验证 match 尾表达式返回路径。
+
+
+- 已扩 LLVM 覆盖率到 block 表达式与 match/block/tail 组合：支持 BlockExpr 作为 let initializer、函数参数和 match arm body；block 内变量表恢复，避免污染外层符号。
+- 已验证 --backend llvm 可运行 case_084_block_expr_let、case_085_block_expr_call_arg、case_126_match_tail_return、case_127_match_block_arm。
+

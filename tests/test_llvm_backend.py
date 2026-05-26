@@ -165,6 +165,50 @@ fun main() {
     assert (stdout.strip(), stderr.strip(), rc) == ("many", "", 0)
 
 
+def test_llvm_block_expr_call_arg_and_match_arm():
+    source = """import io
+fun add1(x: i32): i32 { x + 1 }
+fun main() {
+    let x = {
+        let a = 2
+        a + 3
+    }
+    io.println(add1({
+        let a = 7
+        a
+    }))
+    let n = 1
+    let result = match n {
+        0 -> 0
+        else -> {
+            let base = x
+            base + 2
+        }
+    }
+    io.println(result)
+}
+"""
+    llvm_ir = compile_nc_to_llvm_ir(source)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    assert (stdout.strip(), stderr.strip(), rc) == ("8\n7", "", 0)
+
+
+def test_llvm_tail_match_return():
+    source = """import io
+fun describe(n: i32): str {
+    match n {
+        0 -> "zero"
+        1 -> "one"
+        else -> "many"
+    }
+}
+fun main() { io.println(describe(1)) }
+"""
+    llvm_ir = compile_nc_to_llvm_ir(source)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    assert (stdout.strip(), stderr.strip(), rc) == ("one", "", 0)
+
+
 def test_llvm_build_writes_ir_obj_and_exe(tmp_path):
     llvm_ir = compile_nc_to_llvm_ir("import io\nfun main() { io.println(42) }")
     ll_path, obj_path, exe_path = build_llvm_ir(llvm_ir, str(tmp_path), "main")

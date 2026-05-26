@@ -12,8 +12,8 @@ import tempfile
 from llvmlite import binding, ir
 
 from compiler.ast import (
-    ArrayLiteral, Assignment, BinaryOp, Block, BoolLiteral, ExpressionStatement,
-    EnumDecl, EnumRef, FieldAccess, FloatLiteral, FunctionCall,
+    ArrayLiteral, Assignment, BinaryOp, Block, BlockExpr, BoolLiteral,
+    ExpressionStatement, EnumDecl, EnumRef, FieldAccess, FloatLiteral, FunctionCall,
     FunctionDeclaration, Identifier, IfExpr, IndexAccess, IntegerLiteral,
     MatchExpr, Return, StringLiteral, StructDecl, StructLiteral, UnaryOp,
     VariableDeclaration, While,
@@ -264,9 +264,18 @@ class LLVMCodegen:
             return self.emit_if_expr(node)
         if isinstance(node, MatchExpr):
             return self.emit_match_expr(node)
+        if isinstance(node, BlockExpr):
+            return self.emit_block_expr(node)
         if isinstance(node, FunctionCall):
             return self.emit_call(node)
         raise NotImplementedError(f"LLVM backend v1 does not support expression: {type(node).__name__}")
+
+    def emit_block_expr(self, node: BlockExpr):
+        saved_vars = self.vars.copy()
+        try:
+            return self.emit_block_value(node.block)
+        finally:
+            self.vars = saved_vars
 
     def emit_struct_literal(self, node: StructLiteral):
         if node.heap:
