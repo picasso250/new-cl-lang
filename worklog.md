@@ -289,3 +289,11 @@
 
 - 已扩 LLVM 覆盖到临时 GC 测试钩子：gc_collect() no-op，gc_live() 输出/返回 0。放弃点/延期点：本轮未实现真正 GC registry、root slot、释放与扫描；默认 LLVM 达标前必须补 runtime allocator/root 或明确替代方案。
 
+
+## 2026-05-26
+
+- 预备扩 LLVM 覆盖到 struct 指针与方法基础能力：支持 new Struct 分配、*Struct 字段读取、指针 receiver 方法声明与 obj.method() 调用；先覆盖 case_033_method，分配仍使用 libc malloc，不接 GC allocator/root。
+
+
+- 已扩 LLVM 覆盖到 struct 指针与方法基础能力：支持 new Struct、*Struct 字段读取、指针 receiver 方法声明和 obj.method(args) 调用，已覆盖 case_033_method。分配仍用 libc malloc，未接 GC allocator/root。
+

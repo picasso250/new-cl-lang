@@ -143,6 +143,22 @@ fun main() {
     assert (stdout.strip(), stderr.strip(), rc) == ("8", "", 0)
 
 
+def test_llvm_heap_struct_method_call():
+    source = """import io
+struct Point { x: i32, y: i32 }
+fun (p *Point) sum(delta: i32): i32 {
+    return p.x + p.y + delta
+}
+fun main() {
+    let p = new Point { x: 20, y: 21 }
+    io.println(p.sum(1))
+}
+"""
+    llvm_ir = compile_nc_to_llvm_ir(source)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    assert (stdout.strip(), stderr.strip(), rc) == ("42", "", 0)
+
+
 def test_llvm_enum_and_match():
     source = """import io
 fun main() {

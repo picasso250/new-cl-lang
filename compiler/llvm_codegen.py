@@ -15,7 +15,7 @@ from compiler.ast import (
     ArrayLiteral, Assignment, BinaryOp, Block, BlockExpr, BoolLiteral, Break,
     ExpressionStatement, EnumDecl, EnumRef, FieldAccess, FloatLiteral, FunctionCall,
     ForIn, FunctionDeclaration, Identifier, IfExpr, IndexAccess, IntegerLiteral,
-    MatchExpr, Return, SliceExpr, SliceLiteral, StringLiteral, StructDecl,
+    MatchExpr, MethodCall, Return, SliceExpr, SliceLiteral, StringLiteral, StructDecl,
     StructLiteral, UnaryOp, VariableDeclaration, While,
 )
 from compiler.c_abi import c_user_ident
@@ -59,6 +59,10 @@ def llvm_type(nc_type: str | None):
         return STR_TYPE
     if nc_type == "nc_map":
         return MAP_TYPE
+    if isinstance(nc_type, str) and nc_type.startswith("?*"):
+        return llvm_type(nc_type[2:]).as_pointer()
+    if isinstance(nc_type, str) and nc_type.startswith("*"):
+        return llvm_type(nc_type[1:]).as_pointer()
     if nc_type in ENUM_VARIANTS:
         return ir.IntType(32)
     if nc_type in STRUCT_TYPES:
@@ -155,21 +159,29 @@ class LLVMCodegen:
             ])
 
     def declare_function(self, fn: FunctionDeclaration):
-        if fn.receiver_name:
-            raise NotImplementedError("LLVM backend v1 does not support methods")
-        name = c_user_ident(fn.name)
+        name = self.function_symbol(fn)
         ret = ir.IntType(32) if fn.name == "main" and (fn.return_type or "void") == "void" else llvm_type(fn.return_type)
-        args = [llvm_type(t) for _n, t in fn.params]
+        all_params = ([(fn.receiver_name, fn.receiver_type)] if fn.receiver_name else []) + fn.params
+        args = [llvm_type(t) for _n, t in all_params]
         self.module.globals[name] = ir.Function(self.module, ir.FunctionType(ret, args), name=name)
-        self.fn_decls[fn.name] = fn
+        self.fn_decls[name] = fn
+        if not fn.receiver_name:
+            self.fn_decls[fn.name] = fn
+
+    def function_symbol(self, fn: FunctionDeclaration):
+        if fn.receiver_name:
+            receiver_type = fn.receiver_type.lstrip("*").lstrip("?")
+            return c_user_ident(f"{receiver_type}_{fn.name}")
+        return c_user_ident(fn.name)
 
     def emit_function(self, fn: FunctionDeclaration):
-        llvm_fn = self.module.globals[c_user_ident(fn.name)]
+        llvm_fn = self.module.globals[self.function_symbol(fn)]
         block = llvm_fn.append_basic_block("entry")
         self.builder = ir.IRBuilder(block)
         self.func = llvm_fn
         self.vars = {}
-        for arg, (param_name, param_type) in zip(llvm_fn.args, fn.params):
+        all_params = ([(fn.receiver_name, fn.receiver_type)] if fn.receiver_name else []) + fn.params
+        for arg, (param_name, param_type) in zip(llvm_fn.args, all_params):
             arg.name = c_user_ident(param_name)
             slot = self.alloca_at_entry(c_user_ident(param_name), llvm_type(param_type))
             self.builder.store(arg, slot)
@@ -393,6 +405,8 @@ class LLVMCodegen:
             return self.emit_block_expr(node)
         if isinstance(node, FunctionCall):
             return self.emit_call(node)
+        if isinstance(node, MethodCall):
+            return self.emit_method_call(node)
         raise NotImplementedError(f"LLVM backend v1 does not support expression: {type(node).__name__}")
 
     def emit_block_expr(self, node: BlockExpr):
@@ -403,15 +417,24 @@ class LLVMCodegen:
             self.vars = saved_vars
 
     def emit_struct_literal(self, node: StructLiteral):
-        if node.heap:
-            raise NotImplementedError("LLVM backend v1 does not support heap struct literals")
         fields = STRUCT_FIELDS[node.name]
         given = {name: value for name, value in node.fields}
-        value = ir.Constant(llvm_type(node.type), ir.Undefined)
+        struct_type = llvm_type(node.name)
+        value = ir.Constant(struct_type, ir.Undefined)
         for i, (field_name, field_type) in enumerate(fields):
             field_value = self.cast_to(self.emit_expr(given[field_name]), field_type)
             value = self.builder.insert_value(value, field_value, [i], name="struct.ins")
+        if node.heap:
+            ptr = self.malloc_struct(node.name)
+            self.builder.store(value, ptr)
+            return ptr
         return value
+
+    def malloc_struct(self, struct_name: str):
+        self.ensure_malloc()
+        size = ir.Constant(ir.IntType(64), self.sizeof_type(struct_name))
+        raw = self.builder.call(self.malloc, [size], name="struct.malloc.raw")
+        return self.builder.bitcast(raw, llvm_type(struct_name).as_pointer(), name="struct.ptr")
 
     def emit_slice_literal(self, node: SliceLiteral):
         elem_type = node.elem_type
@@ -515,7 +538,14 @@ class LLVMCodegen:
         if isinstance(node, FieldAccess):
             obj_ptr, obj_type = self.emit_lvalue(node.obj)
             if obj_type.startswith("*") or obj_type.startswith("?*"):
-                raise NotImplementedError("LLVM backend v1 does not support pointer field access")
+                struct_type_name = obj_type[2:] if obj_type.startswith("?*") else obj_type[1:]
+                struct_ptr = self.builder.load(obj_ptr, name="field.obj.ptr")
+                field_index = STRUCT_FIELD_INDEX[struct_type_name][node.field]
+                field_type = STRUCT_FIELDS[struct_type_name][field_index][1]
+                zero = ir.Constant(ir.IntType(32), 0)
+                index = ir.Constant(ir.IntType(32), field_index)
+                field_ptr = self.builder.gep(struct_ptr, [zero, index], inbounds=True, name="field.ptr")
+                return field_ptr, field_type
             field_index = STRUCT_FIELD_INDEX[obj_type][node.field]
             field_type = STRUCT_FIELDS[obj_type][field_index][1]
             zero = ir.Constant(ir.IntType(32), 0)
@@ -741,6 +771,21 @@ class LLVMCodegen:
             raise NotImplementedError(f"LLVM backend v1 cannot call {node.name}")
         fn = self.module.globals[c_user_ident(node.name)]
         return self.builder.call(fn, [self.emit_expr(arg) for arg in node.args])
+
+    def emit_method_call(self, node: MethodCall):
+        obj_type = node.obj.type
+        if obj_type.startswith("?*"):
+            receiver_base = obj_type[2:]
+        elif obj_type.startswith("*"):
+            receiver_base = obj_type[1:]
+        else:
+            receiver_base = obj_type
+        name = c_user_ident(f"{receiver_base}_{node.method}")
+        if name not in self.module.globals:
+            raise NotImplementedError(f"LLVM backend v1 cannot call method {receiver_base}.{node.method}")
+        fn = self.module.globals[name]
+        args = [self.emit_expr(node.obj)] + [self.emit_expr(arg) for arg in node.args]
+        return self.builder.call(fn, args)
 
     def emit_println(self, arg):
         self.ensure_printf()
