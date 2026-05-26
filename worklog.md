@@ -310,3 +310,11 @@
 
 - 已扩 LLVM 覆盖到无捕获 closure/function value：FunctionExpr 生成 __nc_lambda_N，值布局为 {call, env}，closure 调用传入 env + 参数；已覆盖 case_099_closure_no_capture。捕获 closure/env struct/GC root 仍延期。
 
+
+## 2026-05-26
+
+- 预备扩 LLVM 覆盖到 nullable pointer 基础能力：支持 nil 字面量、?*T 初始化、p != nil / nil != p 比较，以及窄化块内字段/方法访问；先覆盖 case_140_nullable_nil 和 case_141_nullable_method。
+
+
+- 已扩 LLVM 覆盖到 nullable pointer 基础能力：支持 nil 字面量、?*T 初始化、nil 比较以及 typecheck 窄化后的字段/方法访问；已验证 case_140_nullable_nil、case_141_nullable_method。
+

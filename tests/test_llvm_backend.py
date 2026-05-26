@@ -437,6 +437,29 @@ fun main() {
     assert (stdout.strip(), stderr.strip(), rc) == ("6", "", 0)
 
 
+def test_llvm_nullable_pointer_nil_and_method():
+    source = """import io
+struct Point { x: i32 }
+fun (p *Point) value(): i32 { p.x }
+fun pick(p: ?*Point): i32 {
+    if nil != p {
+        p.value()
+    } else {
+        0
+    }
+}
+fun main() {
+    let p: ?*Point = nil
+    let q: ?*Point = new Point { x: 7 }
+    if p != nil { io.println(p.x) }
+    io.println(pick(q))
+}
+"""
+    llvm_ir = compile_nc_to_llvm_ir(source)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    assert (stdout.strip(), stderr.strip(), rc) == ("7", "", 0)
+
+
 def test_llvm_build_writes_ir_obj_and_exe(tmp_path):
     llvm_ir = compile_nc_to_llvm_ir("import io\nfun main() { io.println(42) }")
     ll_path, obj_path, exe_path = build_llvm_ir(llvm_ir, str(tmp_path), "main")

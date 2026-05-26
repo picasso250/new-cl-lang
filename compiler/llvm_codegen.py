@@ -16,7 +16,7 @@ from compiler.ast import (
     ExpressionStatement, EnumDecl, EnumRef, FieldAccess, FloatLiteral, FunctionCall,
     FunctionExpr,
     ForIn, FunctionDeclaration, Identifier, IfExpr, IndexAccess, IntegerLiteral,
-    MatchExpr, MethodCall, Return, SliceExpr, SliceLiteral, StringLiteral, StructDecl,
+    MatchExpr, MethodCall, NilLiteral, Return, SliceExpr, SliceLiteral, StringLiteral, StructDecl,
     StructLiteral, UnaryOp, VariableDeclaration, While,
 )
 from compiler.c_abi import c_user_ident
@@ -387,6 +387,8 @@ class LLVMCodegen:
             return ir.Constant(llvm_type(node.type), float(node.value))
         if isinstance(node, BoolLiteral):
             return ir.Constant(ir.IntType(1), 1 if node.value else 0)
+        if isinstance(node, NilLiteral):
+            return ir.Constant(I8PTR, None)
         if isinstance(node, StringLiteral):
             ptr = self.global_c_string(node.value, "str_lit")
             return ir.Constant.literal_struct([
@@ -616,6 +618,13 @@ class LLVMCodegen:
         left = self.emit_expr(node.left)
         right = self.emit_expr(node.right)
         typ = node.left.type
+        if node.op in ("==", "!=") and (node.left.type == "__nil" or node.right.type == "__nil"):
+            if node.left.type == "__nil":
+                left = self.cast_to(left, node.right.type)
+            if node.right.type == "__nil":
+                right = self.cast_to(right, node.left.type)
+            eq = self.builder.icmp_unsigned("==", left, right)
+            return self.builder.not_(eq) if node.op == "!=" else eq
         if typ == "str" and node.op in ("==", "!="):
             eq = self.emit_str_eq(left, right)
             if node.op == "!=":
@@ -1319,6 +1328,12 @@ class LLVMCodegen:
                 return self.builder.sext(value, target) if nc_type in SIGNED_INT_TYPES else self.builder.zext(value, target)
             if value.type.width > target.width:
                 return self.builder.trunc(value, target)
+        if isinstance(value.type, ir.PointerType) and isinstance(target, ir.PointerType):
+            if value.type == target:
+                return value
+            if isinstance(value, ir.Constant) and value.constant is None:
+                return ir.Constant(target, None)
+            return self.builder.bitcast(value, target)
         return value
 
     def cast_numeric(self, value, from_type, to_type):
