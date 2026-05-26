@@ -177,3 +177,12 @@
 - 已扩 LLVM 覆盖率：新增 str LLVM 布局、字符串字面量、io.println(str)、len(str)、str ==/!=（memcmp）、基础数值显式转换。新增 tests/test_llvm_backend.py 覆盖字符串输出、长度/相等和 numeric casts。
 - 验证通过：python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py -q。
 
+
+## 2026-05-26
+
+- 预备扩 LLVM 覆盖到定长数组基础能力：支持 [N]T 类型、数组字面量、索引读取，目标覆盖 case_020_array 的核心路径；本轮不做 slice、for-in 或索引赋值。
+
+
+- 已扩 LLVM 覆盖率到定长数组基础能力：支持 [N]T 类型、数组字面量（含非常量元素）、索引读取和索引赋值；test_cases/case_020_array.nc 已可用 --backend llvm 运行。
+- 新增 LLVM 测试覆盖数组字面量/索引和索引赋值。
+

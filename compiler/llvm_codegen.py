@@ -12,9 +12,10 @@ import tempfile
 from llvmlite import binding, ir
 
 from compiler.ast import (
-    Assignment, BinaryOp, Block, BoolLiteral, ExpressionStatement, FloatLiteral,
-    FunctionCall, FunctionDeclaration, Identifier, IfExpr, IntegerLiteral,
-    Return, StringLiteral, UnaryOp, VariableDeclaration, While,
+    ArrayLiteral, Assignment, BinaryOp, Block, BoolLiteral, ExpressionStatement,
+    FloatLiteral, FunctionCall, FunctionDeclaration, Identifier, IfExpr,
+    IndexAccess, IntegerLiteral, Return, StringLiteral, UnaryOp,
+    VariableDeclaration, While,
 )
 from compiler.c_abi import c_user_ident
 from compiler.codegen_collect import collect_codegen_inputs
@@ -49,7 +50,20 @@ def llvm_type(nc_type: str | None):
         return FLOAT_TYPES[nc_type]
     if nc_type == "str":
         return STR_TYPE
+    array_info = parse_array_type(nc_type)
+    if array_info is not None:
+        length, elem_type = array_info
+        return ir.ArrayType(llvm_type(elem_type), length)
     raise NotImplementedError(f"LLVM backend does not support type: {nc_type}")
+
+
+def parse_array_type(nc_type: str | None):
+    if not isinstance(nc_type, str) or not nc_type.startswith("["):
+        return None
+    end = nc_type.find("]")
+    if end < 0:
+        return None
+    return int(nc_type[1:end]), nc_type[end + 1:]
 
 
 class LLVMCodegen:
@@ -124,10 +138,8 @@ class LLVMCodegen:
             self.builder.store(self.cast_to(self.emit_expr(stmt.initializer), stmt.type), slot)
             return
         if isinstance(stmt, Assignment):
-            if not isinstance(stmt.target, Identifier):
-                raise NotImplementedError("LLVM backend v1 only supports identifier assignment")
-            slot, target_type = self.vars[stmt.target.name]
-            self.builder.store(self.cast_to(self.emit_expr(stmt.expr), target_type), slot)
+            ptr, target_type = self.emit_lvalue(stmt.target)
+            self.builder.store(self.cast_to(self.emit_expr(stmt.expr), target_type), ptr)
             return
         if isinstance(stmt, ExpressionStatement):
             self.emit_expr(stmt.expr)
@@ -175,6 +187,15 @@ class LLVMCodegen:
         if isinstance(node, Identifier):
             slot, _typ = self.vars[node.name]
             return self.builder.load(slot, name=c_user_ident(node.name))
+        if isinstance(node, ArrayLiteral):
+            value = ir.Constant(llvm_type(node.type), ir.Undefined)
+            for i, elem in enumerate(node.elements):
+                elem_value = self.cast_to(self.emit_expr(elem), node.elem_type)
+                value = self.builder.insert_value(value, elem_value, [i], name="arr.ins")
+            return value
+        if isinstance(node, IndexAccess):
+            ptr, elem_type = self.emit_lvalue(node)
+            return self.builder.load(ptr, name="idx")
         if isinstance(node, UnaryOp):
             val = self.emit_expr(node.operand)
             if node.op == "!":
@@ -191,6 +212,21 @@ class LLVMCodegen:
         if isinstance(node, FunctionCall):
             return self.emit_call(node)
         raise NotImplementedError(f"LLVM backend v1 does not support expression: {type(node).__name__}")
+
+    def emit_lvalue(self, node):
+        if isinstance(node, Identifier):
+            return self.vars[node.name]
+        if isinstance(node, IndexAccess):
+            array_ptr, array_type = self.emit_lvalue(node.obj)
+            array_info = parse_array_type(array_type)
+            if array_info is None:
+                raise NotImplementedError(f"LLVM backend v1 cannot index {array_type}")
+            _length, elem_type = array_info
+            idx = self.cast_to(self.emit_expr(node.index), "i32")
+            zero = ir.Constant(ir.IntType(32), 0)
+            elem_ptr = self.builder.gep(array_ptr, [zero, idx], inbounds=True, name="idx.ptr")
+            return elem_ptr, elem_type
+        raise NotImplementedError(f"LLVM backend v1 cannot take lvalue of {type(node).__name__}")
 
     def emit_binary(self, node: BinaryOp):
         left = self.emit_expr(node.left)

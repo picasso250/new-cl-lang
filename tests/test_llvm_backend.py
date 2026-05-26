@@ -72,6 +72,32 @@ fun main() {
     assert (stdout.strip(), stderr.strip(), rc) == ("42\n42.000000\n42", "", 0)
 
 
+def test_llvm_array_literal_and_index():
+    source = """import io
+fun main() {
+    let x: i32 = 2
+    let arr = [3]i32 { 1, x, 3 }
+    io.println(arr[0] + arr[1] + arr[2])
+}
+"""
+    llvm_ir = compile_nc_to_llvm_ir(source)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    assert (stdout.strip(), stderr.strip(), rc) == ("6", "", 0)
+
+
+def test_llvm_array_index_assignment():
+    source = """import io
+fun main() {
+    let arr = [3]i32 { 1, 2, 3 }
+    arr[1] = 7
+    io.println(arr[0] + arr[1] + arr[2])
+}
+"""
+    llvm_ir = compile_nc_to_llvm_ir(source)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    assert (stdout.strip(), stderr.strip(), rc) == ("11", "", 0)
+
+
 def test_llvm_build_writes_ir_obj_and_exe(tmp_path):
     llvm_ir = compile_nc_to_llvm_ir("import io\nfun main() { io.println(42) }")
     ll_path, obj_path, exe_path = build_llvm_ir(llvm_ir, str(tmp_path), "main")
