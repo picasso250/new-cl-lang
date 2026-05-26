@@ -425,6 +425,18 @@ fun main() {
     assert (stdout.strip(), stderr.strip(), rc) == ("42\n0", "", 0)
 
 
+def test_llvm_no_capture_closure_call():
+    source = """import io
+fun main() {
+    let inc = fun(x: i32): i32 { x + 1 }
+    io.println(inc(5))
+}
+"""
+    llvm_ir = compile_nc_to_llvm_ir(source)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    assert (stdout.strip(), stderr.strip(), rc) == ("6", "", 0)
+
+
 def test_llvm_build_writes_ir_obj_and_exe(tmp_path):
     llvm_ir = compile_nc_to_llvm_ir("import io\nfun main() { io.println(42) }")
     ll_path, obj_path, exe_path = build_llvm_ir(llvm_ir, str(tmp_path), "main")

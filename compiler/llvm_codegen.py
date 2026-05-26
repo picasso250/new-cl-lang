@@ -14,12 +14,13 @@ from llvmlite import binding, ir
 from compiler.ast import (
     ArrayLiteral, Assignment, BinaryOp, Block, BlockExpr, BoolLiteral, Break,
     ExpressionStatement, EnumDecl, EnumRef, FieldAccess, FloatLiteral, FunctionCall,
+    FunctionExpr,
     ForIn, FunctionDeclaration, Identifier, IfExpr, IndexAccess, IntegerLiteral,
     MatchExpr, MethodCall, Return, SliceExpr, SliceLiteral, StringLiteral, StructDecl,
     StructLiteral, UnaryOp, VariableDeclaration, While,
 )
 from compiler.c_abi import c_user_ident
-from compiler.codegen_collect import collect_codegen_inputs
+from compiler.codegen_collect import collect_codegen_inputs, parse_fn_type
 
 
 INT_TYPES = {
@@ -59,6 +60,14 @@ def llvm_type(nc_type: str | None):
         return STR_TYPE
     if nc_type == "nc_map":
         return MAP_TYPE
+    fn_info = parse_fn_type(nc_type)
+    if fn_info is not None:
+        arg_types, ret_type = fn_info
+        call_type = ir.FunctionType(
+            llvm_type(ret_type),
+            [I8PTR] + [llvm_type(arg_type) for arg_type in arg_types],
+        ).as_pointer()
+        return ir.LiteralStructType([call_type, I8PTR])
     if isinstance(nc_type, str) and nc_type.startswith("?*"):
         return llvm_type(nc_type[2:]).as_pointer()
     if isinstance(nc_type, str) and nc_type.startswith("*"):
@@ -123,9 +132,9 @@ class LLVMCodegen:
         collected = collect_codegen_inputs(program)
         if collected.top_stmts:
             raise NotImplementedError("LLVM backend v1 does not support top-level statements")
-        unsupported = collected.closures
+        unsupported = [closure for closure in collected.closures if getattr(closure, "captures", [])]
         if unsupported:
-            raise NotImplementedError("LLVM backend v1 does not support closures")
+            raise NotImplementedError("LLVM backend v1 does not support capturing closures")
 
         self.register_enums(collected.enums)
         self.register_structs(collected.structs)
@@ -133,6 +142,10 @@ class LLVMCodegen:
         funcs = collected.other_funcs + ([collected.main_func] if collected.main_func else [])
         for fn in funcs:
             self.declare_function(fn)
+        for closure in collected.closures:
+            self.declare_closure_function(closure)
+        for closure in collected.closures:
+            self.emit_closure_function(closure)
         for fn in funcs:
             self.emit_function(fn)
         return str(self.module)
@@ -174,6 +187,30 @@ class LLVMCodegen:
             return c_user_ident(f"{receiver_type}_{fn.name}")
         return c_user_ident(fn.name)
 
+    def closure_symbol(self, closure: FunctionExpr):
+        return f"__nc_lambda_{closure.closure_id}"
+
+    def declare_closure_function(self, closure: FunctionExpr):
+        ret = llvm_type(closure.return_type or "void")
+        args = [I8PTR] + [llvm_type(t) for _n, t in closure.params]
+        ir.Function(self.module, ir.FunctionType(ret, args), name=self.closure_symbol(closure))
+
+    def emit_closure_function(self, closure: FunctionExpr):
+        llvm_fn = self.module.globals[self.closure_symbol(closure)]
+        block = llvm_fn.append_basic_block("entry")
+        saved_builder, saved_func, saved_vars = self.builder, self.func, self.vars
+        self.builder = ir.IRBuilder(block)
+        self.func = llvm_fn
+        self.vars = {}
+        llvm_fn.args[0].name = "__nc_env"
+        for arg, (param_name, param_type) in zip(llvm_fn.args[1:], closure.params):
+            arg.name = c_user_ident(param_name)
+            slot = self.alloca_at_entry(c_user_ident(param_name), llvm_type(param_type))
+            self.builder.store(arg, slot)
+            self.vars[param_name] = (slot, param_type)
+        self.emit_callable_body(closure.body, closure.return_type or "void", f"lambda {closure.closure_id}")
+        self.builder, self.func, self.vars = saved_builder, saved_func, saved_vars
+
     def emit_function(self, fn: FunctionDeclaration):
         llvm_fn = self.module.globals[self.function_symbol(fn)]
         block = llvm_fn.append_basic_block("entry")
@@ -188,24 +225,26 @@ class LLVMCodegen:
             self.vars[param_name] = (slot, param_type)
 
         self.emit_function_body(fn)
-        if not self.builder.block.is_terminated:
-            if fn.name == "main" and (fn.return_type or "void") == "void":
-                self.builder.ret(ir.Constant(ir.IntType(32), 0))
-            elif (fn.return_type or "void") == "void":
-                self.builder.ret_void()
-            else:
-                raise RuntimeError(f"missing return in function {fn.name}")
 
     def emit_function_body(self, fn: FunctionDeclaration):
-        stmts = fn.body.statements
-        return_type = fn.return_type or "void"
+        self.emit_callable_body(fn.body, fn.return_type or "void", f"function {fn.name}", is_main=fn.name == "main")
+
+    def emit_callable_body(self, body: Block, return_type: str, name: str, is_main: bool = False):
+        stmts = body.statements
         if return_type != "void" and stmts and isinstance(stmts[-1], ExpressionStatement):
             for stmt in stmts[:-1]:
                 self.emit_stmt(stmt)
             if not self.builder.block.is_terminated:
                 self.builder.ret(self.cast_to(self.emit_expr(stmts[-1].expr), return_type))
             return
-        self.emit_block(fn.body)
+        self.emit_block(body)
+        if not self.builder.block.is_terminated:
+            if is_main and return_type == "void":
+                self.builder.ret(ir.Constant(ir.IntType(32), 0))
+            elif return_type == "void":
+                self.builder.ret_void()
+            else:
+                raise RuntimeError(f"missing return in {name}")
 
     def alloca_at_entry(self, name, typ):
         return self.builder.alloca(typ, name=name)
@@ -407,6 +446,8 @@ class LLVMCodegen:
             return self.emit_call(node)
         if isinstance(node, MethodCall):
             return self.emit_method_call(node)
+        if isinstance(node, FunctionExpr):
+            return self.emit_function_expr(node)
         raise NotImplementedError(f"LLVM backend v1 does not support expression: {type(node).__name__}")
 
     def emit_block_expr(self, node: BlockExpr):
@@ -701,6 +742,12 @@ class LLVMCodegen:
             if len(node.args) != 1:
                 raise RuntimeError("io.println expects one argument")
             return self.emit_println(node.args[0])
+        if getattr(node, "is_closure_call", False):
+            closure = self.emit_expr(Identifier(node.name))
+            call_ptr = self.builder.extract_value(closure, 0)
+            env = self.builder.extract_value(closure, 1)
+            args = [env] + [self.emit_expr(arg) for arg in node.args]
+            return self.builder.call(call_ptr, args)
         if node.name == "len":
             if len(node.args) != 1:
                 raise RuntimeError("len expects one argument")
@@ -771,6 +818,16 @@ class LLVMCodegen:
             raise NotImplementedError(f"LLVM backend v1 cannot call {node.name}")
         fn = self.module.globals[c_user_ident(node.name)]
         return self.builder.call(fn, [self.emit_expr(arg) for arg in node.args])
+
+    def emit_function_expr(self, node: FunctionExpr):
+        if getattr(node, "captures", []):
+            raise NotImplementedError("LLVM backend v1 does not support capturing closures")
+        closure_type = llvm_type(node.type)
+        fn = self.module.globals[self.closure_symbol(node)]
+        value = ir.Constant(closure_type, ir.Undefined)
+        value = self.builder.insert_value(value, fn.bitcast(closure_type.elements[0]), [0], name="closure.call")
+        value = self.builder.insert_value(value, ir.Constant(I8PTR, None), [1], name="closure.env")
+        return value
 
     def emit_method_call(self, node: MethodCall):
         obj_type = node.obj.type

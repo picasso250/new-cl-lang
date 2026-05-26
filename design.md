@@ -73,6 +73,7 @@ import io                # 内置标准模块，不要求存在同级 io/ 目录
 - LLVM slice 与运行时构造字符串的底层存储当前暂用 libc `malloc`，尚未接入 NC GC root/allocator；`append` 当前总是分配新底层并复制旧元素，GC 保活与 allocator 统一仍是后续 runtime 迁移项。
 - LLVM 临时 GC 测试钩子当前仅用于保持测试路径可运行：`gc_collect()` 是 no-op，`gc_live()` 输出/返回 0；这不是默认 LLVM 达标所需的真正 GC registry/root 实现。
 - LLVM `throw`/`try`/`catch`/`defer` 当前明确延期：需要独立 runtime C ABI 提供异常 frame、`setjmp`/`longjmp` 和函数退出 defer 栈；在该 runtime 边界落地前，LLVM 后端不实现半套跨函数 unwinding。
+- LLVM function value 当前仅支持无捕获 closure：布局为 `{ call, env }`，`call` 首参为 `i8* env`，无捕获时 `env == null`；捕获 closure 的 env struct、字段拷贝与 GC root 仍延期。
 - LLVM 后端当前使用 MinGW GNU triple `x86_64-w64-windows-gnu` 生成 Windows COFF object，并用 `gcc` 链接。
 - C 后端仍是语言全集和回归权威；LLVM 后端不向前兼容未声明支持的节点，遇到未支持语义应明确报错。
 

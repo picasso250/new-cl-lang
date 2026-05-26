@@ -302,3 +302,11 @@
 
 - 放弃点/延期点：LLVM 本轮不实现 throw/try/catch/defer。原因是正确语义需要跨函数 unwinding、异常 frame 栈、setjmp/longjmp ABI 与 defer 栈统一运行时；在 runtime C object/ABI 边界落地前，半套实现会偏离 C 后端语义。后续继续推进非异常能力，默认 LLVM 达标前必须回补该项或重新设计异常 runtime。
 
+
+## 2026-05-26
+
+- 预备扩 LLVM 覆盖到无捕获 closure/function value：使用 {call, env} fat pointer，call 签名首参为 i8* env；本轮仅支持 captures 为空的 FunctionExpr 与 closure 调用，捕获 env 继续延期。
+
+
+- 已扩 LLVM 覆盖到无捕获 closure/function value：FunctionExpr 生成 __nc_lambda_N，值布局为 {call, env}，closure 调用传入 env + 参数；已覆盖 case_099_closure_no_capture。捕获 closure/env struct/GC root 仍延期。
+
