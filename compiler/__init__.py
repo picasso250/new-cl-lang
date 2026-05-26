@@ -10,6 +10,7 @@ from compiler.parser import parse
 from compiler.symtab import build_symbol_table
 from compiler.typecheck import infer_types
 from compiler.codegen import generate_c
+from compiler.llvm_codegen import build_llvm_ir, generate_llvm_ir, run_llvm_ir
 from compiler.source import Module, SourceFile, annotate_source_file, module_name_from_sources
 from compiler.ast import (
     Program, ImportDecl, FunctionDeclaration, StructDecl, EnumDecl, FunctionCall,
@@ -201,8 +202,7 @@ def parse_project_sources(sources: "list[tuple[str, str]]") -> Module:
     return Module(entry.name, entry.root, files)
 
 
-def compile_module_to_c(module: Module) -> str:
-    """Module → C 源码（三 pass）。"""
+def _typecheck_module(module: Module) -> Program:
     program = module.to_program()
 
     # Pass 1: 建符号表
@@ -210,9 +210,20 @@ def compile_module_to_c(module: Module) -> str:
 
     # Pass 2: 类型推断
     infer_types(program, symtab)
+    return program
 
+
+def compile_module_to_c(module: Module) -> str:
+    """Module → C 源码（三 pass）。"""
+    program = _typecheck_module(module)
     # Pass 3: 代码生成
     return generate_c(program)
+
+
+def compile_module_to_llvm_ir(module: Module) -> str:
+    """Module → LLVM IR（三 pass）。"""
+    program = _typecheck_module(module)
+    return generate_llvm_ir(program)
 
 
 def compile_nc_sources_to_c(sources: "list[tuple[str, str]]") -> str:
@@ -220,9 +231,19 @@ def compile_nc_sources_to_c(sources: "list[tuple[str, str]]") -> str:
     return compile_module_to_c(parse_project_sources(sources))
 
 
+def compile_nc_sources_to_llvm_ir(sources: "list[tuple[str, str]]") -> str:
+    """多个 NC 源码片段 → 单个 LLVM IR。"""
+    return compile_module_to_llvm_ir(parse_project_sources(sources))
+
+
 def compile_nc_to_c(nc_source: str) -> str:
     """NC 源码 → C 源码（三 pass）。"""
     return compile_nc_sources_to_c([("<memory>", nc_source)])
+
+
+def compile_nc_to_llvm_ir(nc_source: str) -> str:
+    """NC 源码 → LLVM IR（三 pass）。"""
+    return compile_nc_sources_to_llvm_ir([("<memory>", nc_source)])
 
 
 def run_c_code(c_code: str) -> "tuple[str, str, int]":

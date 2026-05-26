@@ -6,12 +6,12 @@
 
 | 项 | 决策 |
 |-----|------|
-| 编译目标 | **编译到 C**，借 C 生态可移植到任意平台 |
+| 编译目标 | 默认**编译到 C**，另有显式 LLVM Lite 后端 v1 |
 | 运行时 | **自带运行时库**（GC），打入生成代码 |
 | 性能级别 | **Go 级性能**即可（非 C 级零开销），接受胖指针、间接调用 |
 | 调试 | 需做 source map（NC 行号 → 生成的 C 行号） |
 | 内存管理 | **GC**（自动管理，不搞所有权 / borrow checker） |
-| 构建系统 | **自带**（无需外部 make/cmake） |
+| 构建系统 | **自带**（无需外部 make/cmake）；C 后端生成 `build/main.c` + exe，LLVM 后端生成 `build/main.ll` + `build/main.obj` + exe |
 | 入口点 | `fun main()` —— 程序从 main 函数启动 |
 | 标准库 | `println` 在内置一级模块 `io` 中，需 `import io` 后用 `io.println(value)` |
 | 并发 | 延迟决策，不走语言级关键字，后续以库函数提供 |
@@ -62,6 +62,14 @@ import io                # 内置标准模块，不要求存在同级 io/ 目录
 - `io.println` 支持输出 `str`、`bool`、有符号整数、无符号整数和浮点数。
 - 裸 `print(...)` 不是语言内建，也不向前兼容。
 - 其他临时内建函数（如 `len`、`append`、数值转换、GC 测试钩子、文件 IO）尚未迁入标准模块。
+
+当前后端边界：
+
+- 默认后端仍是 C：`compile` 输出 C，`build` 输出 `build/main.c` 与 `build/main.exe`。
+- 显式 `--backend llvm` 走 LLVM Lite 后端：`compile` 输出 LLVM IR，`build` 输出 `build/main.ll`、`build/main.obj` 与 `build/main.exe`。
+- LLVM 后端 v1 只承诺基础闭环：基础数值/bool 类型、字面量、算术/比较、`let`、重赋值、函数、`return`、`if`、条件 `for`、函数调用与 `io.println`。
+- LLVM 后端当前使用 MinGW GNU triple `x86_64-w64-windows-gnu` 生成 Windows COFF object，并用 `gcc` 链接。
+- C 后端仍是语言全集和回归权威；LLVM 后端不向前兼容未声明支持的节点，遇到未支持语义应明确报错。
 
 ---
 

@@ -156,3 +156,14 @@
 - 已实施 GC 正确性补强 v1：runtime root 改为动态 root slot 表，gray 栈动态扩容，GC 分配/root/gray 扩容失败 abort；codegen 对参数、receiver、closure env/参数、返回槽、catch/throw 值、局部变量以及 struct/[N]T 聚合内 GC 引用递归建立 root slot；slice/str/map/pointer/function env 重赋值通过槽读取最新值，不再重复 push 旧值。
 - 已移除 map rehash/free 对 GC 管理 entries 的直接 free，旧 entries 交由 GC 回收。新增 case_154~163 覆盖参数临时值、slice 重赋值、struct 字段、数组元素、return/throw defer、map rehash、字段/数组赋值和 root/gray 扩容。
 - 验证通过：python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py -q。
+
+## 2026-05-26
+
+- 预备新增并行 LLVM Lite 后端 v1：CLI 增加 --backend c|llvm，默认 C 不变；LLVM 先打通基础类型、函数、return、let/assign、if/for condition、算术比较和 io.println，生成 build/main.ll、build/main.obj、build/main.exe。
+
+
+- 已新增并行 LLVM Lite 后端 v1：compiler/llvm_codegen.py 复用现有 parse/symtab/typecheck 后生成 LLVM IR，支持基础数值/bool、字面量、算术比较、let/assign、函数/return、if、条件 for、函数调用和 io.println。
+- CLI 已接入 --backend c|llvm，默认 c 不变；compile --backend llvm 输出 LLVM IR，build --backend llvm 输出 build/main.ll、build/main.obj、build/main.exe，run --backend llvm 可直接执行。
+- LLVM object 生成使用 llvmlite 0.47，注册 all targets/asmprinters，固定 MinGW GNU triple x86_64-w64-windows-gnu 与 reloc=static，避免 MSVC triple 下 MinGW 链接 __chkstk 问题。
+- 新增 tests/test_llvm_backend.py 覆盖空 main、println/control-flow/function call、IR/object/exe 产物。验证通过：python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py -q。
+
