@@ -237,3 +237,14 @@
 - 已扩 LLVM 覆盖率到 slice append：支持 append([]T, T)，包括 []i32 与 []str；append 当前总是 malloc 新底层并复制旧元素，不复用 cap，不接 GC allocator/root。
 - 已补 slice 的 slice[lo:hi] 复制路径，新增 LLVM 测试覆盖 append、slice re-slice alias、[]str append；已验证 --backend llvm 可运行 case_025_append、case_039_slice_str_append、case_040_append_alias、case_080_slice_param_return。
 
+
+## 2026-05-26
+
+- 预备扩 LLVM 覆盖到字符串索引/切片/拼接：实现 str[index] -> i32 byte、str[lo:hi] 复制、str + str 复制拼接，继续使用 libc malloc 暂不接 GC allocator。
+
+
+## 2026-05-26
+
+- 已扩 LLVM 覆盖率到字符串索引/切片/拼接：支持 str[index] 返回 i32 byte、str[lo:hi] 复制、str + str 复制拼接；构造的新字符串暂用 libc malloc，不接 GC allocator/root。
+- 新增 LLVM 测试覆盖字符串索引、切片、拼接；已验证 --backend llvm 可运行 case_022_str、case_024_streq、case_027_str_slice、case_028_str_cat。
+

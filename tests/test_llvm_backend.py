@@ -305,6 +305,22 @@ fun main() {
     assert (stdout.strip(), stderr.strip(), rc) == ("a\nb\nc", "", 0)
 
 
+def test_llvm_string_index_slice_and_concat():
+    source = """import io
+fun main() {
+    let s = "hello"
+    io.println(s[1])
+    let sub = s[1:5]
+    io.println(sub)
+    let c = "hello" + "world"
+    io.println(c)
+}
+"""
+    llvm_ir = compile_nc_to_llvm_ir(source)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    assert (stdout.strip(), stderr.strip(), rc) == ("101\nello\nhelloworld", "", 0)
+
+
 def test_llvm_build_writes_ir_obj_and_exe(tmp_path):
     llvm_ir = compile_nc_to_llvm_ir("import io\nfun main() { io.println(42) }")
     ll_path, obj_path, exe_path = build_llvm_ir(llvm_ir, str(tmp_path), "main")

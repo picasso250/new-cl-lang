@@ -334,6 +334,13 @@ class LLVMCodegen:
         if isinstance(node, SliceExpr):
             return self.emit_slice_expr(node)
         if isinstance(node, IndexAccess):
+            if node.obj.type == "str":
+                string_value = self.emit_expr(node.obj)
+                ptr = self.builder.extract_value(string_value, 0)
+                idx = self.cast_to(self.emit_expr(node.index), "i32")
+                elem_ptr = self.builder.gep(ptr, [idx], inbounds=True, name="str.idx.ptr")
+                byte_value = self.builder.load(elem_ptr, name="str.byte")
+                return self.builder.zext(byte_value, ir.IntType(32), name="str.byte.i32")
             ptr, elem_type = self.emit_lvalue(node)
             return self.builder.load(ptr, name="idx")
         if isinstance(node, UnaryOp):
@@ -386,6 +393,8 @@ class LLVMCodegen:
 
     def emit_slice_expr(self, node: SliceExpr):
         source_type = node.array.type
+        if source_type == "str":
+            return self.emit_str_slice(node)
         array_info = parse_array_type(source_type)
         slice_elem_type = parse_slice_type(source_type)
         if array_info is None and slice_elem_type is None:
@@ -427,6 +436,36 @@ class LLVMCodegen:
         self.builder.branch(cond_bb)
         self.builder.position_at_end(end_bb)
         return self.slice_value(elem_type, dest, count64, count64)
+
+    def emit_str_slice(self, node: SliceExpr):
+        source = self.emit_expr(node.array)
+        source_ptr = self.builder.extract_value(source, 0)
+        source_len = self.builder.extract_value(source, 1)
+        start = self.cast_to(self.emit_expr(node.start), "i32") if node.start else ir.Constant(ir.IntType(32), 0)
+        end = self.cast_to(self.emit_expr(node.end), "i32") if node.end else self.builder.trunc(source_len, ir.IntType(32))
+        count32 = self.builder.sub(end, start, name="str.slice.count32")
+        count64 = self.builder.zext(count32, ir.IntType(64), name="str.slice.count64")
+        dest = self.malloc_bytes(count64)
+
+        cond_bb = self.func.append_basic_block("str.slice.copy.cond")
+        body_bb = self.func.append_basic_block("str.slice.copy.body")
+        end_bb = self.func.append_basic_block("str.slice.copy.end")
+        idx_slot = self.alloca_at_entry("__nc_str_slice_i", ir.IntType(32))
+        self.builder.store(ir.Constant(ir.IntType(32), 0), idx_slot)
+        self.builder.branch(cond_bb)
+        self.builder.position_at_end(cond_bb)
+        i = self.builder.load(idx_slot, name="str.slice.i")
+        self.builder.cbranch(self.builder.icmp_signed("<", i, count32), body_bb, end_bb)
+        self.builder.position_at_end(body_bb)
+        source_i = self.builder.add(start, i, name="str.slice.source.i")
+        source_elem_ptr = self.builder.gep(source_ptr, [source_i], inbounds=True)
+        dest_elem_ptr = self.builder.gep(dest, [i], inbounds=True)
+        self.builder.store(self.builder.load(source_elem_ptr), dest_elem_ptr)
+        next_i = self.builder.add(i, ir.Constant(ir.IntType(32), 1))
+        self.builder.store(next_i, idx_slot)
+        self.builder.branch(cond_bb)
+        self.builder.position_at_end(end_bb)
+        return self.str_value(dest, count64)
 
     def slice_value(self, elem_type, ptr, length, cap):
         if isinstance(length, int):
@@ -480,6 +519,8 @@ class LLVMCodegen:
             if node.op == "!=":
                 return self.builder.not_(eq)
             return eq
+        if typ == "str" and node.op == "+":
+            return self.emit_str_cat(left, right)
         if typ in FLOAT_TYPES:
             return self.emit_float_binary(left, node.op, right)
         if node.op == "+":
@@ -685,6 +726,23 @@ class LLVMCodegen:
         self.builder.store(self.cast_to(self.emit_expr(elem_expr), elem_type), appended_ptr)
         return self.slice_value(elem_type, dest, new_len, new_len)
 
+    def emit_str_cat(self, left, right):
+        left_ptr = self.builder.extract_value(left, 0)
+        left_len = self.builder.extract_value(left, 1)
+        right_ptr = self.builder.extract_value(right, 0)
+        right_len = self.builder.extract_value(right, 1)
+        total_len = self.builder.add(left_len, right_len, name="str.cat.len")
+        dest = self.malloc_bytes(total_len)
+        self.copy_bytes(dest, ir.Constant(ir.IntType(64), 0), left_ptr, ir.Constant(ir.IntType(64), 0), left_len, "str.cat.left")
+        self.copy_bytes(dest, left_len, right_ptr, ir.Constant(ir.IntType(64), 0), right_len, "str.cat.right")
+        return self.str_value(dest, total_len)
+
+    def str_value(self, ptr, length):
+        value = ir.Constant(STR_TYPE, ir.Undefined)
+        value = self.builder.insert_value(value, ptr, [0], name="str.ptr")
+        value = self.builder.insert_value(value, length, [1], name="str.len")
+        return value
+
     def ensure_printf(self):
         if self.printf is None:
             i8ptr = ir.IntType(8).as_pointer()
@@ -700,6 +758,31 @@ class LLVMCodegen:
         size = self.builder.mul(count, elem_size, name="malloc.size")
         raw = self.builder.call(self.malloc, [size], name="malloc.raw")
         return self.builder.bitcast(raw, llvm_type(elem_type).as_pointer(), name="malloc.typed")
+
+    def malloc_bytes(self, count):
+        self.ensure_malloc()
+        return self.builder.call(self.malloc, [count], name="malloc.bytes")
+
+    def copy_bytes(self, dest, dest_offset, source, source_offset, count, label):
+        idx_slot = self.alloca_at_entry(f"__nc_{label}_i", ir.IntType(64))
+        self.builder.store(ir.Constant(ir.IntType(64), 0), idx_slot)
+        cond_bb = self.func.append_basic_block(f"{label}.copy.cond")
+        body_bb = self.func.append_basic_block(f"{label}.copy.body")
+        end_bb = self.func.append_basic_block(f"{label}.copy.end")
+        self.builder.branch(cond_bb)
+        self.builder.position_at_end(cond_bb)
+        i = self.builder.load(idx_slot, name=f"{label}.i")
+        self.builder.cbranch(self.builder.icmp_unsigned("<", i, count), body_bb, end_bb)
+        self.builder.position_at_end(body_bb)
+        src_i = self.builder.add(source_offset, i, name=f"{label}.src.i")
+        dst_i = self.builder.add(dest_offset, i, name=f"{label}.dst.i")
+        src_ptr = self.builder.gep(source, [src_i], inbounds=True)
+        dst_ptr = self.builder.gep(dest, [dst_i], inbounds=True)
+        self.builder.store(self.builder.load(src_ptr), dst_ptr)
+        next_i = self.builder.add(i, ir.Constant(ir.IntType(64), 1))
+        self.builder.store(next_i, idx_slot)
+        self.builder.branch(cond_bb)
+        self.builder.position_at_end(end_bb)
 
     def sizeof_type(self, nc_type: str) -> int:
         if nc_type in ("i8", "u8", "bool"):
