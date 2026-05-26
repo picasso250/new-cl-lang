@@ -395,6 +395,20 @@ fun main() {{
     assert (stdout.strip(), stderr.strip(), rc) == ("20\n1\nv19\nupdated\n0", "", 0)
 
 
+def test_llvm_temporary_gc_hooks():
+    source = """import io
+fun main() {
+    let s = str(42)
+    gc_collect()
+    io.println(s)
+    gc_live()
+}
+"""
+    llvm_ir = compile_nc_to_llvm_ir(source)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    assert (stdout.strip(), stderr.strip(), rc) == ("42\n0", "", 0)
+
+
 def test_llvm_build_writes_ir_obj_and_exe(tmp_path):
     llvm_ir = compile_nc_to_llvm_ir("import io\nfun main() { io.println(42) }")
     ll_path, obj_path, exe_path = build_llvm_ir(llvm_ir, str(tmp_path), "main")

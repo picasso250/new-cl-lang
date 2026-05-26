@@ -723,6 +723,14 @@ class LLVMCodegen:
             if len(node.args) != 2:
                 raise RuntimeError("write_file expects two arguments")
             return self.emit_write_file(node.args[0], node.args[1])
+        if node.name == "gc_collect":
+            if len(node.args) != 0:
+                raise RuntimeError("gc_collect expects no arguments")
+            return ir.Constant(ir.IntType(1), 0)
+        if node.name == "gc_live":
+            if len(node.args) != 0:
+                raise RuntimeError("gc_live expects no arguments")
+            return self.emit_gc_live()
         if node.name in INT_TYPES or node.name in FLOAT_TYPES:
             if len(node.args) != 1:
                 raise RuntimeError(f"{node.name} expects one argument")
@@ -1025,6 +1033,13 @@ class LLVMCodegen:
         value = self.emit_expr(arg_expr)
         ptr = self.builder.extract_value(value, 0)
         return self.builder.call(self.atoi, [ptr], name="str.i32")
+
+    def emit_gc_live(self):
+        self.ensure_printf()
+        fmt = self.global_c_string("%d\n", "fmt_gc_live")
+        zero = ir.Constant(ir.IntType(32), 0)
+        self.builder.call(self.printf, [fmt, zero])
+        return zero
 
     def copy_bytes(self, dest, dest_offset, source, source_offset, count, label):
         idx_slot = self.alloca_at_entry(f"__nc_{label}_i", ir.IntType(64))

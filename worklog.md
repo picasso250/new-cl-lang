@@ -281,3 +281,11 @@
 
 - 已扩 LLVM 覆盖率到临时转换 builtins：str(i32) 使用 sprintf 写入 malloc buffer，i32(str) 使用 atoi 读取字符串指针；已覆盖 case_031_cast 与 i32(str) 基础路径。
 
+
+## 2026-05-26
+
+- 预备扩 LLVM 覆盖到临时 GC 测试钩子：gc_collect() 暂实现为 no-op，gc_live() 输出并返回 0，用于覆盖当前不释放内存的 LLVM malloc 路径。此实现不是默认 LLVM 达标所需的真正 GC root/allocator。
+
+
+- 已扩 LLVM 覆盖到临时 GC 测试钩子：gc_collect() no-op，gc_live() 输出/返回 0。放弃点/延期点：本轮未实现真正 GC registry、root slot、释放与扫描；默认 LLVM 达标前必须补 runtime allocator/root 或明确替代方案。
+
