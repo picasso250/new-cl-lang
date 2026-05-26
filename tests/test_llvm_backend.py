@@ -129,6 +129,42 @@ fun main() {
     assert (stdout.strip(), stderr.strip(), rc) == ("8", "", 0)
 
 
+def test_llvm_enum_and_match():
+    source = """import io
+fun main() {
+    enum Color { Red, Green, Blue }
+    let c = Color::Green
+    if c == Color::Green { io.println(1) }
+    let result = match c {
+        Color::Red -> 10
+        Color::Green -> 20
+        Color::Blue -> 30
+    }
+    io.println(result)
+}
+"""
+    llvm_ir = compile_nc_to_llvm_ir(source)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    assert (stdout.strip(), stderr.strip(), rc) == ("1\n20", "", 0)
+
+
+def test_llvm_match_else_string_result():
+    source = """import io
+fun main() {
+    let n = 3
+    let label = match n {
+        0 -> "zero"
+        1 -> "one"
+        else -> "many"
+    }
+    io.println(label)
+}
+"""
+    llvm_ir = compile_nc_to_llvm_ir(source)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    assert (stdout.strip(), stderr.strip(), rc) == ("many", "", 0)
+
+
 def test_llvm_build_writes_ir_obj_and_exe(tmp_path):
     llvm_ir = compile_nc_to_llvm_ir("import io\nfun main() { io.println(42) }")
     ll_path, obj_path, exe_path = build_llvm_ir(llvm_ir, str(tmp_path), "main")

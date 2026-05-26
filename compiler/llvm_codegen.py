@@ -13,9 +13,10 @@ from llvmlite import binding, ir
 
 from compiler.ast import (
     ArrayLiteral, Assignment, BinaryOp, Block, BoolLiteral, ExpressionStatement,
-    FieldAccess, FloatLiteral, FunctionCall, FunctionDeclaration, Identifier,
-    IfExpr, IndexAccess, IntegerLiteral, Return, StringLiteral, StructDecl,
-    StructLiteral, UnaryOp, VariableDeclaration, While,
+    EnumDecl, EnumRef, FieldAccess, FloatLiteral, FunctionCall,
+    FunctionDeclaration, Identifier, IfExpr, IndexAccess, IntegerLiteral,
+    MatchExpr, Return, StringLiteral, StructDecl, StructLiteral, UnaryOp,
+    VariableDeclaration, While,
 )
 from compiler.c_abi import c_user_ident
 from compiler.codegen_collect import collect_codegen_inputs
@@ -41,6 +42,7 @@ STR_TYPE = ir.LiteralStructType([I8PTR, ir.IntType(64)])
 STRUCT_TYPES: dict[str, ir.LiteralStructType] = {}
 STRUCT_FIELDS: dict[str, list[tuple[str, str]]] = {}
 STRUCT_FIELD_INDEX: dict[str, dict[str, int]] = {}
+ENUM_VARIANTS: dict[str, dict[str, int]] = {}
 
 
 def llvm_type(nc_type: str | None):
@@ -53,6 +55,8 @@ def llvm_type(nc_type: str | None):
         return FLOAT_TYPES[nc_type]
     if nc_type == "str":
         return STR_TYPE
+    if nc_type in ENUM_VARIANTS:
+        return ir.IntType(32)
     if nc_type in STRUCT_TYPES:
         return STRUCT_TYPES[nc_type]
     array_info = parse_array_type(nc_type)
@@ -87,10 +91,11 @@ class LLVMCodegen:
         collected = collect_codegen_inputs(program)
         if collected.top_stmts:
             raise NotImplementedError("LLVM backend v1 does not support top-level statements")
-        unsupported = collected.enums or collected.closures
+        unsupported = collected.closures
         if unsupported:
-            raise NotImplementedError("LLVM backend v1 does not support enums or closures")
+            raise NotImplementedError("LLVM backend v1 does not support closures")
 
+        self.register_enums(collected.enums)
         self.register_structs(collected.structs)
 
         funcs = collected.other_funcs + ([collected.main_func] if collected.main_func else [])
@@ -99,6 +104,13 @@ class LLVMCodegen:
         for fn in funcs:
             self.emit_function(fn)
         return str(self.module)
+
+    def register_enums(self, enums: list[EnumDecl]):
+        ENUM_VARIANTS.clear()
+        for enum in enums:
+            ENUM_VARIANTS[enum.name] = {
+                variant: i for i, variant in enumerate(enum.variants)
+            }
 
     def register_structs(self, structs: list[StructDecl]):
         STRUCT_TYPES.clear()
@@ -163,7 +175,7 @@ class LLVMCodegen:
             self.emit_stmt(stmt)
 
     def emit_stmt(self, stmt):
-        if isinstance(stmt, StructDecl):
+        if isinstance(stmt, (StructDecl, EnumDecl)):
             return
         if isinstance(stmt, VariableDeclaration):
             typ = llvm_type(stmt.type)
@@ -218,6 +230,8 @@ class LLVMCodegen:
                 ptr,
                 ir.Constant(ir.IntType(64), len(node.value.encode("utf-8"))),
             ])
+        if isinstance(node, EnumRef):
+            return ir.Constant(ir.IntType(32), ENUM_VARIANTS[node.enum_name][node.variant])
         if isinstance(node, Identifier):
             slot, _typ = self.vars[node.name]
             return self.builder.load(slot, name=c_user_ident(node.name))
@@ -248,6 +262,8 @@ class LLVMCodegen:
             return self.emit_binary(node)
         if isinstance(node, IfExpr):
             return self.emit_if_expr(node)
+        if isinstance(node, MatchExpr):
+            return self.emit_match_expr(node)
         if isinstance(node, FunctionCall):
             return self.emit_call(node)
         raise NotImplementedError(f"LLVM backend v1 does not support expression: {type(node).__name__}")
@@ -360,6 +376,45 @@ class LLVMCodegen:
         phi.add_incoming(self.cast_to(then_val, node.type), then_block)
         phi.add_incoming(self.cast_to(else_val, node.type), else_block)
         return phi
+
+    def emit_match_expr(self, node: MatchExpr):
+        scrutinee = self.emit_expr(node.scrutinee)
+        end_bb = self.func.append_basic_block("match.end")
+        incoming = []
+
+        for i, (pattern, body) in enumerate(node.arms):
+            body_bb = self.func.append_basic_block(f"match.arm.{i}")
+            next_bb = self.func.append_basic_block(f"match.next.{i}")
+            if pattern is None:
+                self.builder.branch(body_bb)
+            else:
+                cond = self.match_condition(scrutinee, node.scrutinee.type, pattern)
+                self.builder.cbranch(cond, body_bb, next_bb)
+            self.builder.position_at_end(body_bb)
+            body_val = self.emit_expr(body)
+            body_block = self.builder.block
+            if not self.builder.block.is_terminated:
+                self.builder.branch(end_bb)
+            incoming.append((body_val, body_block))
+            self.builder.position_at_end(next_bb)
+
+        if not self.builder.block.is_terminated:
+            self.builder.unreachable()
+        self.builder.position_at_end(end_bb)
+        if node.type == "void":
+            return ir.Constant(ir.IntType(1), 0)
+        phi = self.builder.phi(llvm_type(node.type))
+        for value, block in incoming:
+            phi.add_incoming(self.cast_to(value, node.type), block)
+        return phi
+
+    def match_condition(self, scrutinee, scrutinee_type, pattern):
+        pattern_value = self.emit_expr(pattern)
+        if scrutinee_type == "str":
+            return self.emit_str_eq(scrutinee, pattern_value)
+        if scrutinee_type in FLOAT_TYPES:
+            return self.builder.fcmp_ordered("==", scrutinee, pattern_value)
+        return self.builder.icmp_signed("==", scrutinee, pattern_value)
 
     def emit_block_value(self, block: Block):
         if not block.statements:
