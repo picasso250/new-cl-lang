@@ -72,6 +72,20 @@ fun main() {
     assert (stdout.strip(), stderr.strip(), rc) == ("42\n42.000000\n42", "", 0)
 
 
+def test_llvm_string_numeric_casts():
+    source = """import io
+fun main() {
+    let s = str(42)
+    io.println(s)
+    io.println("hello" + str(99))
+    io.println(i32("123") + 1)
+}
+"""
+    llvm_ir = compile_nc_to_llvm_ir(source)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    assert (stdout.strip(), stderr.strip(), rc) == ("42\nhello99\n124", "", 0)
+
+
 def test_llvm_array_literal_and_index():
     source = """import io
 fun main() {

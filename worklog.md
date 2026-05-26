@@ -273,3 +273,11 @@
 
 - 已扩 LLVM 覆盖率到 nc_map 基础能力：支持 map_new、字符串键索引赋值/读取、map_set_s/map_get_s、map_has、len(map)，并覆盖容量增长与覆盖更新。LLVM map 当前使用连续 entry + 线性查找 + malloc 复制增长，未复用 C runtime 哈希表，也未接 GC root。
 
+
+## 2026-05-26
+
+- 预备扩 LLVM 覆盖到临时转换 builtins：支持 str(i32) 通过 sprintf 生成字符串，支持 i32(str) 通过 atoi 解析；本轮继续使用 libc malloc，先覆盖 case_031_cast 与字符串拼接组合。
+
+
+- 已扩 LLVM 覆盖率到临时转换 builtins：str(i32) 使用 sprintf 写入 malloc buffer，i32(str) 使用 atoi 读取字符串指针；已覆盖 case_031_cast 与 i32(str) 基础路径。
+

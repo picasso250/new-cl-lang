@@ -109,6 +109,8 @@ class LLVMCodegen:
         self.fclose = None
         self.fseek = None
         self.ftell = None
+        self.sprintf = None
+        self.atoi = None
         self.strings: dict[tuple[str, str], ir.GlobalVariable] = {}
         self.fn_decls: dict[str, FunctionDeclaration] = {}
         self.break_stack = []
@@ -697,6 +699,14 @@ class LLVMCodegen:
             if len(node.args) != 3:
                 raise RuntimeError("map_set_s expects three arguments")
             return self.emit_map_set(node.args[0], node.args[1], node.args[2])
+        if node.name == "str":
+            if len(node.args) != 1:
+                raise RuntimeError("str expects one argument")
+            if node.args[0].type == "i32":
+                return self.emit_i32_to_str(node.args[0])
+            if node.args[0].type == "str":
+                return self.emit_expr(node.args[0])
+            raise NotImplementedError(f"LLVM backend v1 cannot convert {node.args[0].type} to str")
         if node.name == "append":
             if len(node.args) != 2:
                 raise RuntimeError("append expects two arguments")
@@ -716,6 +726,8 @@ class LLVMCodegen:
         if node.name in INT_TYPES or node.name in FLOAT_TYPES:
             if len(node.args) != 1:
                 raise RuntimeError(f"{node.name} expects one argument")
+            if node.name == "i32" and node.args[0].type == "str":
+                return self.emit_str_to_i32(node.args[0])
             return self.cast_numeric(self.emit_expr(node.args[0]), node.args[0].type, node.name)
         if node.name not in self.fn_decls:
             raise NotImplementedError(f"LLVM backend v1 cannot call {node.name}")
@@ -968,6 +980,22 @@ class LLVMCodegen:
             i8ptr = ir.IntType(8).as_pointer()
             self.printf = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [i8ptr], var_arg=True), name="printf")
 
+    def ensure_sprintf(self):
+        if self.sprintf is None:
+            self.sprintf = ir.Function(
+                self.module,
+                ir.FunctionType(ir.IntType(32), [I8PTR, I8PTR], var_arg=True),
+                name="sprintf",
+            )
+
+    def ensure_atoi(self):
+        if self.atoi is None:
+            self.atoi = ir.Function(
+                self.module,
+                ir.FunctionType(ir.IntType(32), [I8PTR]),
+                name="atoi",
+            )
+
     def ensure_malloc(self):
         if self.malloc is None:
             self.malloc = ir.Function(self.module, ir.FunctionType(I8PTR, [ir.IntType(64)]), name="malloc")
@@ -982,6 +1010,21 @@ class LLVMCodegen:
     def malloc_bytes(self, count):
         self.ensure_malloc()
         return self.builder.call(self.malloc, [count], name="malloc.bytes")
+
+    def emit_i32_to_str(self, arg_expr):
+        self.ensure_sprintf()
+        buf = self.malloc_bytes(ir.Constant(ir.IntType(64), 24))
+        fmt = self.global_c_string("%d", "fmt_i32_to_str")
+        value = self.cast_to(self.emit_expr(arg_expr), "i32")
+        length = self.builder.call(self.sprintf, [buf, fmt, value], name="i32.str.len")
+        length64 = self.builder.sext(length, ir.IntType(64), name="i32.str.len64")
+        return self.str_value(buf, length64)
+
+    def emit_str_to_i32(self, arg_expr):
+        self.ensure_atoi()
+        value = self.emit_expr(arg_expr)
+        ptr = self.builder.extract_value(value, 0)
+        return self.builder.call(self.atoi, [ptr], name="str.i32")
 
     def copy_bytes(self, dest, dest_offset, source, source_offset, count, label):
         idx_slot = self.alloca_at_entry(f"__nc_{label}_i", ir.IntType(64))
