@@ -14,7 +14,7 @@ from llvmlite import binding, ir
 from compiler.ast import (
     ArrayLiteral, Assignment, BinaryOp, Block, BlockExpr, BoolLiteral,
     ExpressionStatement, EnumDecl, EnumRef, FieldAccess, FloatLiteral, FunctionCall,
-    FunctionDeclaration, Identifier, IfExpr, IndexAccess, IntegerLiteral,
+    ForIn, FunctionDeclaration, Identifier, IfExpr, IndexAccess, IntegerLiteral,
     MatchExpr, Return, StringLiteral, StructDecl, StructLiteral, UnaryOp,
     VariableDeclaration, While,
 )
@@ -193,6 +193,9 @@ class LLVMCodegen:
         if isinstance(stmt, While):
             self.emit_while(stmt)
             return
+        if isinstance(stmt, ForIn):
+            self.emit_for_in(stmt)
+            return
         if isinstance(stmt, Return):
             if stmt.expr is None:
                 if self.func.function_type.return_type == ir.VoidType():
@@ -214,6 +217,33 @@ class LLVMCodegen:
         self.builder.position_at_end(body_bb)
         self.emit_block(stmt.body)
         if not self.builder.block.is_terminated:
+            self.builder.branch(cond_bb)
+        self.builder.position_at_end(end_bb)
+
+    def emit_for_in(self, stmt: ForIn):
+        if stmt.start is None:
+            raise NotImplementedError("LLVM backend v1 does not support slice for-in")
+
+        idx_type = ir.IntType(32)
+        idx_slot = self.alloca_at_entry(c_user_ident(stmt.index), idx_type)
+        self.vars[stmt.index] = (idx_slot, "i32")
+        start = self.cast_to(self.emit_expr(stmt.start), "i32")
+        end = self.cast_to(self.emit_expr(stmt.end), "i32")
+        self.builder.store(start, idx_slot)
+
+        cond_bb = self.func.append_basic_block("for.range.cond")
+        body_bb = self.func.append_basic_block("for.range.body")
+        end_bb = self.func.append_basic_block("for.range.end")
+        self.builder.branch(cond_bb)
+        self.builder.position_at_end(cond_bb)
+        current = self.builder.load(idx_slot, name=c_user_ident(stmt.index))
+        self.builder.cbranch(self.builder.icmp_signed("<", current, end), body_bb, end_bb)
+        self.builder.position_at_end(body_bb)
+        self.emit_block(stmt.body)
+        if not self.builder.block.is_terminated:
+            current = self.builder.load(idx_slot, name=c_user_ident(stmt.index))
+            next_value = self.builder.add(current, ir.Constant(idx_type, 1))
+            self.builder.store(next_value, idx_slot)
             self.builder.branch(cond_bb)
         self.builder.position_at_end(end_bb)
 

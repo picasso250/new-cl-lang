@@ -213,3 +213,12 @@
 - 已扩 LLVM 覆盖率到 block 表达式与 match/block/tail 组合：支持 BlockExpr 作为 let initializer、函数参数和 match arm body；block 内变量表恢复，避免污染外层符号。
 - 已验证 --backend llvm 可运行 case_084_block_expr_let、case_085_block_expr_call_arg、case_126_match_tail_return、case_127_match_block_arm。
 
+
+## 2026-05-26
+
+- 预备扩 LLVM 覆盖到 range for：实现 ForIn(start/end) 即 or i in start..end，循环变量为 i32；本轮不做 slice/array for-in。
+
+
+- 已扩 LLVM 覆盖率到 range for：支持 or i in start..end，循环变量为 i32，按 start <= i < end 递增；slice/array for-in 仍留给后续 slice/runtime 迁移。
+- 新增 LLVM 测试覆盖 range for 累加；已验证 --backend llvm 可运行 case_036_for_range。
+
