@@ -75,7 +75,7 @@ def llvm_type(nc_type: str | None):
 
 
 def parse_array_type(nc_type: str | None):
-    if not isinstance(nc_type, str) or not nc_type.startswith("["):
+    if not isinstance(nc_type, str) or not nc_type.startswith("[") or nc_type.startswith("[]"):
         return None
     end = nc_type.find("]")
     if end < 0:
@@ -387,15 +387,26 @@ class LLVMCodegen:
     def emit_slice_expr(self, node: SliceExpr):
         source_type = node.array.type
         array_info = parse_array_type(source_type)
-        if array_info is None:
+        slice_elem_type = parse_slice_type(source_type)
+        if array_info is None and slice_elem_type is None:
             raise NotImplementedError(f"LLVM backend v1 cannot slice {source_type}")
-        _array_len, elem_type = array_info
+        if array_info is not None:
+            _array_len, elem_type = array_info
+            default_end = ir.Constant(ir.IntType(32), _array_len)
+            source_ptr, _source_type = self.emit_lvalue(node.array)
+            source_indices = lambda i: [ir.Constant(ir.IntType(32), 0), i]
+        else:
+            elem_type = slice_elem_type
+            source_value = self.emit_expr(node.array)
+            source_ptr = self.builder.extract_value(source_value, 0)
+            source_len = self.builder.extract_value(source_value, 1)
+            default_end = self.builder.trunc(source_len, ir.IntType(32))
+            source_indices = lambda i: [i]
         start = self.cast_to(self.emit_expr(node.start), "i32") if node.start else ir.Constant(ir.IntType(32), 0)
-        end = self.cast_to(self.emit_expr(node.end), "i32") if node.end else ir.Constant(ir.IntType(32), _array_len)
+        end = self.cast_to(self.emit_expr(node.end), "i32") if node.end else default_end
         count32 = self.builder.sub(end, start, name="slice.count32")
         count64 = self.builder.sext(count32, ir.IntType(64), name="slice.count64")
         dest = self.malloc_array(elem_type, count64)
-        source_ptr, _source_type = self.emit_lvalue(node.array)
 
         cond_bb = self.func.append_basic_block("slice.copy.cond")
         body_bb = self.func.append_basic_block("slice.copy.body")
@@ -408,7 +419,7 @@ class LLVMCodegen:
         self.builder.cbranch(self.builder.icmp_signed("<", i, count32), body_bb, end_bb)
         self.builder.position_at_end(body_bb)
         source_i = self.builder.add(start, i, name="slice.source.i")
-        source_elem_ptr = self.builder.gep(source_ptr, [ir.Constant(ir.IntType(32), 0), source_i], inbounds=True)
+        source_elem_ptr = self.builder.gep(source_ptr, source_indices(source_i), inbounds=True)
         dest_elem_ptr = self.builder.gep(dest, [i], inbounds=True)
         self.builder.store(self.builder.load(source_elem_ptr), dest_elem_ptr)
         next_i = self.builder.add(i, ir.Constant(ir.IntType(32), 1))
@@ -599,6 +610,14 @@ class LLVMCodegen:
                 length64 = self.builder.extract_value(arg, 1)
                 return self.builder.trunc(length64, ir.IntType(32))
             raise NotImplementedError(f"LLVM backend v1 cannot take len of {node.args[0].type}")
+        if node.name == "append":
+            if len(node.args) != 2:
+                raise RuntimeError("append expects two arguments")
+            slice_type = node.args[0].type
+            elem_type = parse_slice_type(slice_type)
+            if elem_type is None:
+                raise NotImplementedError(f"LLVM backend v1 cannot append to {slice_type}")
+            return self.emit_append(node.args[0], node.args[1], elem_type)
         if node.name in INT_TYPES or node.name in FLOAT_TYPES:
             if len(node.args) != 1:
                 raise RuntimeError(f"{node.name} expects one argument")
@@ -635,6 +654,36 @@ class LLVMCodegen:
                 val = self.builder.sext(val, ir.IntType(64)) if typ in SIGNED_INT_TYPES else self.builder.zext(val, ir.IntType(64))
             return self.builder.call(self.printf, [fmt, val])
         raise NotImplementedError(f"LLVM backend v1 cannot print type: {typ}")
+
+    def emit_append(self, slice_expr, elem_expr, elem_type: str):
+        source = self.emit_expr(slice_expr)
+        source_ptr = self.builder.extract_value(source, 0)
+        source_len = self.builder.extract_value(source, 1)
+        one64 = ir.Constant(ir.IntType(64), 1)
+        new_len = self.builder.add(source_len, one64, name="append.new.len")
+        dest = self.malloc_array(elem_type, new_len)
+
+        cond_bb = self.func.append_basic_block("append.copy.cond")
+        body_bb = self.func.append_basic_block("append.copy.body")
+        end_bb = self.func.append_basic_block("append.copy.end")
+        idx_slot = self.alloca_at_entry("__nc_append_i", ir.IntType(64))
+        self.builder.store(ir.Constant(ir.IntType(64), 0), idx_slot)
+        self.builder.branch(cond_bb)
+        self.builder.position_at_end(cond_bb)
+        i = self.builder.load(idx_slot, name="append.i")
+        self.builder.cbranch(self.builder.icmp_unsigned("<", i, source_len), body_bb, end_bb)
+        self.builder.position_at_end(body_bb)
+        source_elem_ptr = self.builder.gep(source_ptr, [i], inbounds=True)
+        dest_elem_ptr = self.builder.gep(dest, [i], inbounds=True)
+        self.builder.store(self.builder.load(source_elem_ptr), dest_elem_ptr)
+        next_i = self.builder.add(i, one64)
+        self.builder.store(next_i, idx_slot)
+        self.builder.branch(cond_bb)
+        self.builder.position_at_end(end_bb)
+
+        appended_ptr = self.builder.gep(dest, [source_len], inbounds=True)
+        self.builder.store(self.cast_to(self.emit_expr(elem_expr), elem_type), appended_ptr)
+        return self.slice_value(elem_type, dest, new_len, new_len)
 
     def ensure_printf(self):
         if self.printf is None:

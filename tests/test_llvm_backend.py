@@ -268,6 +268,43 @@ fun main() {
     assert (stdout.strip(), stderr.strip(), rc) == ("10\n21\n32", "", 0)
 
 
+def test_llvm_slice_append_and_reslice_copy():
+    source = """import io
+fun grow(xs: []i32): []i32 {
+    append(xs, 4)
+}
+fun main() {
+    let base = []i32 { 10, 20, 30, 40 }
+    let s1 = base[1:3]
+    s1[1] = 99
+    let s2 = append(s1, 77)
+    io.println(base[2])
+    io.println(s2[0] + s2[1] + s2[2] + len(s2))
+    let xs = []i32 { 1, 2, 3 }
+    let ys = grow(xs)
+    io.println(ys[1] + ys[3] + len(ys))
+}
+"""
+    llvm_ir = compile_nc_to_llvm_ir(source)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    assert (stdout.strip(), stderr.strip(), rc) == ("30\n199\n10", "", 0)
+
+
+def test_llvm_slice_append_str():
+    source = """import io
+fun main() {
+    let s = []str { "a", "b" }
+    s = append(s, "c")
+    for i, item in s {
+        io.println(item)
+    }
+}
+"""
+    llvm_ir = compile_nc_to_llvm_ir(source)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    assert (stdout.strip(), stderr.strip(), rc) == ("a\nb\nc", "", 0)
+
+
 def test_llvm_build_writes_ir_obj_and_exe(tmp_path):
     llvm_ir = compile_nc_to_llvm_ir("import io\nfun main() { io.println(42) }")
     ll_path, obj_path, exe_path = build_llvm_ir(llvm_ir, str(tmp_path), "main")

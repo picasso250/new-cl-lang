@@ -231,3 +231,9 @@
 - 已扩 LLVM 覆盖率到 slice 基础能力：支持 []T 布局、slice literal、len(slice)、slice index、[N]T[lo:hi] 复制成 slice、slice 参数/返回和 or i, item in s。底层暂用 libc malloc，append/GC root/重分配留后续 runtime 迁移。
 - 新增 LLVM 测试覆盖 slice literal/len/index/参数返回、数组切片复制和 slice for-in；已验证 --backend llvm 可运行 case_021_slice、case_026_forin、case_038_slice_lit。
 
+
+## 2026-05-26
+
+- 已扩 LLVM 覆盖率到 slice append：支持 append([]T, T)，包括 []i32 与 []str；append 当前总是 malloc 新底层并复制旧元素，不复用 cap，不接 GC allocator/root。
+- 已补 slice 的 slice[lo:hi] 复制路径，新增 LLVM 测试覆盖 append、slice re-slice alias、[]str append；已验证 --backend llvm 可运行 case_025_append、case_039_slice_str_append、case_040_append_alias、case_080_slice_param_return。
+
