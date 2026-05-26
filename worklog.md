@@ -248,3 +248,12 @@
 - 已扩 LLVM 覆盖率到字符串索引/切片/拼接：支持 str[index] 返回 i32 byte、str[lo:hi] 复制、str + str 复制拼接；构造的新字符串暂用 libc malloc，不接 GC allocator/root。
 - 新增 LLVM 测试覆盖字符串索引、切片、拼接；已验证 --backend llvm 可运行 case_022_str、case_024_streq、case_027_str_slice、case_028_str_cat。
 
+
+## 2026-05-26
+
+- 预备扩 LLVM 覆盖到 break：维护 loop end block 栈，支持 break 跳出条件 for、range for 和 slice for-in；同时让已终止 block 不再继续发射后续语句。
+
+
+- 已扩 LLVM 覆盖率到 break：支持在条件 for、range for、slice for-in 中 break 到当前 loop end block；block 已终止后不再发射后续语句。
+- 新增 LLVM 测试覆盖三类 loop 中的 break；已验证 --backend llvm 可运行 case_037_len_break。
+

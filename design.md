@@ -68,7 +68,7 @@ import io                # 内置标准模块，不要求存在同级 io/ 目录
 - 迁移目标：LLVM 成为默认后端；C 后端降为 reference/debug 后端，是否删除需在 LLVM 达标并稳定后再决策。
 - 当前默认后端仍是 C：`compile` 输出 C，`build` 输出 `build/main.c` 与 `build/main.exe`。
 - 显式 `--backend llvm` 走 LLVM Lite 后端：`compile` 输出 LLVM IR，`build` 输出 `build/main.ll`、`build/main.obj` 与 `build/main.exe`。
-- LLVM 后端 v1 当前承诺基础闭环：基础数值/bool 类型、`str` 字面量/索引/切片/拼接、数值转换、`len(str)`、`str ==/!=`、定长数组字面量/索引/索引赋值、slice layout/literal/index/`len`/`append`、定长数组与 slice 切片复制、slice `for i, item in s`、struct 值类型声明/字面量/字段读写/参数与返回、enum tag/variant/比较、整数/字符串/bool/enum `match` 表达式、block 表达式、算术/比较、`let`、重赋值、函数、显式 `return` 与尾表达式返回、`if`、条件 `for`、range `for i in start..end`、函数调用与 `io.println`。
+- LLVM 后端 v1 当前承诺基础闭环：基础数值/bool 类型、`str` 字面量/索引/切片/拼接、数值转换、`len(str)`、`str ==/!=`、定长数组字面量/索引/索引赋值、slice layout/literal/index/`len`/`append`、定长数组与 slice 切片复制、slice `for i, item in s`、struct 值类型声明/字面量/字段读写/参数与返回、enum tag/variant/比较、整数/字符串/bool/enum `match` 表达式、block 表达式、算术/比较、`let`、重赋值、函数、显式 `return` 与尾表达式返回、`if`、条件 `for`、range `for i in start..end`、`break`、函数调用与 `io.println`。
 - LLVM slice 与运行时构造字符串的底层存储当前暂用 libc `malloc`，尚未接入 NC GC root/allocator；`append` 当前总是分配新底层并复制旧元素，GC 保活与 allocator 统一仍是后续 runtime 迁移项。
 - LLVM 后端当前使用 MinGW GNU triple `x86_64-w64-windows-gnu` 生成 Windows COFF object，并用 `gcc` 链接。
 - C 后端仍是语言全集和回归权威；LLVM 后端不向前兼容未声明支持的节点，遇到未支持语义应明确报错。

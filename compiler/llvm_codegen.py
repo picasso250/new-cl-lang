@@ -12,7 +12,7 @@ import tempfile
 from llvmlite import binding, ir
 
 from compiler.ast import (
-    ArrayLiteral, Assignment, BinaryOp, Block, BlockExpr, BoolLiteral,
+    ArrayLiteral, Assignment, BinaryOp, Block, BlockExpr, BoolLiteral, Break,
     ExpressionStatement, EnumDecl, EnumRef, FieldAccess, FloatLiteral, FunctionCall,
     ForIn, FunctionDeclaration, Identifier, IfExpr, IndexAccess, IntegerLiteral,
     MatchExpr, Return, SliceExpr, SliceLiteral, StringLiteral, StructDecl,
@@ -101,6 +101,7 @@ class LLVMCodegen:
         self.memcmp = None
         self.strings: dict[tuple[str, str], ir.GlobalVariable] = {}
         self.fn_decls: dict[str, FunctionDeclaration] = {}
+        self.break_stack = []
 
     def generate(self, program) -> str:
         collected = collect_codegen_inputs(program)
@@ -187,6 +188,8 @@ class LLVMCodegen:
 
     def emit_block(self, block: Block):
         for stmt in block.statements:
+            if self.builder.block.is_terminated:
+                break
             self.emit_stmt(stmt)
 
     def emit_stmt(self, stmt):
@@ -220,6 +223,11 @@ class LLVMCodegen:
             else:
                 self.builder.ret(self.cast_to(self.emit_expr(stmt.expr), stmt.expr.type))
             return
+        if isinstance(stmt, Break):
+            if not self.break_stack:
+                raise RuntimeError("break outside loop")
+            self.builder.branch(self.break_stack[-1])
+            return
         raise NotImplementedError(f"LLVM backend v1 does not support statement: {type(stmt).__name__}")
 
     def emit_while(self, stmt: While):
@@ -230,7 +238,9 @@ class LLVMCodegen:
         self.builder.position_at_end(cond_bb)
         self.builder.cbranch(self.bool_value(self.emit_expr(stmt.condition)), body_bb, end_bb)
         self.builder.position_at_end(body_bb)
+        self.break_stack.append(end_bb)
         self.emit_block(stmt.body)
+        self.break_stack.pop()
         if not self.builder.block.is_terminated:
             self.builder.branch(cond_bb)
         self.builder.position_at_end(end_bb)
@@ -255,7 +265,9 @@ class LLVMCodegen:
         current = self.builder.load(idx_slot, name=c_user_ident(stmt.index))
         self.builder.cbranch(self.builder.icmp_signed("<", current, end), body_bb, end_bb)
         self.builder.position_at_end(body_bb)
+        self.break_stack.append(end_bb)
         self.emit_block(stmt.body)
+        self.break_stack.pop()
         if not self.builder.block.is_terminated:
             current = self.builder.load(idx_slot, name=c_user_ident(stmt.index))
             next_value = self.builder.add(current, ir.Constant(idx_type, 1))
@@ -291,7 +303,9 @@ class LLVMCodegen:
         self.builder.position_at_end(body_bb)
         elem_ptr = self.builder.gep(ptr, [current], inbounds=True, name="for.slice.elem.ptr")
         self.builder.store(self.builder.load(elem_ptr), value_slot)
+        self.break_stack.append(end_bb)
         self.emit_block(stmt.body)
+        self.break_stack.pop()
         if not self.builder.block.is_terminated:
             current = self.builder.load(idx_slot, name=c_user_ident(stmt.index))
             next_value = self.builder.add(current, ir.Constant(idx_type, 1))
