@@ -224,6 +224,50 @@ fun main() {
     assert (stdout.strip(), stderr.strip(), rc) == ("6", "", 0)
 
 
+def test_llvm_slice_literal_len_index_and_param_return():
+    source = """import io
+fun second(xs: []i32): i32 { xs[1] }
+fun same(xs: []i32): []i32 { xs }
+fun main() {
+    let s = []i32 { 10, 20, 30 }
+    let t = same(s)
+    io.println(len(t))
+    io.println(second(t) + t[2])
+}
+"""
+    llvm_ir = compile_nc_to_llvm_ir(source)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    assert (stdout.strip(), stderr.strip(), rc) == ("3\n50", "", 0)
+
+
+def test_llvm_array_slice_copy():
+    source = """import io
+fun main() {
+    let arr = [3]i32 { 10, 20, 30 }
+    let s = arr[0:3]
+    io.println(len(s))
+    io.println(s[0] + s[1] + s[2])
+}
+"""
+    llvm_ir = compile_nc_to_llvm_ir(source)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    assert (stdout.strip(), stderr.strip(), rc) == ("3\n60", "", 0)
+
+
+def test_llvm_slice_for_in():
+    source = """import io
+fun main() {
+    let s = []i32 { 10, 20, 30 }
+    for i, item in s {
+        io.println(i + item)
+    }
+}
+"""
+    llvm_ir = compile_nc_to_llvm_ir(source)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    assert (stdout.strip(), stderr.strip(), rc) == ("10\n21\n32", "", 0)
+
+
 def test_llvm_build_writes_ir_obj_and_exe(tmp_path):
     llvm_ir = compile_nc_to_llvm_ir("import io\nfun main() { io.println(42) }")
     ll_path, obj_path, exe_path = build_llvm_ir(llvm_ir, str(tmp_path), "main")

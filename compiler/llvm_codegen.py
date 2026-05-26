@@ -15,8 +15,8 @@ from compiler.ast import (
     ArrayLiteral, Assignment, BinaryOp, Block, BlockExpr, BoolLiteral,
     ExpressionStatement, EnumDecl, EnumRef, FieldAccess, FloatLiteral, FunctionCall,
     ForIn, FunctionDeclaration, Identifier, IfExpr, IndexAccess, IntegerLiteral,
-    MatchExpr, Return, StringLiteral, StructDecl, StructLiteral, UnaryOp,
-    VariableDeclaration, While,
+    MatchExpr, Return, SliceExpr, SliceLiteral, StringLiteral, StructDecl,
+    StructLiteral, UnaryOp, VariableDeclaration, While,
 )
 from compiler.c_abi import c_user_ident
 from compiler.codegen_collect import collect_codegen_inputs
@@ -59,6 +59,14 @@ def llvm_type(nc_type: str | None):
         return ir.IntType(32)
     if nc_type in STRUCT_TYPES:
         return STRUCT_TYPES[nc_type]
+    slice_info = parse_slice_type(nc_type)
+    if slice_info is not None:
+        elem_type = slice_info
+        return ir.LiteralStructType([
+            llvm_type(elem_type).as_pointer(),
+            ir.IntType(64),
+            ir.IntType(64),
+        ])
     array_info = parse_array_type(nc_type)
     if array_info is not None:
         length, elem_type = array_info
@@ -75,6 +83,12 @@ def parse_array_type(nc_type: str | None):
     return int(nc_type[1:end]), nc_type[end + 1:]
 
 
+def parse_slice_type(nc_type: str | None):
+    if isinstance(nc_type, str) and nc_type.startswith("[]"):
+        return nc_type[2:]
+    return None
+
+
 class LLVMCodegen:
     def __init__(self):
         self.module = ir.Module(name="nc")
@@ -83,6 +97,7 @@ class LLVMCodegen:
         self.func = None
         self.vars: dict[str, tuple[ir.AllocaInstr, str]] = {}
         self.printf = None
+        self.malloc = None
         self.memcmp = None
         self.strings: dict[tuple[str, str], ir.GlobalVariable] = {}
         self.fn_decls: dict[str, FunctionDeclaration] = {}
@@ -222,7 +237,8 @@ class LLVMCodegen:
 
     def emit_for_in(self, stmt: ForIn):
         if stmt.start is None:
-            raise NotImplementedError("LLVM backend v1 does not support slice for-in")
+            self.emit_slice_for_in(stmt)
+            return
 
         idx_type = ir.IntType(32)
         idx_slot = self.alloca_at_entry(c_user_ident(stmt.index), idx_type)
@@ -246,6 +262,43 @@ class LLVMCodegen:
             self.builder.store(next_value, idx_slot)
             self.builder.branch(cond_bb)
         self.builder.position_at_end(end_bb)
+
+    def emit_slice_for_in(self, stmt: ForIn):
+        elem_type = parse_slice_type(stmt.iterable.type)
+        if elem_type is None or stmt.value is None:
+            raise NotImplementedError("LLVM backend v1 only supports for i, item in slice")
+
+        saved_vars = self.vars.copy()
+        idx_type = ir.IntType(32)
+        idx_slot = self.alloca_at_entry(c_user_ident(stmt.index), idx_type)
+        value_slot = self.alloca_at_entry(c_user_ident(stmt.value), llvm_type(elem_type))
+        self.vars[stmt.index] = (idx_slot, "i32")
+        self.vars[stmt.value] = (value_slot, elem_type)
+
+        slice_value = self.emit_expr(stmt.iterable)
+        ptr = self.builder.extract_value(slice_value, 0)
+        length64 = self.builder.extract_value(slice_value, 1)
+        length32 = self.builder.trunc(length64, idx_type)
+        self.builder.store(ir.Constant(idx_type, 0), idx_slot)
+
+        cond_bb = self.func.append_basic_block("for.slice.cond")
+        body_bb = self.func.append_basic_block("for.slice.body")
+        end_bb = self.func.append_basic_block("for.slice.end")
+        self.builder.branch(cond_bb)
+        self.builder.position_at_end(cond_bb)
+        current = self.builder.load(idx_slot, name=c_user_ident(stmt.index))
+        self.builder.cbranch(self.builder.icmp_signed("<", current, length32), body_bb, end_bb)
+        self.builder.position_at_end(body_bb)
+        elem_ptr = self.builder.gep(ptr, [current], inbounds=True, name="for.slice.elem.ptr")
+        self.builder.store(self.builder.load(elem_ptr), value_slot)
+        self.emit_block(stmt.body)
+        if not self.builder.block.is_terminated:
+            current = self.builder.load(idx_slot, name=c_user_ident(stmt.index))
+            next_value = self.builder.add(current, ir.Constant(idx_type, 1))
+            self.builder.store(next_value, idx_slot)
+            self.builder.branch(cond_bb)
+        self.builder.position_at_end(end_bb)
+        self.vars = saved_vars
 
     def emit_expr(self, node):
         if isinstance(node, IntegerLiteral):
@@ -276,6 +329,10 @@ class LLVMCodegen:
                 elem_value = self.cast_to(self.emit_expr(elem), node.elem_type)
                 value = self.builder.insert_value(value, elem_value, [i], name="arr.ins")
             return value
+        if isinstance(node, SliceLiteral):
+            return self.emit_slice_literal(node)
+        if isinstance(node, SliceExpr):
+            return self.emit_slice_expr(node)
         if isinstance(node, IndexAccess):
             ptr, elem_type = self.emit_lvalue(node)
             return self.builder.load(ptr, name="idx")
@@ -318,6 +375,59 @@ class LLVMCodegen:
             value = self.builder.insert_value(value, field_value, [i], name="struct.ins")
         return value
 
+    def emit_slice_literal(self, node: SliceLiteral):
+        elem_type = node.elem_type
+        count = len(node.elements)
+        ptr = self.malloc_array(elem_type, ir.Constant(ir.IntType(64), count))
+        for i, elem in enumerate(node.elements):
+            elem_ptr = self.builder.gep(ptr, [ir.Constant(ir.IntType(32), i)], inbounds=True, name="slice.elem.ptr")
+            self.builder.store(self.cast_to(self.emit_expr(elem), elem_type), elem_ptr)
+        return self.slice_value(elem_type, ptr, count, count)
+
+    def emit_slice_expr(self, node: SliceExpr):
+        source_type = node.array.type
+        array_info = parse_array_type(source_type)
+        if array_info is None:
+            raise NotImplementedError(f"LLVM backend v1 cannot slice {source_type}")
+        _array_len, elem_type = array_info
+        start = self.cast_to(self.emit_expr(node.start), "i32") if node.start else ir.Constant(ir.IntType(32), 0)
+        end = self.cast_to(self.emit_expr(node.end), "i32") if node.end else ir.Constant(ir.IntType(32), _array_len)
+        count32 = self.builder.sub(end, start, name="slice.count32")
+        count64 = self.builder.sext(count32, ir.IntType(64), name="slice.count64")
+        dest = self.malloc_array(elem_type, count64)
+        source_ptr, _source_type = self.emit_lvalue(node.array)
+
+        cond_bb = self.func.append_basic_block("slice.copy.cond")
+        body_bb = self.func.append_basic_block("slice.copy.body")
+        end_bb = self.func.append_basic_block("slice.copy.end")
+        idx_slot = self.alloca_at_entry("__nc_slice_i", ir.IntType(32))
+        self.builder.store(ir.Constant(ir.IntType(32), 0), idx_slot)
+        self.builder.branch(cond_bb)
+        self.builder.position_at_end(cond_bb)
+        i = self.builder.load(idx_slot, name="slice.i")
+        self.builder.cbranch(self.builder.icmp_signed("<", i, count32), body_bb, end_bb)
+        self.builder.position_at_end(body_bb)
+        source_i = self.builder.add(start, i, name="slice.source.i")
+        source_elem_ptr = self.builder.gep(source_ptr, [ir.Constant(ir.IntType(32), 0), source_i], inbounds=True)
+        dest_elem_ptr = self.builder.gep(dest, [i], inbounds=True)
+        self.builder.store(self.builder.load(source_elem_ptr), dest_elem_ptr)
+        next_i = self.builder.add(i, ir.Constant(ir.IntType(32), 1))
+        self.builder.store(next_i, idx_slot)
+        self.builder.branch(cond_bb)
+        self.builder.position_at_end(end_bb)
+        return self.slice_value(elem_type, dest, count64, count64)
+
+    def slice_value(self, elem_type, ptr, length, cap):
+        if isinstance(length, int):
+            length = ir.Constant(ir.IntType(64), length)
+        if isinstance(cap, int):
+            cap = ir.Constant(ir.IntType(64), cap)
+        value = ir.Constant(llvm_type(f"[]{elem_type}"), ir.Undefined)
+        value = self.builder.insert_value(value, ptr, [0], name="slice.ptr")
+        value = self.builder.insert_value(value, length, [1], name="slice.len")
+        value = self.builder.insert_value(value, cap, [2], name="slice.cap")
+        return value
+
     def emit_lvalue(self, node):
         if isinstance(node, Identifier):
             return self.vars[node.name]
@@ -332,6 +442,13 @@ class LLVMCodegen:
             field_ptr = self.builder.gep(obj_ptr, [zero, index], inbounds=True, name="field.ptr")
             return field_ptr, field_type
         if isinstance(node, IndexAccess):
+            if parse_slice_type(node.obj.type) is not None:
+                slice_value = self.emit_expr(node.obj)
+                elem_type = parse_slice_type(node.obj.type)
+                ptr = self.builder.extract_value(slice_value, 0)
+                idx = self.cast_to(self.emit_expr(node.index), "i32")
+                elem_ptr = self.builder.gep(ptr, [idx], inbounds=True, name="slice.idx.ptr")
+                return elem_ptr, elem_type
             array_ptr, array_type = self.emit_lvalue(node.obj)
             array_info = parse_array_type(array_type)
             if array_info is None:
@@ -478,6 +595,9 @@ class LLVMCodegen:
             if node.args[0].type == "str":
                 length64 = self.builder.extract_value(arg, 1)
                 return self.builder.trunc(length64, ir.IntType(32))
+            if parse_slice_type(node.args[0].type) is not None:
+                length64 = self.builder.extract_value(arg, 1)
+                return self.builder.trunc(length64, ir.IntType(32))
             raise NotImplementedError(f"LLVM backend v1 cannot take len of {node.args[0].type}")
         if node.name in INT_TYPES or node.name in FLOAT_TYPES:
             if len(node.args) != 1:
@@ -520,6 +640,32 @@ class LLVMCodegen:
         if self.printf is None:
             i8ptr = ir.IntType(8).as_pointer()
             self.printf = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [i8ptr], var_arg=True), name="printf")
+
+    def ensure_malloc(self):
+        if self.malloc is None:
+            self.malloc = ir.Function(self.module, ir.FunctionType(I8PTR, [ir.IntType(64)]), name="malloc")
+
+    def malloc_array(self, elem_type: str, count):
+        self.ensure_malloc()
+        elem_size = ir.Constant(ir.IntType(64), self.sizeof_type(elem_type))
+        size = self.builder.mul(count, elem_size, name="malloc.size")
+        raw = self.builder.call(self.malloc, [size], name="malloc.raw")
+        return self.builder.bitcast(raw, llvm_type(elem_type).as_pointer(), name="malloc.typed")
+
+    def sizeof_type(self, nc_type: str) -> int:
+        if nc_type in ("i8", "u8", "bool"):
+            return 1
+        if nc_type in ("i16", "u16"):
+            return 2
+        if nc_type in ("i32", "u32", "f32") or nc_type in ENUM_VARIANTS:
+            return 4
+        if nc_type in ("i64", "u64", "f64"):
+            return 8
+        if nc_type == "str":
+            return 16
+        if nc_type in STRUCT_FIELDS:
+            return sum(self.sizeof_type(field_type) for _field_name, field_type in STRUCT_FIELDS[nc_type])
+        raise NotImplementedError(f"LLVM backend v1 cannot sizeof {nc_type}")
 
     def ensure_memcmp(self):
         if self.memcmp is None:

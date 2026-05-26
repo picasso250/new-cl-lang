@@ -222,3 +222,12 @@
 - 已扩 LLVM 覆盖率到 range for：支持 or i in start..end，循环变量为 i32，按 start <= i < end 递增；slice/array for-in 仍留给后续 slice/runtime 迁移。
 - 新增 LLVM 测试覆盖 range for 累加；已验证 --backend llvm 可运行 case_036_for_range。
 
+
+## 2026-05-26
+
+- 预备扩 LLVM 覆盖到 slice 基础能力：先支持 []T 布局、slice literal、len(slice)、slice index，以及 [N]T[lo:hi] 复制成 slice；底层暂用 libc malloc，不接 GC root/append。
+
+
+- 已扩 LLVM 覆盖率到 slice 基础能力：支持 []T 布局、slice literal、len(slice)、slice index、[N]T[lo:hi] 复制成 slice、slice 参数/返回和 or i, item in s。底层暂用 libc malloc，append/GC root/重分配留后续 runtime 迁移。
+- 新增 LLVM 测试覆盖 slice literal/len/index/参数返回、数组切片复制和 slice for-in；已验证 --backend llvm 可运行 case_021_slice、case_026_forin、case_038_slice_lit。
+
