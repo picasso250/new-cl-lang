@@ -257,3 +257,11 @@
 - 已扩 LLVM 覆盖率到 break：支持在条件 for、range for、slice for-in 中 break 到当前 loop end block；block 已终止后不再发射后续语句。
 - 新增 LLVM 测试覆盖三类 loop 中的 break；已验证 --backend llvm 可运行 case_037_len_break。
 
+
+## 2026-05-26
+
+- 预备扩 LLVM 覆盖到临时文件 IO builtins：支持 read_file(path) 与 write_file(path, content)，直接调用 MinGW libc fopen/fread/fwrite/fclose，打开失败保持 C 后端当前空串/忽略写入语义；本轮仍不接 NC GC allocator/root。
+
+
+- 已扩 LLVM 覆盖率到临时文件 IO builtins：read_file/write_file 直接声明并调用 MinGW libc fopen/fread/fwrite/fclose/fseek/ftell；打开失败返回空 str，写入打开失败直接忽略。读入 buffer 当前仍用 libc malloc，不接 NC GC allocator/root。
+

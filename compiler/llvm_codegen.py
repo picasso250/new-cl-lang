@@ -99,6 +99,12 @@ class LLVMCodegen:
         self.printf = None
         self.malloc = None
         self.memcmp = None
+        self.fopen = None
+        self.fread = None
+        self.fwrite = None
+        self.fclose = None
+        self.fseek = None
+        self.ftell = None
         self.strings: dict[tuple[str, str], ir.GlobalVariable] = {}
         self.fn_decls: dict[str, FunctionDeclaration] = {}
         self.break_stack = []
@@ -673,6 +679,14 @@ class LLVMCodegen:
             if elem_type is None:
                 raise NotImplementedError(f"LLVM backend v1 cannot append to {slice_type}")
             return self.emit_append(node.args[0], node.args[1], elem_type)
+        if node.name == "read_file":
+            if len(node.args) != 1:
+                raise RuntimeError("read_file expects one argument")
+            return self.emit_read_file(node.args[0])
+        if node.name == "write_file":
+            if len(node.args) != 2:
+                raise RuntimeError("write_file expects two arguments")
+            return self.emit_write_file(node.args[0], node.args[1])
         if node.name in INT_TYPES or node.name in FLOAT_TYPES:
             if len(node.args) != 1:
                 raise RuntimeError(f"{node.name} expects one argument")
@@ -820,6 +834,100 @@ class LLVMCodegen:
                 ir.FunctionType(ir.IntType(32), [I8PTR, I8PTR, ir.IntType(64)]),
                 name="memcmp",
             )
+
+    def ensure_file_io(self):
+        if self.fopen is None:
+            file_ptr = I8PTR
+            self.fopen = ir.Function(
+                self.module,
+                ir.FunctionType(file_ptr, [I8PTR, I8PTR]),
+                name="fopen",
+            )
+            self.fread = ir.Function(
+                self.module,
+                ir.FunctionType(ir.IntType(64), [I8PTR, ir.IntType(64), ir.IntType(64), file_ptr]),
+                name="fread",
+            )
+            self.fwrite = ir.Function(
+                self.module,
+                ir.FunctionType(ir.IntType(64), [I8PTR, ir.IntType(64), ir.IntType(64), file_ptr]),
+                name="fwrite",
+            )
+            self.fclose = ir.Function(
+                self.module,
+                ir.FunctionType(ir.IntType(32), [file_ptr]),
+                name="fclose",
+            )
+            self.fseek = ir.Function(
+                self.module,
+                ir.FunctionType(ir.IntType(32), [file_ptr, ir.IntType(32), ir.IntType(32)]),
+                name="fseek",
+            )
+            self.ftell = ir.Function(
+                self.module,
+                ir.FunctionType(ir.IntType(32), [file_ptr]),
+                name="ftell",
+            )
+
+    def emit_read_file(self, path_expr):
+        self.ensure_file_io()
+        path = self.emit_expr(path_expr)
+        path_ptr = self.builder.extract_value(path, 0)
+        mode = self.global_c_string("rb", "file_mode")
+        fp = self.builder.call(self.fopen, [path_ptr, mode], name="read.fp")
+        fp_is_null = self.builder.icmp_unsigned("==", fp, ir.Constant(I8PTR, None))
+
+        open_bb = self.func.append_basic_block("read.open")
+        empty_bb = self.func.append_basic_block("read.empty")
+        end_bb = self.func.append_basic_block("read.end")
+        self.builder.cbranch(fp_is_null, empty_bb, open_bb)
+
+        self.builder.position_at_end(empty_bb)
+        empty_value = self.str_value(ir.Constant(I8PTR, None), ir.Constant(ir.IntType(64), 0))
+        self.builder.branch(end_bb)
+        empty_incoming = self.builder.block
+
+        self.builder.position_at_end(open_bb)
+        self.builder.call(self.fseek, [fp, ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 2)])
+        len32 = self.builder.call(self.ftell, [fp], name="read.len32")
+        self.builder.call(self.fseek, [fp, ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)])
+        len64 = self.builder.zext(len32, ir.IntType(64), name="read.len64")
+        alloc_len = self.builder.add(len64, ir.Constant(ir.IntType(64), 1), name="read.alloc.len")
+        buf = self.malloc_bytes(alloc_len)
+        self.builder.call(self.fread, [buf, ir.Constant(ir.IntType(64), 1), len64, fp])
+        nul_ptr = self.builder.gep(buf, [len64], inbounds=True)
+        self.builder.store(ir.Constant(ir.IntType(8), 0), nul_ptr)
+        self.builder.call(self.fclose, [fp])
+        file_value = self.str_value(buf, len64)
+        self.builder.branch(end_bb)
+        file_incoming = self.builder.block
+
+        self.builder.position_at_end(end_bb)
+        phi = self.builder.phi(STR_TYPE, name="read.result")
+        phi.add_incoming(empty_value, empty_incoming)
+        phi.add_incoming(file_value, file_incoming)
+        return phi
+
+    def emit_write_file(self, path_expr, content_expr):
+        self.ensure_file_io()
+        path = self.emit_expr(path_expr)
+        content = self.emit_expr(content_expr)
+        path_ptr = self.builder.extract_value(path, 0)
+        mode = self.global_c_string("wb", "file_mode")
+        fp = self.builder.call(self.fopen, [path_ptr, mode], name="write.fp")
+        fp_is_null = self.builder.icmp_unsigned("==", fp, ir.Constant(I8PTR, None))
+
+        body_bb = self.func.append_basic_block("write.body")
+        end_bb = self.func.append_basic_block("write.end")
+        self.builder.cbranch(fp_is_null, end_bb, body_bb)
+        self.builder.position_at_end(body_bb)
+        ptr = self.builder.extract_value(content, 0)
+        length = self.builder.extract_value(content, 1)
+        self.builder.call(self.fwrite, [ptr, ir.Constant(ir.IntType(64), 1), length, fp])
+        self.builder.call(self.fclose, [fp])
+        self.builder.branch(end_bb)
+        self.builder.position_at_end(end_bb)
+        return ir.Constant(ir.IntType(1), 0)
 
     def emit_str_eq(self, left, right):
         self.ensure_memcmp()

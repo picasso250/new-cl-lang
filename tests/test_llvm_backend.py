@@ -348,6 +348,20 @@ fun main() {
     assert (stdout.strip(), stderr.strip(), rc) == ("5\n0\n1\n2\n10\n7", "", 0)
 
 
+def test_llvm_file_io(tmp_path):
+    path = str(tmp_path / "llvm_file_io.txt").replace("\\", "/")
+    source = f"""import io
+fun main() {{
+    write_file("{path}", "hello")
+    let content = read_file("{path}")
+    io.println(content)
+}}
+"""
+    llvm_ir = compile_nc_to_llvm_ir(source)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    assert (stdout.strip(), stderr.strip(), rc) == ("hello", "", 0)
+
+
 def test_llvm_build_writes_ir_obj_and_exe(tmp_path):
     llvm_ir = compile_nc_to_llvm_ir("import io\nfun main() { io.println(42) }")
     ll_path, obj_path, exe_path = build_llvm_ir(llvm_ir, str(tmp_path), "main")
