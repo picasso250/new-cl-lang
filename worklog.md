@@ -265,3 +265,11 @@
 
 - 已扩 LLVM 覆盖率到临时文件 IO builtins：read_file/write_file 直接声明并调用 MinGW libc fopen/fread/fwrite/fclose/fseek/ftell；打开失败返回空 str，写入打开失败直接忽略。读入 buffer 当前仍用 libc malloc，不接 NC GC allocator/root。
 
+
+## 2026-05-26
+
+- 预备扩 LLVM 覆盖到 nc_map 基础能力：支持 map_new、m[str]=str、m[str]、map_has、len(map)。本轮 LLVM map 使用连续 entry + 线性查找 + 满容量复制增长，先保证语言语义，不复刻 C runtime 哈希表内部布局；底层仍暂用 libc malloc，不接 GC root。
+
+
+- 已扩 LLVM 覆盖率到 nc_map 基础能力：支持 map_new、字符串键索引赋值/读取、map_set_s/map_get_s、map_has、len(map)，并覆盖容量增长与覆盖更新。LLVM map 当前使用连续 entry + 线性查找 + malloc 复制增长，未复用 C runtime 哈希表，也未接 GC root。
+

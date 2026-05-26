@@ -39,6 +39,8 @@ FLOAT_TYPES = {"f32": ir.FloatType(), "f64": ir.DoubleType()}
 DEFAULT_TRIPLE = "x86_64-w64-windows-gnu"
 I8PTR = ir.IntType(8).as_pointer()
 STR_TYPE = ir.LiteralStructType([I8PTR, ir.IntType(64)])
+MAP_ENTRY_TYPE = ir.LiteralStructType([STR_TYPE, STR_TYPE])
+MAP_TYPE = ir.LiteralStructType([MAP_ENTRY_TYPE.as_pointer(), ir.IntType(64), ir.IntType(64)])
 STRUCT_TYPES: dict[str, ir.LiteralStructType] = {}
 STRUCT_FIELDS: dict[str, list[tuple[str, str]]] = {}
 STRUCT_FIELD_INDEX: dict[str, dict[str, int]] = {}
@@ -55,6 +57,8 @@ def llvm_type(nc_type: str | None):
         return FLOAT_TYPES[nc_type]
     if nc_type == "str":
         return STR_TYPE
+    if nc_type == "nc_map":
+        return MAP_TYPE
     if nc_type in ENUM_VARIANTS:
         return ir.IntType(32)
     if nc_type in STRUCT_TYPES:
@@ -208,6 +212,9 @@ class LLVMCodegen:
             self.builder.store(self.cast_to(self.emit_expr(stmt.initializer), stmt.type), slot)
             return
         if isinstance(stmt, Assignment):
+            if isinstance(stmt.target, IndexAccess) and stmt.target.obj.type == "nc_map":
+                self.emit_map_set(stmt.target.obj, stmt.target.index, stmt.expr)
+                return
             ptr, target_type = self.emit_lvalue(stmt.target)
             self.builder.store(self.cast_to(self.emit_expr(stmt.expr), target_type), ptr)
             return
@@ -354,6 +361,8 @@ class LLVMCodegen:
         if isinstance(node, SliceExpr):
             return self.emit_slice_expr(node)
         if isinstance(node, IndexAccess):
+            if node.obj.type == "nc_map":
+                return self.emit_map_get(node.obj, node.index)
             if node.obj.type == "str":
                 string_value = self.emit_expr(node.obj)
                 ptr = self.builder.extract_value(string_value, 0)
@@ -670,7 +679,24 @@ class LLVMCodegen:
             if parse_slice_type(node.args[0].type) is not None:
                 length64 = self.builder.extract_value(arg, 1)
                 return self.builder.trunc(length64, ir.IntType(32))
+            if node.args[0].type == "nc_map":
+                length64 = self.builder.extract_value(arg, 2)
+                return self.builder.trunc(length64, ir.IntType(32))
             raise NotImplementedError(f"LLVM backend v1 cannot take len of {node.args[0].type}")
+        if node.name == "map_new":
+            return self.emit_map_new()
+        if node.name == "map_has":
+            if len(node.args) != 2:
+                raise RuntimeError("map_has expects two arguments")
+            return self.emit_map_has(node.args[0], node.args[1])
+        if node.name == "map_get_s":
+            if len(node.args) != 2:
+                raise RuntimeError("map_get_s expects two arguments")
+            return self.emit_map_get(node.args[0], node.args[1])
+        if node.name == "map_set_s":
+            if len(node.args) != 3:
+                raise RuntimeError("map_set_s expects three arguments")
+            return self.emit_map_set(node.args[0], node.args[1], node.args[2])
         if node.name == "append":
             if len(node.args) != 2:
                 raise RuntimeError("append expects two arguments")
@@ -770,6 +796,172 @@ class LLVMCodegen:
         value = self.builder.insert_value(value, ptr, [0], name="str.ptr")
         value = self.builder.insert_value(value, length, [1], name="str.len")
         return value
+
+    def map_value(self, entries, cap, length):
+        value = ir.Constant(MAP_TYPE, ir.Undefined)
+        value = self.builder.insert_value(value, entries, [0], name="map.entries")
+        value = self.builder.insert_value(value, cap, [1], name="map.cap")
+        value = self.builder.insert_value(value, length, [2], name="map.len")
+        return value
+
+    def emit_map_new(self):
+        cap = ir.Constant(ir.IntType(64), 16)
+        entries = self.malloc_map_entries(cap)
+        return self.map_value(entries, cap, ir.Constant(ir.IntType(64), 0))
+
+    def malloc_map_entries(self, count):
+        self.ensure_malloc()
+        size = self.builder.mul(count, ir.Constant(ir.IntType(64), 32), name="map.malloc.size")
+        raw = self.builder.call(self.malloc, [size], name="map.malloc.raw")
+        return self.builder.bitcast(raw, MAP_ENTRY_TYPE.as_pointer(), name="map.entries.ptr")
+
+    def map_entry_key_ptr(self, entries, idx):
+        zero = ir.Constant(ir.IntType(32), 0)
+        return self.builder.gep(entries, [idx, zero], inbounds=True, name="map.key.ptr")
+
+    def map_entry_value_ptr(self, entries, idx):
+        one = ir.Constant(ir.IntType(32), 1)
+        return self.builder.gep(entries, [idx, one], inbounds=True, name="map.value.ptr")
+
+    def emit_map_find_index(self, map_value, key_value, label):
+        entries = self.builder.extract_value(map_value, 0)
+        length = self.builder.extract_value(map_value, 2)
+        result_slot = self.alloca_at_entry(f"__nc_{label}_result", ir.IntType(64))
+        idx_slot = self.alloca_at_entry(f"__nc_{label}_i", ir.IntType(64))
+        self.builder.store(ir.Constant(ir.IntType(64), -1), result_slot)
+        self.builder.store(ir.Constant(ir.IntType(64), 0), idx_slot)
+
+        cond_bb = self.func.append_basic_block(f"{label}.find.cond")
+        body_bb = self.func.append_basic_block(f"{label}.find.body")
+        hit_bb = self.func.append_basic_block(f"{label}.find.hit")
+        step_bb = self.func.append_basic_block(f"{label}.find.step")
+        end_bb = self.func.append_basic_block(f"{label}.find.end")
+        self.builder.branch(cond_bb)
+        self.builder.position_at_end(cond_bb)
+        i = self.builder.load(idx_slot, name=f"{label}.i")
+        self.builder.cbranch(self.builder.icmp_unsigned("<", i, length), body_bb, end_bb)
+        self.builder.position_at_end(body_bb)
+        entry_key = self.builder.load(self.map_entry_key_ptr(entries, i), name=f"{label}.key")
+        self.builder.cbranch(self.emit_str_eq(entry_key, key_value), hit_bb, step_bb)
+        self.builder.position_at_end(hit_bb)
+        self.builder.store(i, result_slot)
+        self.builder.branch(end_bb)
+        self.builder.position_at_end(step_bb)
+        self.builder.store(self.builder.add(i, ir.Constant(ir.IntType(64), 1)), idx_slot)
+        self.builder.branch(cond_bb)
+        self.builder.position_at_end(end_bb)
+        return self.builder.load(result_slot, name=f"{label}.result")
+
+    def emit_map_get(self, map_expr, key_expr):
+        map_value = self.emit_expr(map_expr)
+        key = self.emit_expr(key_expr)
+        found = self.emit_map_find_index(map_value, key, "map.get")
+        has_value = self.builder.icmp_signed("!=", found, ir.Constant(ir.IntType(64), -1))
+        found_bb = self.func.append_basic_block("map.get.found")
+        empty_bb = self.func.append_basic_block("map.get.empty")
+        end_bb = self.func.append_basic_block("map.get.end")
+        self.builder.cbranch(has_value, found_bb, empty_bb)
+
+        self.builder.position_at_end(found_bb)
+        entries = self.builder.extract_value(map_value, 0)
+        value = self.builder.load(self.map_entry_value_ptr(entries, found), name="map.get.value")
+        self.builder.branch(end_bb)
+        value_incoming = self.builder.block
+
+        self.builder.position_at_end(empty_bb)
+        empty = self.str_value(ir.Constant(I8PTR, None), ir.Constant(ir.IntType(64), 0))
+        self.builder.branch(end_bb)
+        empty_incoming = self.builder.block
+
+        self.builder.position_at_end(end_bb)
+        phi = self.builder.phi(STR_TYPE, name="map.get.result")
+        phi.add_incoming(value, value_incoming)
+        phi.add_incoming(empty, empty_incoming)
+        return phi
+
+    def emit_map_has(self, map_expr, key_expr):
+        map_value = self.emit_expr(map_expr)
+        key = self.emit_expr(key_expr)
+        found = self.emit_map_find_index(map_value, key, "map.has")
+        has_value = self.builder.icmp_signed("!=", found, ir.Constant(ir.IntType(64), -1))
+        return self.builder.zext(has_value, ir.IntType(32), name="map.has.i32")
+
+    def emit_map_set(self, map_expr, key_expr, value_expr):
+        map_ptr, map_type = self.emit_lvalue(map_expr)
+        if map_type != "nc_map":
+            raise NotImplementedError(f"LLVM backend v1 cannot map-set {map_type}")
+        map_value = self.builder.load(map_ptr, name="map.set.map")
+        key = self.emit_expr(key_expr)
+        value = self.emit_expr(value_expr)
+        found = self.emit_map_find_index(map_value, key, "map.set")
+        has_value = self.builder.icmp_signed("!=", found, ir.Constant(ir.IntType(64), -1))
+
+        update_bb = self.func.append_basic_block("map.set.update")
+        append_bb = self.func.append_basic_block("map.set.append")
+        end_bb = self.func.append_basic_block("map.set.end")
+        self.builder.cbranch(has_value, update_bb, append_bb)
+
+        self.builder.position_at_end(update_bb)
+        entries = self.builder.extract_value(map_value, 0)
+        self.builder.store(value, self.map_entry_value_ptr(entries, found))
+        self.builder.branch(end_bb)
+
+        self.builder.position_at_end(append_bb)
+        new_map = self.emit_map_append(map_value, key, value)
+        self.builder.store(new_map, map_ptr)
+        self.builder.branch(end_bb)
+
+        self.builder.position_at_end(end_bb)
+        return ir.Constant(ir.IntType(1), 0)
+
+    def emit_map_append(self, map_value, key, value):
+        entries = self.builder.extract_value(map_value, 0)
+        cap = self.builder.extract_value(map_value, 1)
+        length = self.builder.extract_value(map_value, 2)
+        full = self.builder.icmp_unsigned(">=", length, cap)
+        grow_bb = self.func.append_basic_block("map.grow")
+        keep_bb = self.func.append_basic_block("map.keep")
+        copy_bb = self.func.append_basic_block("map.copy")
+        end_bb = self.func.append_basic_block("map.grow.end")
+        self.builder.cbranch(full, grow_bb, keep_bb)
+
+        self.builder.position_at_end(grow_bb)
+        new_cap = self.builder.mul(cap, ir.Constant(ir.IntType(64), 2), name="map.new.cap")
+        new_entries = self.malloc_map_entries(new_cap)
+        idx_slot = self.alloca_at_entry("__nc_map_copy_i", ir.IntType(64))
+        self.builder.store(ir.Constant(ir.IntType(64), 0), idx_slot)
+        self.builder.branch(copy_bb)
+
+        self.builder.position_at_end(copy_bb)
+        i = self.builder.load(idx_slot, name="map.copy.i")
+        copy_body_bb = self.func.append_basic_block("map.copy.body")
+        copy_done_bb = self.func.append_basic_block("map.copy.done")
+        self.builder.cbranch(self.builder.icmp_unsigned("<", i, length), copy_body_bb, copy_done_bb)
+        self.builder.position_at_end(copy_body_bb)
+        old_entry = self.builder.load(self.builder.gep(entries, [i], inbounds=True), name="map.old.entry")
+        self.builder.store(old_entry, self.builder.gep(new_entries, [i], inbounds=True))
+        self.builder.store(self.builder.add(i, ir.Constant(ir.IntType(64), 1)), idx_slot)
+        self.builder.branch(copy_bb)
+        self.builder.position_at_end(copy_done_bb)
+        self.builder.branch(end_bb)
+        grow_incoming = self.builder.block
+
+        self.builder.position_at_end(keep_bb)
+        self.builder.branch(end_bb)
+        keep_incoming = self.builder.block
+
+        self.builder.position_at_end(end_bb)
+        entries_phi = self.builder.phi(MAP_ENTRY_TYPE.as_pointer(), name="map.entries.active")
+        cap_phi = self.builder.phi(ir.IntType(64), name="map.cap.active")
+        entries_phi.add_incoming(new_entries, grow_incoming)
+        entries_phi.add_incoming(entries, keep_incoming)
+        cap_phi.add_incoming(new_cap, grow_incoming)
+        cap_phi.add_incoming(cap, keep_incoming)
+
+        self.builder.store(key, self.map_entry_key_ptr(entries_phi, length))
+        self.builder.store(value, self.map_entry_value_ptr(entries_phi, length))
+        new_len = self.builder.add(length, ir.Constant(ir.IntType(64), 1), name="map.len.next")
+        return self.map_value(entries_phi, cap_phi, new_len)
 
     def ensure_printf(self):
         if self.printf is None:
