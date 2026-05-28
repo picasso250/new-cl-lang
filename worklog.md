@@ -382,3 +382,11 @@
 
 - 已将 CLI 默认后端切换到 LLVM：run/compile/build 无 --backend 时走 LLVM，默认 build 产出 main.ll/main.obj/main.exe；C 后端保留为 --backend c，C build 测试改为显式 --backend c。已验证默认 run/compile/build smoke、C 后端回归和 LLVM pytest。
 
+
+## 2026-05-28
+
+- 预备明确 LLVM v1 默认后端的 GC 边界和放弃点：当前默认后端采用不释放的 __nc_gc_alloc shim 保证对象保活，真正 root slot 注册、heap 扫描、释放/复用和 runtime GC ABI 延期到默认切换后的 runtime 工作。
+
+
+- 已明确 LLVM v1 默认后端的 GC 边界和放弃点：design.md 记录默认 LLVM 采用不释放的 __nc_gc_alloc shim 保证动态分配对象保活，真正 root slot、heap 扫描、释放/复用和 runtime GC ABI 延期；已验证 C/reference 回归与 LLVM 全量 case/project pytest。
+
