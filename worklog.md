@@ -334,3 +334,11 @@
 
 - 已扩 LLVM 覆盖到捕获 closure/function value：支持 env struct、按值拷贝 captures、closure 参数传递、closure 返回、i32/str/slice 捕获；已验证 case_100~105、case_113、case_114。延期点：closure env 仍使用 libc malloc，尚未纳入 GC root/allocator。
 
+
+## 2026-05-28
+
+- 预备补 LLVM 单文件正向 case 自动回归：从 test_cases 读取 # STDOUT 期望，使用 --backend llvm 跑所有非异常/defer 延期 case，作为切默认前的持续门槛。
+
+
+- 已补 LLVM 单文件正向 case 自动回归：tests/test_llvm_cases.py 读取 # STDOUT 并跑所有非异常/defer 延期 case；同时修正 LLVM io.println(bool) 为 1/0、浮点输出为 %g 风格，与 C 后端/test_cases 期望对齐。
+

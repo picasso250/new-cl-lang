@@ -899,13 +899,11 @@ class LLVMCodegen:
             length32 = self.builder.trunc(length64, ir.IntType(32))
             return self.builder.call(self.printf, [fmt, length32, ptr])
         if typ == "bool":
-            true_s = self.global_c_string("true", "bool_true")
-            false_s = self.global_c_string("false", "bool_false")
-            selected = self.builder.select(self.bool_value(val), true_s, false_s)
-            fmt = self.global_c_string("%s\n", "fmt_bool")
-            return self.builder.call(self.printf, [fmt, selected])
+            fmt = self.global_c_string("%d\n", "fmt_bool")
+            as_i32 = self.builder.zext(self.bool_value(val), ir.IntType(32), name="bool.i32")
+            return self.builder.call(self.printf, [fmt, as_i32])
         if typ in ("f32", "f64"):
-            fmt = self.global_c_string("%f\n", "fmt_float")
+            fmt = self.global_c_string("%g\n", "fmt_float")
             if typ == "f32":
                 val = self.builder.fpext(val, ir.DoubleType())
             return self.builder.call(self.printf, [fmt, val])

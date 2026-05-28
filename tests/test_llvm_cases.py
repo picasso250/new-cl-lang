@@ -1,0 +1,58 @@
+"""LLVM backend regression over positive single-file cases."""
+
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parent.parent
+CASE_DIR = ROOT / "test_cases"
+DEFERRED_TOKENS = ("throw", "try", "catch", "defer")
+
+
+def expected_stdout(path: Path) -> str | None:
+    lines = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        match = re.match(r"\s*# STDOUT:\s?(.*)$", line)
+        if match:
+            lines.append(match.group(1))
+    if not lines:
+        return None
+    return "\n".join(lines)
+
+
+def llvm_positive_cases():
+    cases = []
+    for path in sorted(CASE_DIR.glob("case_*.nc")):
+        text = path.read_text(encoding="utf-8")
+        expected = expected_stdout(path)
+        if expected is None:
+            continue
+        if any(token in text for token in DEFERRED_TOKENS):
+            continue
+        cases.append((path, expected))
+    return cases
+
+
+def run_nc(*args):
+    return subprocess.run(
+        [sys.executable, str(ROOT / "nc.py"), *args],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_llvm_positive_single_file_cases():
+    failures = []
+    for path, expected in llvm_positive_cases():
+        result = run_nc("run", "--backend", "llvm", str(path))
+        actual = result.stdout.strip()
+        if result.returncode != 0 or actual != expected:
+            failures.append(
+                f"{os.path.relpath(path, ROOT)}: rc={result.returncode}, "
+                f"stdout={actual!r}, expected={expected!r}, stderr={result.stderr[-500:]!r}"
+            )
+    assert not failures, "\n".join(failures)

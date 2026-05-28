@@ -52,7 +52,7 @@ fun main() {
 """
     llvm_ir = compile_nc_to_llvm_ir(source)
     stdout, stderr, rc = run_llvm_ir(llvm_ir)
-    assert (stdout.strip(), stderr.strip(), rc) == ("4\ntrue\ntrue", "", 0)
+    assert (stdout.strip(), stderr.strip(), rc) == ("4\n1\n1", "", 0)
 
 
 def test_llvm_numeric_casts():
@@ -69,7 +69,7 @@ fun main() {
 """
     llvm_ir = compile_nc_to_llvm_ir(source)
     stdout, stderr, rc = run_llvm_ir(llvm_ir)
-    assert (stdout.strip(), stderr.strip(), rc) == ("42\n42.000000\n42", "", 0)
+    assert (stdout.strip(), stderr.strip(), rc) == ("42\n42\n42", "", 0)
 
 
 def test_llvm_string_numeric_casts():
