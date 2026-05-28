@@ -17,7 +17,7 @@ from compiler.ast import (
     FunctionExpr,
     ForIn, FunctionDeclaration, Identifier, IfExpr, IndexAccess, IntegerLiteral,
     MatchExpr, MethodCall, NilLiteral, Return, SliceExpr, SliceLiteral, StringLiteral, StructDecl,
-    StructLiteral, UnaryOp, VariableDeclaration, While,
+    StructLiteral, Throw, TryCatch, UnaryOp, VariableDeclaration, While,
 )
 from compiler.c_abi import c_user_ident
 from compiler.codegen_collect import collect_codegen_inputs, parse_fn_type
@@ -114,9 +114,13 @@ class LLVMCodegen:
         self.func = None
         self.vars: dict[str, tuple[ir.AllocaInstr, str]] = {}
         self.printf = None
+        self.fprintf = None
+        self.acrt_iob_func = None
         self.malloc = None
         self.gc_alloc = None
         self.gc_live_count = None
+        self.ex_active = None
+        self.ex_value = None
         self.memcmp = None
         self.fopen = None
         self.fread = None
@@ -130,6 +134,9 @@ class LLVMCodegen:
         self.fn_decls: dict[str, FunctionDeclaration] = {}
         self.closure_env_types: dict[int, ir.LiteralStructType] = {}
         self.break_stack = []
+        self.exception_stack = []
+        self.current_return_type = "void"
+        self.current_is_main = False
 
     def generate(self, program) -> str:
         collected = collect_codegen_inputs(program)
@@ -248,12 +255,16 @@ class LLVMCodegen:
         self.emit_callable_body(fn.body, fn.return_type or "void", f"function {fn.name}", is_main=fn.name == "main")
 
     def emit_callable_body(self, body: Block, return_type: str, name: str, is_main: bool = False):
+        prev_return_type, prev_is_main = self.current_return_type, self.current_is_main
+        self.current_return_type = return_type
+        self.current_is_main = is_main
         stmts = body.statements
         if return_type != "void" and stmts and isinstance(stmts[-1], ExpressionStatement):
             for stmt in stmts[:-1]:
                 self.emit_stmt(stmt)
             if not self.builder.block.is_terminated:
                 self.builder.ret(self.cast_to(self.emit_expr(stmts[-1].expr), return_type))
+            self.current_return_type, self.current_is_main = prev_return_type, prev_is_main
             return
         self.emit_block(body)
         if not self.builder.block.is_terminated:
@@ -263,6 +274,7 @@ class LLVMCodegen:
                 self.builder.ret_void()
             else:
                 raise RuntimeError(f"missing return in {name}")
+        self.current_return_type, self.current_is_main = prev_return_type, prev_is_main
 
     def alloca_at_entry(self, name, typ):
         return self.builder.alloca(typ, name=name)
@@ -281,16 +293,20 @@ class LLVMCodegen:
             slot = self.alloca_at_entry(c_user_ident(stmt.name), typ)
             self.vars[stmt.name] = (slot, stmt.type)
             self.builder.store(self.cast_to(self.emit_expr(stmt.initializer), stmt.type), slot)
+            self.branch_on_exception()
             return
         if isinstance(stmt, Assignment):
             if isinstance(stmt.target, IndexAccess) and stmt.target.obj.type == "nc_map":
                 self.emit_map_set(stmt.target.obj, stmt.target.index, stmt.expr)
+                self.branch_on_exception()
                 return
             ptr, target_type = self.emit_lvalue(stmt.target)
             self.builder.store(self.cast_to(self.emit_expr(stmt.expr), target_type), ptr)
+            self.branch_on_exception()
             return
         if isinstance(stmt, ExpressionStatement):
             self.emit_expr(stmt.expr)
+            self.branch_on_exception()
             return
         if isinstance(stmt, While):
             self.emit_while(stmt)
@@ -307,12 +323,89 @@ class LLVMCodegen:
             else:
                 self.builder.ret(self.cast_to(self.emit_expr(stmt.expr), stmt.expr.type))
             return
+        if isinstance(stmt, TryCatch):
+            self.emit_try_catch(stmt)
+            return
+        if isinstance(stmt, Throw):
+            self.emit_throw(stmt)
+            return
         if isinstance(stmt, Break):
             if not self.break_stack:
                 raise RuntimeError("break outside loop")
             self.builder.branch(self.break_stack[-1])
             return
         raise NotImplementedError(f"LLVM backend v1 does not support statement: {type(stmt).__name__}")
+
+    def emit_try_catch(self, stmt: TryCatch):
+        self.ensure_exception_runtime()
+        catch_bb = self.func.append_basic_block("try.catch")
+        end_bb = self.func.append_basic_block("try.end")
+        self.exception_stack.append(catch_bb)
+        for inner in stmt.try_block.statements:
+            if self.builder.block.is_terminated:
+                break
+            self.emit_stmt(inner)
+        self.exception_stack.pop()
+        if not self.builder.block.is_terminated:
+            self.builder.branch(end_bb)
+
+        saved_vars = self.vars.copy()
+        self.builder.position_at_end(catch_bb)
+        err_slot = self.alloca_at_entry(c_user_ident(stmt.error_name), STR_TYPE)
+        self.vars[stmt.error_name] = (err_slot, "str")
+        self.builder.store(self.builder.load(self.ex_value, name="catch.ex"), err_slot)
+        self.builder.store(ir.Constant(ir.IntType(1), 0), self.ex_active)
+        self.emit_block(stmt.catch_block)
+        if not self.builder.block.is_terminated:
+            self.builder.branch(end_bb)
+        self.vars = saved_vars
+        self.builder.position_at_end(end_bb)
+
+    def emit_throw(self, stmt: Throw):
+        self.ensure_exception_runtime()
+        value = self.cast_to(self.emit_expr(stmt.expr), "str")
+        self.builder.store(value, self.ex_value)
+        self.builder.store(ir.Constant(ir.IntType(1), 1), self.ex_active)
+        if self.exception_stack:
+            self.builder.branch(self.exception_stack[-1])
+            return
+        self.return_or_abort_on_exception()
+
+    def branch_on_exception(self):
+        if self.builder.block.is_terminated:
+            return
+        self.ensure_exception_runtime()
+        active = self.builder.load(self.ex_active, name="ex.active")
+        has_exception = self.builder.icmp_unsigned("!=", active, ir.Constant(ir.IntType(1), 0))
+        exception_bb = self.exception_stack[-1] if self.exception_stack else self.func.append_basic_block("ex.propagate")
+        cont_bb = self.func.append_basic_block("ex.cont")
+        self.builder.cbranch(has_exception, exception_bb, cont_bb)
+        if not self.exception_stack:
+            self.builder.position_at_end(exception_bb)
+            self.return_or_abort_on_exception()
+        self.builder.position_at_end(cont_bb)
+
+    def return_or_abort_on_exception(self):
+        if self.current_is_main:
+            self.emit_uncaught_exception()
+            self.builder.ret(ir.Constant(self.func.function_type.return_type, 1))
+            return
+        ret_type = self.func.function_type.return_type
+        if ret_type == ir.VoidType():
+            self.builder.ret_void()
+        else:
+            self.builder.ret(self.default_llvm_value(ret_type))
+
+    def emit_uncaught_exception(self):
+        self.ensure_exception_runtime()
+        self.ensure_fprintf()
+        stderr = self.builder.call(self.acrt_iob_func, [ir.Constant(ir.IntType(32), 2)], name="stderr")
+        fmt = self.global_c_string("uncaught: %.*s\n", "fmt_uncaught")
+        ex = self.builder.load(self.ex_value, name="uncaught.ex")
+        ptr = self.builder.extract_value(ex, 0)
+        length64 = self.builder.extract_value(ex, 1)
+        length32 = self.builder.trunc(length64, ir.IntType(32))
+        self.builder.call(self.fprintf, [stderr, fmt, length32, ptr])
 
     def emit_while(self, stmt: While):
         cond_bb = self.func.append_basic_block("while.cond")
@@ -1135,6 +1228,28 @@ class LLVMCodegen:
             i8ptr = ir.IntType(8).as_pointer()
             self.printf = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [i8ptr], var_arg=True), name="printf")
 
+    def ensure_fprintf(self):
+        if self.fprintf is None:
+            self.fprintf = ir.Function(
+                self.module,
+                ir.FunctionType(ir.IntType(32), [I8PTR, I8PTR], var_arg=True),
+                name="fprintf",
+            )
+            self.acrt_iob_func = ir.Function(
+                self.module,
+                ir.FunctionType(I8PTR, [ir.IntType(32)]),
+                name="__acrt_iob_func",
+            )
+
+    def ensure_exception_runtime(self):
+        if self.ex_active is None:
+            self.ex_active = ir.GlobalVariable(self.module, ir.IntType(1), name="__nc_ex_active")
+            self.ex_active.linkage = "internal"
+            self.ex_active.initializer = ir.Constant(ir.IntType(1), 0)
+            self.ex_value = ir.GlobalVariable(self.module, STR_TYPE, name="__nc_ex_value")
+            self.ex_value.linkage = "internal"
+            self.ex_value.initializer = self.default_llvm_value(STR_TYPE)
+
     def ensure_sprintf(self):
         if self.sprintf is None:
             self.sprintf = ir.Function(
@@ -1396,6 +1511,23 @@ class LLVMCodegen:
         if isinstance(value.type, ir.IntType) and value.type.width == 1:
             return value
         return self.builder.icmp_unsigned("!=", value, ir.Constant(value.type, 0))
+
+    def default_llvm_value(self, typ):
+        if typ == ir.VoidType():
+            return None
+        if isinstance(typ, ir.IntType):
+            return ir.Constant(typ, 0)
+        if isinstance(typ, (ir.FloatType, ir.DoubleType)):
+            return ir.Constant(typ, 0.0)
+        if isinstance(typ, ir.PointerType):
+            return ir.Constant(typ, None)
+        if isinstance(typ, ir.LiteralStructType):
+            return ir.Constant.literal_struct([
+                self.default_llvm_value(elem) for elem in typ.elements
+            ])
+        if isinstance(typ, ir.ArrayType):
+            return ir.Constant(typ, None)
+        return ir.Constant(typ, None)
 
     def cast_to(self, value, nc_type):
         target = llvm_type(nc_type)

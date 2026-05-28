@@ -9,7 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CASE_DIR = ROOT / "test_cases"
-DEFERRED_TOKENS = ("throw", "try", "catch", "defer")
+DEFERRED_TOKENS = ("defer",)
 
 
 def expected_stdout(path: Path) -> str | None:

@@ -439,6 +439,32 @@ def test_llvm_gc_live_tracks_allocator_hook():
     assert (stdout.strip(), stderr.strip(), rc) == ("2\n0", "", 0)
 
 
+def test_llvm_throw_try_catch_and_uncaught():
+    source = """import io
+fun risky(path: str): str {
+    if path == "" {
+        throw "bad path"
+    }
+    return "ok"
+}
+fun main() {
+    try {
+        let s = risky("")
+        io.println(s)
+    } catch e {
+        io.println("error: " + e)
+    }
+}
+"""
+    llvm_ir = compile_nc_to_llvm_ir(source)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    assert (stdout.strip(), stderr.strip(), rc) == ("error: bad path", "", 0)
+
+    llvm_ir = compile_nc_to_llvm_ir('fun main() { throw "boom" }')
+    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    assert (stdout.strip(), stderr.strip(), rc) == ("", "uncaught: boom", 1)
+
+
 def test_llvm_no_capture_closure_call():
     source = """import io
 fun main() {

@@ -358,3 +358,11 @@
 
 - 已收敛 LLVM runtime 分配路径：slice、map、closure env、heap struct、字符串构造与 read_file buffer 均走 __nc_gc_alloc shim；gc_live 现在输出该入口的分配计数，gc_collect 暂不释放对象但清零计数。延期点：仍未实现 root slot、扫描和释放。
 
+
+## 2026-05-28
+
+- 预备扩 LLVM 覆盖到轻量 throw/try/catch：使用全局异常 flag + str value，在函数边界返回默认值传播异常，try 块在语句后检查 flag 并跳 catch；本轮不实现 defer，也不使用 setjmp/longjmp。
+
+
+- 已扩 LLVM 覆盖到轻量 throw/try/catch：全局异常 flag + str value，函数返回默认值传播，try 语句边界跳 catch，uncaught throw 在 main 输出 stderr 并返回 1；已验证 case_035_throw、case_043_uncaught_throw。defer 仍延期。
+
