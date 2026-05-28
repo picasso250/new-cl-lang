@@ -70,8 +70,8 @@ import io                # 内置标准模块，不要求存在同级 io/ 目录
 - 显式 `--backend llvm` 走 LLVM Lite 后端：`compile` 输出 LLVM IR，`build` 输出 `build/main.ll`、`build/main.obj` 与 `build/main.exe`。
 - LLVM 后端 v1 当前承诺基础闭环：基础数值/bool 类型、`str` 字面量/索引/切片/拼接、数值转换、`str(i32)`、`i32(str)`、`len(str)`、`str ==/!=`、定长数组字面量/索引/索引赋值、slice layout/literal/index/`len`/`append`、定长数组与 slice 切片复制、slice `for i, item in s`、struct 值类型声明/字面量/字段读写/参数与返回、heap struct `new`、指针 receiver 方法声明/调用、nullable pointer `nil`/`!= nil` 窄化后字段与方法访问、enum tag/variant/比较、整数/字符串/bool/enum `match` 表达式、block 表达式、算术/比较、`let`、重赋值、函数、显式 `return` 与尾表达式返回、`if`、条件 `for`、range `for i in start..end`、`break`、临时文件 IO builtins `read_file`/`write_file`、`nc_map` 的 `map_new`/字符串键读写/`map_has`/`len(map)`、函数调用与 `io.println`。
 - LLVM `nc_map` 当前使用 LLVM 内部连续 entry 布局、线性查找和满容量复制增长；语言可见语义对齐当前字符串键/字符串值 map，但尚未复用 C runtime 哈希表实现。
-- LLVM slice 与运行时构造字符串的底层存储当前暂用 libc `malloc`，尚未接入 NC GC root/allocator；`append` 当前总是分配新底层并复制旧元素，GC 保活与 allocator 统一仍是后续 runtime 迁移项。
-- LLVM 临时 GC 测试钩子当前仅用于保持测试路径可运行：`gc_collect()` 是 no-op，`gc_live()` 输出/返回 0；这不是默认 LLVM 达标所需的真正 GC registry/root 实现。
+- LLVM slice、map、closure env、heap struct 与运行时构造字符串的动态存储统一通过 LLVM 内部 `__nc_gc_alloc` shim 分配；该 shim 当前委托 libc `malloc` 并维护 live 计数，尚未实现 root slot、扫描或释放。
+- LLVM 临时 GC 测试钩子当前仅用于保持测试路径可运行：`gc_collect()` 暂不释放对象，只清零 live 计数；`gc_live()` 输出/返回当前 `__nc_gc_alloc` 分配计数。这不是默认 LLVM 达标所需的真正 GC registry/root 实现。
 - LLVM `throw`/`try`/`catch`/`defer` 当前明确延期：需要独立 runtime C ABI 提供异常 frame、`setjmp`/`longjmp` 和函数退出 defer 栈；在该 runtime 边界落地前，LLVM 后端不实现半套跨函数 unwinding。
 - LLVM function value 当前支持 `{ call, env }` 胖指针：`call` 首参为 `i8* env`，无捕获时 `env == null`；捕获 closure 生成 env struct 并按值拷贝捕获字段，env 分配仍暂用 libc `malloc`，尚未接入 GC root/allocator。
 - LLVM 后端当前使用 MinGW GNU triple `x86_64-w64-windows-gnu` 生成 Windows COFF object，并用 `gcc` 链接。

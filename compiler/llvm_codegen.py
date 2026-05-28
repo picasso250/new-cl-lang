@@ -115,6 +115,8 @@ class LLVMCodegen:
         self.vars: dict[str, tuple[ir.AllocaInstr, str]] = {}
         self.printf = None
         self.malloc = None
+        self.gc_alloc = None
+        self.gc_live_count = None
         self.memcmp = None
         self.fopen = None
         self.fread = None
@@ -828,6 +830,7 @@ class LLVMCodegen:
         if node.name == "gc_collect":
             if len(node.args) != 0:
                 raise RuntimeError("gc_collect expects no arguments")
+            return self.emit_gc_collect()
             return ir.Constant(ir.IntType(1), 0)
         if node.name == "gc_live":
             if len(node.args) != 0:
@@ -974,9 +977,9 @@ class LLVMCodegen:
         return self.map_value(entries, cap, ir.Constant(ir.IntType(64), 0))
 
     def malloc_map_entries(self, count):
-        self.ensure_malloc()
+        self.ensure_gc_runtime()
         size = self.builder.mul(count, ir.Constant(ir.IntType(64), 32), name="map.malloc.size")
-        raw = self.builder.call(self.malloc, [size], name="map.malloc.raw")
+        raw = self.builder.call(self.gc_alloc, [size], name="map.gc.alloc.raw")
         return self.builder.bitcast(raw, MAP_ENTRY_TYPE.as_pointer(), name="map.entries.ptr")
 
     def map_entry_key_ptr(self, entries, idx):
@@ -1152,16 +1155,40 @@ class LLVMCodegen:
         if self.malloc is None:
             self.malloc = ir.Function(self.module, ir.FunctionType(I8PTR, [ir.IntType(64)]), name="malloc")
 
+    def ensure_gc_runtime(self):
+        if self.gc_live_count is None:
+            self.gc_live_count = ir.GlobalVariable(self.module, ir.IntType(32), name="__nc_gc_live_count")
+            self.gc_live_count.linkage = "internal"
+            self.gc_live_count.initializer = ir.Constant(ir.IntType(32), 0)
+        if self.gc_alloc is None:
+            self.gc_alloc = ir.Function(
+                self.module,
+                ir.FunctionType(I8PTR, [ir.IntType(64)]),
+                name="__nc_gc_alloc",
+            )
+            block = self.gc_alloc.append_basic_block("entry")
+            saved_builder, saved_func = self.builder, self.func
+            self.builder = ir.IRBuilder(block)
+            self.func = self.gc_alloc
+            self.ensure_malloc()
+            size = self.gc_alloc.args[0]
+            raw = self.builder.call(self.malloc, [size], name="gc.malloc.raw")
+            live = self.builder.load(self.gc_live_count, name="gc.live")
+            live_next = self.builder.add(live, ir.Constant(ir.IntType(32), 1), name="gc.live.next")
+            self.builder.store(live_next, self.gc_live_count)
+            self.builder.ret(raw)
+            self.builder, self.func = saved_builder, saved_func
+
     def malloc_array(self, elem_type: str, count):
-        self.ensure_malloc()
+        self.ensure_gc_runtime()
         elem_size = ir.Constant(ir.IntType(64), self.sizeof_type(elem_type))
         size = self.builder.mul(count, elem_size, name="malloc.size")
-        raw = self.builder.call(self.malloc, [size], name="malloc.raw")
+        raw = self.builder.call(self.gc_alloc, [size], name="gc.alloc.raw")
         return self.builder.bitcast(raw, llvm_type(elem_type).as_pointer(), name="malloc.typed")
 
     def malloc_bytes(self, count):
-        self.ensure_malloc()
-        return self.builder.call(self.malloc, [count], name="malloc.bytes")
+        self.ensure_gc_runtime()
+        return self.builder.call(self.gc_alloc, [count], name="malloc.bytes")
 
     def emit_i32_to_str(self, arg_expr):
         self.ensure_sprintf()
@@ -1179,11 +1206,17 @@ class LLVMCodegen:
         return self.builder.call(self.atoi, [ptr], name="str.i32")
 
     def emit_gc_live(self):
+        self.ensure_gc_runtime()
         self.ensure_printf()
         fmt = self.global_c_string("%d\n", "fmt_gc_live")
-        zero = ir.Constant(ir.IntType(32), 0)
-        self.builder.call(self.printf, [fmt, zero])
-        return zero
+        live = self.builder.load(self.gc_live_count, name="gc.live")
+        self.builder.call(self.printf, [fmt, live])
+        return live
+
+    def emit_gc_collect(self):
+        self.ensure_gc_runtime()
+        self.builder.store(ir.Constant(ir.IntType(32), 0), self.gc_live_count)
+        return ir.Constant(ir.IntType(1), 0)
 
     def copy_bytes(self, dest, dest_offset, source, source_offset, count, label):
         idx_slot = self.alloca_at_entry(f"__nc_{label}_i", ir.IntType(64))

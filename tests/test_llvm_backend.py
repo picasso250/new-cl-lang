@@ -425,6 +425,20 @@ fun main() {
     assert (stdout.strip(), stderr.strip(), rc) == ("42\n0", "", 0)
 
 
+def test_llvm_gc_live_tracks_allocator_hook():
+    source = """fun main() {
+    let a = str(1)
+    let b = "x" + "y"
+    gc_live()
+    gc_collect()
+    gc_live()
+}
+"""
+    llvm_ir = compile_nc_to_llvm_ir(source)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    assert (stdout.strip(), stderr.strip(), rc) == ("2\n0", "", 0)
+
+
 def test_llvm_no_capture_closure_call():
     source = """import io
 fun main() {

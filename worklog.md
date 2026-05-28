@@ -350,3 +350,11 @@
 
 - 已补 LLVM 错误 case 自动回归：tests/test_llvm_cases.py 现在同时覆盖 # STDOUT 正向 case 和 # ERROR 编译错误 case；LLVM compile --backend llvm 对所有错误 case 均验证失败诊断包含期望文本。
 
+
+## 2026-05-28
+
+- 预备收敛 LLVM runtime 分配路径：新增 __nc_gc_alloc shim，所有 LLVM 后端动态分配从 libc malloc 改为该入口；gc_live 返回当前分配计数，gc_collect 暂不释放但清零计数。此轮目标是 runtime ABI 收敛，不是完整 GC。
+
+
+- 已收敛 LLVM runtime 分配路径：slice、map、closure env、heap struct、字符串构造与 read_file buffer 均走 __nc_gc_alloc shim；gc_live 现在输出该入口的分配计数，gc_collect 暂不释放对象但清零计数。延期点：仍未实现 root slot、扫描和释放。
+
