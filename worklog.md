@@ -342,3 +342,11 @@
 
 - 已补 LLVM 单文件正向 case 自动回归：tests/test_llvm_cases.py 读取 # STDOUT 并跑所有非异常/defer 延期 case；同时修正 LLVM io.println(bool) 为 1/0、浮点输出为 %g 风格，与 C 后端/test_cases 期望对齐。
 
+
+## 2026-05-28
+
+- 预备补 LLVM 错误 case 自动回归：读取 test_cases 中 # ERROR 期望，用 python nc.py compile --backend llvm 验证必须失败且诊断包含期望文本，补齐默认后端达标门槛中的错误用例证据。
+
+
+- 已补 LLVM 错误 case 自动回归：tests/test_llvm_cases.py 现在同时覆盖 # STDOUT 正向 case 和 # ERROR 编译错误 case；LLVM compile --backend llvm 对所有错误 case 均验证失败诊断包含期望文本。
+
