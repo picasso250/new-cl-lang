@@ -374,3 +374,11 @@
 
 - 已扩 LLVM 覆盖到 defer：函数内维护动态 defer site 栈，按 LIFO 在 fallthrough、return、throw 前执行；已验证 case_090~092、case_097~098、case_158、case_159，并将 LLVM 正向 case gate 取消 defer 跳过。
 
+
+## 2026-05-28
+
+- 预备将 CLI 默认后端切换到 LLVM：nc.py run/compile/build 无 --backend 时走 LLVM；C 后端保留为 --backend c。同步更新 build 测试，确保默认 build 产出 main.ll/main.obj/main.exe，C build 仍显式可用。
+
+
+- 已将 CLI 默认后端切换到 LLVM：run/compile/build 无 --backend 时走 LLVM，默认 build 产出 main.ll/main.obj/main.exe；C 后端保留为 --backend c，C build 测试改为显式 --backend c。已验证默认 run/compile/build smoke、C 后端回归和 LLVM pytest。
+

@@ -19,8 +19,8 @@ from compiler import (
 
 
 def _parse_backend(args: list[str]) -> tuple[str, list[str]]:
-    """Parse --backend c|llvm while preserving the existing default."""
-    backend = "c"
+    """Parse --backend c|llvm. LLVM is the default backend."""
+    backend = "llvm"
     rest = []
     i = 0
     while i < len(args):

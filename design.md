@@ -6,12 +6,12 @@
 
 | 项 | 决策 |
 |-----|------|
-| 编译目标 | **目标默认后端为 LLVM**；当前迁移期默认仍为 C，LLVM Lite 后端逐步追平 |
+| 编译目标 | **默认后端为 LLVM**；C 后端保留为 reference/debug 后端 |
 | 运行时 | **自带运行时库**（GC）；迁移目标是独立 runtime C ABI，供 LLVM 后端链接 |
 | 性能级别 | **Go 级性能**即可（非 C 级零开销），接受胖指针、间接调用 |
 | 调试 | 迁移期保留 NC 行号 → 生成产物定位；LLVM 后端后续接 debug metadata |
 | 内存管理 | **GC**（自动管理，不搞所有权 / borrow checker） |
-| 构建系统 | **自带**（无需外部 make/cmake）；迁移期 C 后端生成 `build/main.c` + exe，LLVM 后端生成 `build/main.ll` + `build/main.obj` + exe |
+| 构建系统 | **自带**（无需外部 make/cmake）；默认 LLVM 后端生成 `build/main.ll` + `build/main.obj` + exe，C 后端可通过 `--backend c` 生成 `build/main.c` + exe |
 | 入口点 | `fun main()` —— 程序从 main 函数启动 |
 | 标准库 | `println` 在内置一级模块 `io` 中，需 `import io` 后用 `io.println(value)` |
 | 并发 | 延迟决策，不走语言级关键字，后续以库函数提供 |
@@ -65,9 +65,8 @@ import io                # 内置标准模块，不要求存在同级 io/ 目录
 
 当前后端边界：
 
-- 迁移目标：LLVM 成为默认后端；C 后端降为 reference/debug 后端，是否删除需在 LLVM 达标并稳定后再决策。
-- 当前默认后端仍是 C：`compile` 输出 C，`build` 输出 `build/main.c` 与 `build/main.exe`。
-- 显式 `--backend llvm` 走 LLVM Lite 后端：`compile` 输出 LLVM IR，`build` 输出 `build/main.ll`、`build/main.obj` 与 `build/main.exe`。
+- 默认后端是 LLVM：`compile` 输出 LLVM IR，`build` 输出 `build/main.ll`、`build/main.obj` 与 `build/main.exe`。
+- 显式 `--backend c` 走 C reference/debug 后端：`compile --backend c` 输出 C，`build --backend c` 输出 `build/main.c` 与 `build/main.exe`。C 后端是否删除需在 LLVM 默认稳定后再决策。
 - LLVM 后端 v1 当前承诺基础闭环：基础数值/bool 类型、`str` 字面量/索引/切片/拼接、数值转换、`str(i32)`、`i32(str)`、`len(str)`、`str ==/!=`、定长数组字面量/索引/索引赋值、slice layout/literal/index/`len`/`append`、定长数组与 slice 切片复制、slice `for i, item in s`、struct 值类型声明/字面量/字段读写/参数与返回、heap struct `new`、指针 receiver 方法声明/调用、nullable pointer `nil`/`!= nil` 窄化后字段与方法访问、enum tag/variant/比较、整数/字符串/bool/enum `match` 表达式、block 表达式、算术/比较、`let`、重赋值、函数、显式 `return` 与尾表达式返回、`if`、条件 `for`、range `for i in start..end`、`break`、临时文件 IO builtins `read_file`/`write_file`、`nc_map` 的 `map_new`/字符串键读写/`map_has`/`len(map)`、函数调用与 `io.println`。
 - LLVM `nc_map` 当前使用 LLVM 内部连续 entry 布局、线性查找和满容量复制增长；语言可见语义对齐当前字符串键/字符串值 map，但尚未复用 C runtime 哈希表实现。
 - LLVM slice、map、closure env、heap struct 与运行时构造字符串的动态存储统一通过 LLVM 内部 `__nc_gc_alloc` shim 分配；该 shim 当前委托 libc `malloc` 并维护 live 计数，尚未实现 root slot、扫描或释放。
@@ -81,7 +80,7 @@ LLVM 默认后端达标门槛：
 
 - LLVM 后端通过全部 `test_cases` 正向/错误用例，以及项目级 import/module 测试。
 - str、slice、array、struct、enum、match、nullable pointer、closure/function value、defer/throw/try/catch、GC root 保活、runtime helper 链接路径均有 LLVM 覆盖。
-- `python nc.py compile <target>`、`python nc.py build <target>` 切到默认 LLVM 后，仍可用 `--backend c` 运行 C 后端回归。
+- `python nc.py compile <target>`、`python nc.py build <target>` 默认走 LLVM；仍可用 `--backend c` 运行 C 后端回归。
 - 若迁移中确认某能力暂时放弃或延期，必须在 worklog/design 中记录放弃点、原因和替代边界。
 
 ---

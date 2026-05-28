@@ -49,11 +49,24 @@ def test_llvm_multifile_project_runs():
 def test_build_outputs_generated_c_and_exe():
     with tempfile.TemporaryDirectory() as tmp:
         project = os.path.join(ROOT, "test_cases", "project_095_multifile")
-        build = run_nc("build", project, cwd=tmp)
+        build = run_nc("build", "--backend", "c", project, cwd=tmp)
         assert build.returncode == 0, build.stderr
         c_path = os.path.join(tmp, "build", "main.c")
         exe_path = os.path.join(tmp, "build", "main.exe")
         assert os.path.exists(c_path)
+        assert os.path.exists(exe_path)
+
+
+def test_default_build_outputs_llvm_ir_obj_and_exe():
+    with tempfile.TemporaryDirectory() as tmp:
+        project = os.path.join(ROOT, "test_cases", "project_095_multifile")
+        build = run_nc("build", project, cwd=tmp)
+        assert build.returncode == 0, build.stderr
+        ll_path = os.path.join(tmp, "build", "main.ll")
+        obj_path = os.path.join(tmp, "build", "main.obj")
+        exe_path = os.path.join(tmp, "build", "main.exe")
+        assert os.path.exists(ll_path)
+        assert os.path.exists(obj_path)
         assert os.path.exists(exe_path)
 
 
