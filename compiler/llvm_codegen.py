@@ -13,7 +13,7 @@ from llvmlite import binding, ir
 
 from compiler.ast import (
     ArrayLiteral, Assignment, BinaryOp, Block, BlockExpr, BoolLiteral, Break,
-    ExpressionStatement, EnumDecl, EnumRef, FieldAccess, FloatLiteral, FunctionCall,
+    Defer, ExpressionStatement, EnumDecl, EnumRef, FieldAccess, FloatLiteral, FunctionCall,
     FunctionExpr,
     ForIn, FunctionDeclaration, Identifier, IfExpr, IndexAccess, IntegerLiteral,
     MatchExpr, MethodCall, NilLiteral, Return, SliceExpr, SliceLiteral, StringLiteral, StructDecl,
@@ -137,6 +137,10 @@ class LLVMCodegen:
         self.exception_stack = []
         self.current_return_type = "void"
         self.current_is_main = False
+        self.defer_sites = []
+        self.defer_stack_slot = None
+        self.defer_top_slot = None
+        self.emitting_defer = False
 
     def generate(self, program) -> str:
         collected = collect_codegen_inputs(program)
@@ -214,9 +218,11 @@ class LLVMCodegen:
         llvm_fn = self.module.globals[self.closure_symbol(closure)]
         block = llvm_fn.append_basic_block("entry")
         saved_builder, saved_func, saved_vars = self.builder, self.func, self.vars
+        saved_defer = (self.defer_sites, self.defer_stack_slot, self.defer_top_slot, self.emitting_defer)
         self.builder = ir.IRBuilder(block)
         self.func = llvm_fn
         self.vars = {}
+        self.init_defer_state()
         llvm_fn.args[0].name = "__nc_env"
         env_type = self.closure_env_types[closure.closure_id]
         env_ptr = self.builder.bitcast(llvm_fn.args[0], env_type.as_pointer(), name="closure.env.ptr")
@@ -235,13 +241,16 @@ class LLVMCodegen:
             self.vars[param_name] = (slot, param_type)
         self.emit_callable_body(closure.body, closure.return_type or "void", f"lambda {closure.closure_id}")
         self.builder, self.func, self.vars = saved_builder, saved_func, saved_vars
+        self.defer_sites, self.defer_stack_slot, self.defer_top_slot, self.emitting_defer = saved_defer
 
     def emit_function(self, fn: FunctionDeclaration):
         llvm_fn = self.module.globals[self.function_symbol(fn)]
         block = llvm_fn.append_basic_block("entry")
+        saved_defer = (self.defer_sites, self.defer_stack_slot, self.defer_top_slot, self.emitting_defer)
         self.builder = ir.IRBuilder(block)
         self.func = llvm_fn
         self.vars = {}
+        self.init_defer_state()
         all_params = ([(fn.receiver_name, fn.receiver_type)] if fn.receiver_name else []) + fn.params
         for arg, (param_name, param_type) in zip(llvm_fn.args, all_params):
             arg.name = c_user_ident(param_name)
@@ -250,6 +259,7 @@ class LLVMCodegen:
             self.vars[param_name] = (slot, param_type)
 
         self.emit_function_body(fn)
+        self.defer_sites, self.defer_stack_slot, self.defer_top_slot, self.emitting_defer = saved_defer
 
     def emit_function_body(self, fn: FunctionDeclaration):
         self.emit_callable_body(fn.body, fn.return_type or "void", f"function {fn.name}", is_main=fn.name == "main")
@@ -263,11 +273,14 @@ class LLVMCodegen:
             for stmt in stmts[:-1]:
                 self.emit_stmt(stmt)
             if not self.builder.block.is_terminated:
-                self.builder.ret(self.cast_to(self.emit_expr(stmts[-1].expr), return_type))
+                value = self.cast_to(self.emit_expr(stmts[-1].expr), return_type)
+                self.emit_deferred()
+                self.builder.ret(value)
             self.current_return_type, self.current_is_main = prev_return_type, prev_is_main
             return
         self.emit_block(body)
         if not self.builder.block.is_terminated:
+            self.emit_deferred()
             if is_main and return_type == "void":
                 self.builder.ret(ir.Constant(ir.IntType(32), 0))
             elif return_type == "void":
@@ -278,6 +291,13 @@ class LLVMCodegen:
 
     def alloca_at_entry(self, name, typ):
         return self.builder.alloca(typ, name=name)
+
+    def init_defer_state(self):
+        self.defer_sites = []
+        self.defer_stack_slot = self.builder.alloca(ir.ArrayType(ir.IntType(32), 1024), name="__nc_defer_stack")
+        self.defer_top_slot = self.builder.alloca(ir.IntType(32), name="__nc_defer_top")
+        self.builder.store(ir.Constant(ir.IntType(32), 0), self.defer_top_slot)
+        self.emitting_defer = False
 
     def emit_block(self, block: Block):
         for stmt in block.statements:
@@ -316,12 +336,18 @@ class LLVMCodegen:
             return
         if isinstance(stmt, Return):
             if stmt.expr is None:
+                self.emit_deferred()
                 if self.func.function_type.return_type == ir.VoidType():
                     self.builder.ret_void()
                 else:
                     self.builder.ret(ir.Constant(self.func.function_type.return_type, 0))
             else:
-                self.builder.ret(self.cast_to(self.emit_expr(stmt.expr), stmt.expr.type))
+                value = self.cast_to(self.emit_expr(stmt.expr), stmt.expr.type)
+                self.emit_deferred()
+                self.builder.ret(value)
+            return
+        if isinstance(stmt, Defer):
+            self.emit_defer(stmt)
             return
         if isinstance(stmt, TryCatch):
             self.emit_try_catch(stmt)
@@ -366,10 +392,70 @@ class LLVMCodegen:
         value = self.cast_to(self.emit_expr(stmt.expr), "str")
         self.builder.store(value, self.ex_value)
         self.builder.store(ir.Constant(ir.IntType(1), 1), self.ex_active)
+        self.emit_deferred()
         if self.exception_stack:
             self.builder.branch(self.exception_stack[-1])
             return
         self.return_or_abort_on_exception()
+
+    def emit_defer(self, stmt: Defer):
+        if self.emitting_defer:
+            self.emit_block(stmt.body)
+            return
+        site_id = len(self.defer_sites)
+        self.defer_sites.append(stmt)
+        top = self.builder.load(self.defer_top_slot, name="defer.top")
+        elem_ptr = self.builder.gep(
+            self.defer_stack_slot,
+            [ir.Constant(ir.IntType(32), 0), top],
+            inbounds=True,
+            name="defer.slot",
+        )
+        self.builder.store(ir.Constant(ir.IntType(32), site_id), elem_ptr)
+        self.builder.store(self.builder.add(top, ir.Constant(ir.IntType(32), 1)), self.defer_top_slot)
+
+    def emit_deferred(self):
+        if self.emitting_defer or self.defer_top_slot is None:
+            return
+        cond_bb = self.func.append_basic_block("defer.cond")
+        body_bb = self.func.append_basic_block("defer.body")
+        end_bb = self.func.append_basic_block("defer.end")
+        self.builder.branch(cond_bb)
+        self.builder.position_at_end(cond_bb)
+        top = self.builder.load(self.defer_top_slot, name="defer.top")
+        has_defer = self.builder.icmp_signed(">", top, ir.Constant(ir.IntType(32), 0))
+        self.builder.cbranch(has_defer, body_bb, end_bb)
+        self.builder.position_at_end(body_bb)
+        next_top = self.builder.sub(top, ir.Constant(ir.IntType(32), 1), name="defer.next.top")
+        self.builder.store(next_top, self.defer_top_slot)
+        elem_ptr = self.builder.gep(
+            self.defer_stack_slot,
+            [ir.Constant(ir.IntType(32), 0), next_top],
+            inbounds=True,
+            name="defer.site.ptr",
+        )
+        site = self.builder.load(elem_ptr, name="defer.site")
+        after_site_bb = self.func.append_basic_block("defer.after.site")
+        self.emitting_defer = True
+        for site_id, stmt in enumerate(self.defer_sites):
+            site_bb = self.func.append_basic_block(f"defer.site.{site_id}")
+            next_site_bb = self.func.append_basic_block(f"defer.next.{site_id}")
+            self.builder.cbranch(
+                self.builder.icmp_signed("==", site, ir.Constant(ir.IntType(32), site_id)),
+                site_bb,
+                next_site_bb,
+            )
+            self.builder.position_at_end(site_bb)
+            self.emit_block(stmt.body)
+            if not self.builder.block.is_terminated:
+                self.builder.branch(after_site_bb)
+            self.builder.position_at_end(next_site_bb)
+        if not self.builder.block.is_terminated:
+            self.builder.branch(after_site_bb)
+        self.emitting_defer = False
+        self.builder.position_at_end(after_site_bb)
+        self.builder.branch(cond_bb)
+        self.builder.position_at_end(end_bb)
 
     def branch_on_exception(self):
         if self.builder.block.is_terminated:

@@ -465,6 +465,38 @@ fun main() {
     assert (stdout.strip(), stderr.strip(), rc) == ("", "uncaught: boom", 1)
 
 
+def test_llvm_defer_lifo_return_and_throw():
+    source = """import io
+fun main(): i32 {
+    defer { io.println(1) }
+    defer { io.println(2) }
+    io.println(3)
+    return 7
+}
+"""
+    llvm_ir = compile_nc_to_llvm_ir(source)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    assert (stdout.strip(), stderr.strip(), rc) == ("3\n2\n1", "", 7)
+
+    source = """import io
+fun fail() {
+    defer { gc_collect() }
+    throw str(1)
+}
+fun main() {
+    try {
+        fail()
+    } catch e {
+        gc_collect()
+        io.println(e)
+    }
+}
+"""
+    llvm_ir = compile_nc_to_llvm_ir(source)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    assert (stdout.strip(), stderr.strip(), rc) == ("1", "", 0)
+
+
 def test_llvm_no_capture_closure_call():
     source = """import io
 fun main() {

@@ -72,7 +72,7 @@ import io                # 内置标准模块，不要求存在同级 io/ 目录
 - LLVM `nc_map` 当前使用 LLVM 内部连续 entry 布局、线性查找和满容量复制增长；语言可见语义对齐当前字符串键/字符串值 map，但尚未复用 C runtime 哈希表实现。
 - LLVM slice、map、closure env、heap struct 与运行时构造字符串的动态存储统一通过 LLVM 内部 `__nc_gc_alloc` shim 分配；该 shim 当前委托 libc `malloc` 并维护 live 计数，尚未实现 root slot、扫描或释放。
 - LLVM 临时 GC 测试钩子当前仅用于保持测试路径可运行：`gc_collect()` 暂不释放对象，只清零 live 计数；`gc_live()` 输出/返回当前 `__nc_gc_alloc` 分配计数。这不是默认 LLVM 达标所需的真正 GC registry/root 实现。
-- LLVM `throw`/`try`/`catch` 当前使用轻量异常模型：全局异常 flag + `str` value，函数边界返回默认值传播异常，`try` 块在语句边界检查 flag 并跳转 `catch`；uncaught throw 在 `main` 输出到 stderr 并返回 1。该模型不依赖 `setjmp`/`longjmp`，`defer` 仍明确延期。
+- LLVM `throw`/`try`/`catch` 当前使用轻量异常模型：全局异常 flag + `str` value，函数边界返回默认值传播异常，`try` 块在语句边界检查 flag 并跳转 `catch`；uncaught throw 在 `main` 输出到 stderr 并返回 1。`defer` 使用函数内动态 site 栈，按 LIFO 在函数 fallthrough、显式 `return`、`throw` 传播前执行。该模型不依赖 `setjmp`/`longjmp`。
 - LLVM function value 当前支持 `{ call, env }` 胖指针：`call` 首参为 `i8* env`，无捕获时 `env == null`；捕获 closure 生成 env struct 并按值拷贝捕获字段，env 分配仍暂用 libc `malloc`，尚未接入 GC root/allocator。
 - LLVM 后端当前使用 MinGW GNU triple `x86_64-w64-windows-gnu` 生成 Windows COFF object，并用 `gcc` 链接。
 - C 后端仍是语言全集和回归权威；LLVM 后端不向前兼容未声明支持的节点，遇到未支持语义应明确报错。

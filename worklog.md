@@ -366,3 +366,11 @@
 
 - 已扩 LLVM 覆盖到轻量 throw/try/catch：全局异常 flag + str value，函数返回默认值传播，try 语句边界跳 catch，uncaught throw 在 main 输出 stderr 并返回 1；已验证 case_035_throw、case_043_uncaught_throw。defer 仍延期。
 
+
+## 2026-05-28
+
+- 预备扩 LLVM 覆盖到 defer：为每个函数维护 i32 defer site 栈与 top，defer 语句动态 push site id；函数 fallthrough、显式 return、throw 传播前按 LIFO 执行已注册 defer。先覆盖 case_090~092、case_097~098 及 GC+defer 组合。
+
+
+- 已扩 LLVM 覆盖到 defer：函数内维护动态 defer site 栈，按 LIFO 在 fallthrough、return、throw 前执行；已验证 case_090~092、case_097~098、case_158、case_159，并将 LLVM 正向 case gate 取消 defer 跳过。
+
