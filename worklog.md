@@ -326,3 +326,11 @@
 
 - 已补 LLVM 项目级回归：多文件同模块 fixture、跨模块函数 import、跨模块 struct/enum、同名 public 符号隔离均纳入 --backend llvm pytest；现有项目级 LLVM 正向路径已锁定。
 
+
+## 2026-05-28
+
+- 预备扩 LLVM 覆盖到捕获 closure：复用 {call, env} fat pointer，为每个 FunctionExpr 生成 env struct，创建 closure 时 malloc env 并按值拷贝 captures，lambda 入口从 env 字段读取捕获变量；本轮仍不接 GC root。
+
+
+- 已扩 LLVM 覆盖到捕获 closure/function value：支持 env struct、按值拷贝 captures、closure 参数传递、closure 返回、i32/str/slice 捕获；已验证 case_100~105、case_113、case_114。延期点：closure env 仍使用 libc malloc，尚未纳入 GC root/allocator。
+

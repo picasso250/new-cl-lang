@@ -126,18 +126,16 @@ class LLVMCodegen:
         self.atoi = None
         self.strings: dict[tuple[str, str], ir.GlobalVariable] = {}
         self.fn_decls: dict[str, FunctionDeclaration] = {}
+        self.closure_env_types: dict[int, ir.LiteralStructType] = {}
         self.break_stack = []
 
     def generate(self, program) -> str:
         collected = collect_codegen_inputs(program)
         if collected.top_stmts:
             raise NotImplementedError("LLVM backend v1 does not support top-level statements")
-        unsupported = [closure for closure in collected.closures if getattr(closure, "captures", [])]
-        if unsupported:
-            raise NotImplementedError("LLVM backend v1 does not support capturing closures")
-
         self.register_enums(collected.enums)
         self.register_structs(collected.structs)
+        self.register_closure_envs(collected.closures)
 
         funcs = collected.other_funcs + ([collected.main_func] if collected.main_func else [])
         for fn in funcs:
@@ -171,6 +169,14 @@ class LLVMCodegen:
                 llvm_type(field_type) for _field_name, field_type in struct.fields
             ])
 
+    def register_closure_envs(self, closures: list[FunctionExpr]):
+        self.closure_env_types.clear()
+        for closure in closures:
+            fields = [llvm_type(capture_type) for _name, capture_type in getattr(closure, "captures", [])]
+            if not fields:
+                fields = [ir.IntType(8)]
+            self.closure_env_types[closure.closure_id] = ir.LiteralStructType(fields)
+
     def declare_function(self, fn: FunctionDeclaration):
         name = self.function_symbol(fn)
         ret = ir.IntType(32) if fn.name == "main" and (fn.return_type or "void") == "void" else llvm_type(fn.return_type)
@@ -203,6 +209,16 @@ class LLVMCodegen:
         self.func = llvm_fn
         self.vars = {}
         llvm_fn.args[0].name = "__nc_env"
+        env_type = self.closure_env_types[closure.closure_id]
+        env_ptr = self.builder.bitcast(llvm_fn.args[0], env_type.as_pointer(), name="closure.env.ptr")
+        for i, (capture_name, capture_type) in enumerate(getattr(closure, "captures", [])):
+            field_ptr = self.builder.gep(
+                env_ptr,
+                [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), i)],
+                inbounds=True,
+                name=f"capture.{c_user_ident(capture_name)}.ptr",
+            )
+            self.vars[capture_name] = (field_ptr, capture_type)
         for arg, (param_name, param_type) in zip(llvm_fn.args[1:], closure.params):
             arg.name = c_user_ident(param_name)
             slot = self.alloca_at_entry(c_user_ident(param_name), llvm_type(param_type))
@@ -829,14 +845,33 @@ class LLVMCodegen:
         return self.builder.call(fn, [self.emit_expr(arg) for arg in node.args])
 
     def emit_function_expr(self, node: FunctionExpr):
-        if getattr(node, "captures", []):
-            raise NotImplementedError("LLVM backend v1 does not support capturing closures")
         closure_type = llvm_type(node.type)
         fn = self.module.globals[self.closure_symbol(node)]
+        env_ptr = self.emit_closure_env(node)
         value = ir.Constant(closure_type, ir.Undefined)
         value = self.builder.insert_value(value, fn.bitcast(closure_type.elements[0]), [0], name="closure.call")
-        value = self.builder.insert_value(value, ir.Constant(I8PTR, None), [1], name="closure.env")
+        value = self.builder.insert_value(value, env_ptr, [1], name="closure.env")
         return value
+
+    def emit_closure_env(self, node: FunctionExpr):
+        captures = getattr(node, "captures", [])
+        if not captures:
+            return ir.Constant(I8PTR, None)
+        env_type = self.closure_env_types[node.closure_id]
+        size = sum(self.sizeof_type(capture_type) for _name, capture_type in captures)
+        raw = self.malloc_bytes(ir.Constant(ir.IntType(64), max(size, 1)))
+        env_ptr = self.builder.bitcast(raw, env_type.as_pointer(), name="closure.env.alloc")
+        for i, (capture_name, capture_type) in enumerate(captures):
+            source_ptr, _source_type = self.vars[capture_name]
+            capture_value = self.builder.load(source_ptr, name=f"capture.{c_user_ident(capture_name)}")
+            field_ptr = self.builder.gep(
+                env_ptr,
+                [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), i)],
+                inbounds=True,
+                name=f"capture.{c_user_ident(capture_name)}.store.ptr",
+            )
+            self.builder.store(self.cast_to(capture_value, capture_type), field_ptr)
+        return self.builder.bitcast(env_ptr, I8PTR, name="closure.env.i8")
 
     def emit_method_call(self, node: MethodCall):
         obj_type = node.obj.type
@@ -1184,6 +1219,18 @@ class LLVMCodegen:
             return 8
         if nc_type == "str":
             return 16
+        if nc_type == "nc_map":
+            return 24
+        if isinstance(nc_type, str) and (nc_type.startswith("*") or nc_type.startswith("?*")):
+            return 8
+        if parse_fn_type(nc_type) is not None:
+            return 16
+        if parse_slice_type(nc_type) is not None:
+            return 24
+        array_info = parse_array_type(nc_type)
+        if array_info is not None:
+            length, elem_type = array_info
+            return length * self.sizeof_type(elem_type)
         if nc_type in STRUCT_FIELDS:
             return sum(self.sizeof_type(field_type) for _field_name, field_type in STRUCT_FIELDS[nc_type])
         raise NotImplementedError(f"LLVM backend v1 cannot sizeof {nc_type}")

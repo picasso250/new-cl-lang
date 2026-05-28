@@ -437,6 +437,28 @@ fun main() {
     assert (stdout.strip(), stderr.strip(), rc) == ("6", "", 0)
 
 
+def test_llvm_capturing_closure_values_args_and_return():
+    source = """import io
+fun apply(f: (i32) -> i32, x: i32): i32 { f(x) }
+fun make(base: i32): (i32) -> i32 {
+    let xs = []i32 { 10, 20, 30 }
+    fun(x: i32): i32 { x + base + xs[1] }
+}
+fun main() {
+    let base = 10
+    let add = fun(x: i32): i32 { x + base }
+    base = 99
+    io.println(add(5))
+    io.println(apply(add, 7))
+    let f = make(2)
+    io.println(f(3))
+}
+"""
+    llvm_ir = compile_nc_to_llvm_ir(source)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    assert (stdout.strip(), stderr.strip(), rc) == ("15\n17\n25", "", 0)
+
+
 def test_llvm_nullable_pointer_nil_and_method():
     source = """import io
 struct Point { x: i32 }
