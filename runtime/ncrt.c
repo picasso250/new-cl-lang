@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
 struct nc_entry {
     str key;
@@ -10,7 +11,18 @@ struct nc_entry {
     int state;
 };
 
+typedef struct __nc_gc_block {
+    struct __nc_gc_block* next;
+    size_t size;
+    int marked;
+    unsigned char payload[];
+} __nc_gc_block;
+
+static __nc_gc_block* __nc_gc_blocks = NULL;
 static size_t __nc_gc_live_count = 0;
+static void*** __nc_gc_roots = NULL;
+static size_t __nc_gc_root_count = 0;
+static size_t __nc_gc_root_cap = 0;
 __nc_ex_frame_t* __nc_ex_top = NULL;
 
 static void __nc_abort_oom(void) {
@@ -19,19 +31,76 @@ static void __nc_abort_oom(void) {
 }
 
 void __nc_gc_init(void) {
+    __nc_gc_block* b = __nc_gc_blocks;
+    while (b) {
+        __nc_gc_block* next = b->next;
+        free(b);
+        b = next;
+    }
+    __nc_gc_blocks = NULL;
     __nc_gc_live_count = 0;
+    __nc_gc_root_count = 0;
     __nc_ex_top = NULL;
 }
 
 void* __nc_gc_alloc(size_t sz) {
-    void* p = calloc(1, sz ? sz : 1);
-    if (!p) __nc_abort_oom();
+    size_t payload_size = sz ? sz : 1;
+    __nc_gc_block* b = (__nc_gc_block*)calloc(1, sizeof(__nc_gc_block) + payload_size);
+    if (!b) __nc_abort_oom();
+    b->size = payload_size;
+    b->next = __nc_gc_blocks;
+    __nc_gc_blocks = b;
     __nc_gc_live_count++;
-    return p;
+    return b->payload;
+}
+
+static __nc_gc_block* __nc_gc_find_block(void* p) {
+    if (!p) return NULL;
+    uintptr_t addr = (uintptr_t)p;
+    for (__nc_gc_block* b = __nc_gc_blocks; b; b = b->next) {
+        uintptr_t start = (uintptr_t)b->payload;
+        uintptr_t end = start + b->size;
+        if (addr >= start && addr < end) return b;
+    }
+    return NULL;
+}
+
+static void __nc_gc_mark_ptr(void* p);
+
+static void __nc_gc_scan_block(__nc_gc_block* b) {
+    size_t words = b->size / sizeof(void*);
+    void** values = (void**)b->payload;
+    for (size_t i = 0; i < words; i++) {
+        __nc_gc_mark_ptr(values[i]);
+    }
+}
+
+static void __nc_gc_mark_ptr(void* p) {
+    __nc_gc_block* b = __nc_gc_find_block(p);
+    if (!b || b->marked) return;
+    b->marked = 1;
+    __nc_gc_scan_block(b);
 }
 
 void __nc_gc_collect(void) {
+    for (size_t i = 0; i < __nc_gc_root_count; i++) {
+        void** slot = __nc_gc_roots[i];
+        if (slot) __nc_gc_mark_ptr(*slot);
+    }
+
+    __nc_gc_block** link = &__nc_gc_blocks;
     __nc_gc_live_count = 0;
+    while (*link) {
+        __nc_gc_block* b = *link;
+        if (!b->marked) {
+            *link = b->next;
+            free(b);
+            continue;
+        }
+        b->marked = 0;
+        __nc_gc_live_count++;
+        link = &b->next;
+    }
 }
 
 size_t __nc_gc_live(void) {
@@ -39,28 +108,40 @@ size_t __nc_gc_live(void) {
 }
 
 int __nc_gc_push_root_slot(void* slot) {
-    (void)slot;
-    return 0;
+    if (__nc_gc_root_count == __nc_gc_root_cap) {
+        size_t next_cap = __nc_gc_root_cap ? __nc_gc_root_cap * 2 : 64;
+        void*** next = (void***)realloc(__nc_gc_roots, next_cap * sizeof(void**));
+        if (!next) __nc_abort_oom();
+        __nc_gc_roots = next;
+        __nc_gc_root_cap = next_cap;
+    }
+    __nc_gc_roots[__nc_gc_root_count] = (void**)slot;
+    return (int)__nc_gc_root_count++;
 }
 
 void __nc_gc_set_root(int h, void* p) {
-    (void)h;
-    (void)p;
+    if (h < 0 || (size_t)h >= __nc_gc_root_count || !__nc_gc_roots[h]) return;
+    *__nc_gc_roots[h] = p;
 }
 
 void __nc_gc_pop_root(void) {
+    if (__nc_gc_root_count) __nc_gc_root_count--;
 }
 
 void __nc_gc_drop_root(int h) {
-    (void)h;
+    if (h >= 0 && (size_t)h < __nc_gc_root_count) {
+        __nc_gc_roots[h] = NULL;
+    }
 }
 
 size_t __nc_gc_root_mark(void) {
-    return 0;
+    return __nc_gc_root_count;
 }
 
 void __nc_gc_root_rewind(size_t mark) {
-    (void)mark;
+    if (mark <= __nc_gc_root_count) {
+        __nc_gc_root_count = mark;
+    }
 }
 
 str __nc_read_file(const char* path) {

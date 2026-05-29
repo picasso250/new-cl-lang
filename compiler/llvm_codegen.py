@@ -121,6 +121,10 @@ class LLVMCodegen:
         self.gc_alloc = None
         self.gc_collect = None
         self.gc_live = None
+        self.gc_init = None
+        self.gc_root_mark = None
+        self.gc_root_rewind = None
+        self.gc_push_root_slot = None
         self.str_cat_fn = None
         self.str_slice_fn = None
         self.i32_to_str_fn = None
@@ -156,6 +160,8 @@ class LLVMCodegen:
         self.defer_stack_slot = None
         self.defer_top_slot = None
         self.emitting_defer = False
+        self.current_gc_mark = None
+        self.current_return_slot = None
 
     def generate(self, program) -> str:
         collected = collect_codegen_inputs(program)
@@ -234,13 +240,18 @@ class LLVMCodegen:
         block = llvm_fn.append_basic_block("entry")
         saved_builder, saved_func, saved_vars = self.builder, self.func, self.vars
         saved_defer = (self.defer_sites, self.defer_stack_slot, self.defer_top_slot, self.emitting_defer)
+        saved_gc = (self.current_gc_mark, self.current_return_slot)
         self.builder = ir.IRBuilder(block)
         self.func = llvm_fn
         self.vars = {}
         self.init_defer_state()
+        self.init_gc_frame(is_main=False)
         llvm_fn.args[0].name = "__nc_env"
         env_type = self.closure_env_types[closure.closure_id]
         env_ptr = self.builder.bitcast(llvm_fn.args[0], env_type.as_pointer(), name="closure.env.ptr")
+        env_slot = self.alloca_at_entry("__nc_env_slot", I8PTR)
+        self.builder.store(llvm_fn.args[0], env_slot)
+        self.root_slots_for_type(env_slot, f"*__nc_env_{closure.closure_id}")
         for i, (capture_name, capture_type) in enumerate(getattr(closure, "captures", [])):
             field_ptr = self.builder.gep(
                 env_ptr,
@@ -254,27 +265,39 @@ class LLVMCodegen:
             slot = self.alloca_at_entry(c_user_ident(param_name), llvm_type(param_type))
             self.builder.store(arg, slot)
             self.vars[param_name] = (slot, param_type)
+            self.root_slots_for_type(slot, param_type)
+        if (closure.return_type or "void") != "void":
+            self.current_return_slot = self.alloca_at_entry("__nc_ret", llvm_type(closure.return_type))
+            self.root_slots_for_type(self.current_return_slot, closure.return_type)
         self.emit_callable_body(closure.body, closure.return_type or "void", f"lambda {closure.closure_id}")
         self.builder, self.func, self.vars = saved_builder, saved_func, saved_vars
         self.defer_sites, self.defer_stack_slot, self.defer_top_slot, self.emitting_defer = saved_defer
+        self.current_gc_mark, self.current_return_slot = saved_gc
 
     def emit_function(self, fn: FunctionDeclaration):
         llvm_fn = self.module.globals[self.function_symbol(fn)]
         block = llvm_fn.append_basic_block("entry")
         saved_defer = (self.defer_sites, self.defer_stack_slot, self.defer_top_slot, self.emitting_defer)
+        saved_gc = (self.current_gc_mark, self.current_return_slot)
         self.builder = ir.IRBuilder(block)
         self.func = llvm_fn
         self.vars = {}
         self.init_defer_state()
+        self.init_gc_frame(is_main=fn.name == "main")
         all_params = ([(fn.receiver_name, fn.receiver_type)] if fn.receiver_name else []) + fn.params
         for arg, (param_name, param_type) in zip(llvm_fn.args, all_params):
             arg.name = c_user_ident(param_name)
             slot = self.alloca_at_entry(c_user_ident(param_name), llvm_type(param_type))
             self.builder.store(arg, slot)
             self.vars[param_name] = (slot, param_type)
+            self.root_slots_for_type(slot, param_type)
+        if (fn.return_type or "void") != "void":
+            self.current_return_slot = self.alloca_at_entry("__nc_ret", llvm_type(fn.return_type))
+            self.root_slots_for_type(self.current_return_slot, fn.return_type)
 
         self.emit_function_body(fn)
         self.defer_sites, self.defer_stack_slot, self.defer_top_slot, self.emitting_defer = saved_defer
+        self.current_gc_mark, self.current_return_slot = saved_gc
 
     def emit_function_body(self, fn: FunctionDeclaration):
         self.emit_callable_body(fn.body, fn.return_type or "void", f"function {fn.name}", is_main=fn.name == "main")
@@ -289,7 +312,12 @@ class LLVMCodegen:
                 self.emit_stmt(stmt)
             if not self.builder.block.is_terminated:
                 value = self.cast_to(self.emit_expr(stmts[-1].expr), return_type)
+                if self.current_return_slot is not None:
+                    self.builder.store(value, self.current_return_slot)
                 self.emit_deferred()
+                if self.current_return_slot is not None:
+                    value = self.builder.load(self.current_return_slot, name="ret.value")
+                self.emit_gc_rewind()
                 self.builder.ret(value)
             self.current_return_type, self.current_is_main = prev_return_type, prev_is_main
             return
@@ -297,8 +325,10 @@ class LLVMCodegen:
         if not self.builder.block.is_terminated:
             self.emit_deferred()
             if is_main and return_type == "void":
+                self.emit_gc_rewind()
                 self.builder.ret(ir.Constant(ir.IntType(32), 0))
             elif return_type == "void":
+                self.emit_gc_rewind()
                 self.builder.ret_void()
             else:
                 raise RuntimeError(f"missing return in {name}")
@@ -307,12 +337,90 @@ class LLVMCodegen:
     def alloca_at_entry(self, name, typ):
         return self.builder.alloca(typ, name=name)
 
+    def root_pointer_slot(self, ptr):
+        self.ensure_ncrt_runtime()
+        self.builder.call(self.gc_push_root_slot, [self.builder.bitcast(ptr, I8PTR)])
+
+    def root_slots_for_type(self, ptr, nc_type):
+        if nc_type == "str":
+            field = self.builder.gep(
+                ptr,
+                [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)],
+                inbounds=True,
+                name="gc.root.str.ptr",
+            )
+            self.root_pointer_slot(field)
+            return
+        if nc_type == "nc_map":
+            field = self.builder.gep(
+                ptr,
+                [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)],
+                inbounds=True,
+                name="gc.root.map.entries",
+            )
+            self.root_pointer_slot(field)
+            return
+        if parse_slice_type(nc_type) is not None:
+            field = self.builder.gep(
+                ptr,
+                [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)],
+                inbounds=True,
+                name="gc.root.slice.ptr",
+            )
+            self.root_pointer_slot(field)
+            return
+        if isinstance(nc_type, str) and (nc_type.startswith("*") or nc_type.startswith("?*")):
+            self.root_pointer_slot(ptr)
+            return
+        if parse_fn_type(nc_type) is not None:
+            field = self.builder.gep(
+                ptr,
+                [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 1)],
+                inbounds=True,
+                name="gc.root.fn.env",
+            )
+            self.root_pointer_slot(field)
+            return
+        if isinstance(nc_type, str) and nc_type in STRUCT_FIELDS:
+            for i, (_field_name, field_type) in enumerate(STRUCT_FIELDS[nc_type]):
+                field = self.builder.gep(
+                    ptr,
+                    [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), i)],
+                    inbounds=True,
+                    name="gc.root.struct.field",
+                )
+                self.root_slots_for_type(field, field_type)
+            return
+        array_info = parse_array_type(nc_type)
+        if array_info is not None:
+            length, elem_type = array_info
+            for i in range(length):
+                elem = self.builder.gep(
+                    ptr,
+                    [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), i)],
+                    inbounds=True,
+                    name="gc.root.array.elem",
+                )
+                self.root_slots_for_type(elem, elem_type)
+
     def init_defer_state(self):
         self.defer_sites = []
         self.defer_stack_slot = self.builder.alloca(ir.ArrayType(ir.IntType(32), 1024), name="__nc_defer_stack")
         self.defer_top_slot = self.builder.alloca(ir.IntType(32), name="__nc_defer_top")
         self.builder.store(ir.Constant(ir.IntType(32), 0), self.defer_top_slot)
         self.emitting_defer = False
+
+    def init_gc_frame(self, is_main: bool):
+        self.ensure_ncrt_runtime()
+        if is_main:
+            self.builder.call(self.gc_init, [])
+        self.current_gc_mark = self.builder.call(self.gc_root_mark, [], name="__nc_gc_mark")
+        self.current_return_slot = None
+
+    def emit_gc_rewind(self):
+        if self.current_gc_mark is not None:
+            self.ensure_ncrt_runtime()
+            self.builder.call(self.gc_root_rewind, [self.current_gc_mark])
 
     def emit_block(self, block: Block):
         for stmt in block.statements:
@@ -327,6 +435,7 @@ class LLVMCodegen:
             typ = llvm_type(stmt.type)
             slot = self.alloca_at_entry(c_user_ident(stmt.name), typ)
             self.vars[stmt.name] = (slot, stmt.type)
+            self.root_slots_for_type(slot, stmt.type)
             self.builder.store(self.cast_to(self.emit_expr(stmt.initializer), stmt.type), slot)
             self.branch_on_exception()
             return
@@ -364,13 +473,19 @@ class LLVMCodegen:
         if isinstance(stmt, Return):
             if stmt.expr is None:
                 self.emit_deferred()
+                self.emit_gc_rewind()
                 if self.func.function_type.return_type == ir.VoidType():
                     self.builder.ret_void()
                 else:
                     self.builder.ret(ir.Constant(self.func.function_type.return_type, 0))
             else:
                 value = self.cast_to(self.emit_expr(stmt.expr), stmt.expr.type)
+                if self.current_return_slot is not None:
+                    self.builder.store(value, self.current_return_slot)
                 self.emit_deferred()
+                if self.current_return_slot is not None:
+                    value = self.builder.load(self.current_return_slot, name="ret.value")
+                self.emit_gc_rewind()
                 self.builder.ret(value)
             return
         if isinstance(stmt, Defer):
@@ -406,6 +521,7 @@ class LLVMCodegen:
         self.builder.position_at_end(catch_bb)
         err_slot = self.alloca_at_entry(c_user_ident(stmt.error_name), STR_TYPE)
         self.vars[stmt.error_name] = (err_slot, "str")
+        self.root_slots_for_type(err_slot, "str")
         self.builder.store(self.builder.load(self.ex_value, name="catch.ex"), err_slot)
         self.builder.store(ir.Constant(ir.IntType(1), 0), self.ex_active)
         self.emit_block(stmt.catch_block)
@@ -417,13 +533,17 @@ class LLVMCodegen:
     def emit_throw(self, stmt: Throw):
         self.ensure_exception_runtime()
         value = self.cast_to(self.emit_expr(stmt.expr), "str")
+        throw_slot = self.alloca_at_entry("__nc_throw_value", STR_TYPE)
+        self.root_slots_for_type(throw_slot, "str")
+        self.builder.store(value, throw_slot)
+        value = self.builder.load(throw_slot, name="throw.value")
         self.builder.store(value, self.ex_value)
         self.builder.store(ir.Constant(ir.IntType(1), 1), self.ex_active)
         self.emit_deferred()
         if self.exception_stack:
             self.builder.branch(self.exception_stack[-1])
             return
-        self.return_or_abort_on_exception()
+        self.return_or_abort_on_exception(run_defer=False)
 
     def emit_defer(self, stmt: Defer):
         if self.emitting_defer:
@@ -498,12 +618,16 @@ class LLVMCodegen:
             self.return_or_abort_on_exception()
         self.builder.position_at_end(cont_bb)
 
-    def return_or_abort_on_exception(self):
+    def return_or_abort_on_exception(self, run_defer=True):
+        if run_defer:
+            self.emit_deferred()
         if self.current_is_main:
             self.emit_uncaught_exception()
+            self.emit_gc_rewind()
             self.builder.ret(ir.Constant(self.func.function_type.return_type, 1))
             return
         ret_type = self.func.function_type.return_type
+        self.emit_gc_rewind()
         if ret_type == ir.VoidType():
             self.builder.ret_void()
         else:
@@ -576,6 +700,7 @@ class LLVMCodegen:
         value_slot = self.alloca_at_entry(c_user_ident(stmt.value), llvm_type(elem_type))
         self.vars[stmt.index] = (idx_slot, "i32")
         self.vars[stmt.value] = (value_slot, elem_type)
+        self.root_slots_for_type(value_slot, elem_type)
 
         slice_value = self.emit_expr(stmt.iterable)
         ptr = self.builder.extract_value(slice_value, 0)
@@ -700,9 +825,9 @@ class LLVMCodegen:
         return value
 
     def malloc_struct(self, struct_name: str):
-        self.ensure_malloc()
+        self.ensure_gc_runtime()
         size = ir.Constant(ir.IntType(64), self.sizeof_type(struct_name))
-        raw = self.builder.call(self.malloc, [size], name="struct.malloc.raw")
+        raw = self.builder.call(self.gc_alloc, [size], name="struct.gc.raw")
         return self.builder.bitcast(raw, llvm_type(struct_name).as_pointer(), name="struct.ptr")
 
     def emit_slice_literal(self, node: SliceLiteral):
@@ -1268,6 +1393,10 @@ class LLVMCodegen:
             )
             self.gc_collect = ir.Function(self.module, ir.FunctionType(ir.VoidType(), []), name="__nc_gc_collect")
             self.gc_live = ir.Function(self.module, ir.FunctionType(ir.IntType(64), []), name="__nc_gc_live")
+            self.gc_init = ir.Function(self.module, ir.FunctionType(ir.VoidType(), []), name="__nc_gc_init")
+            self.gc_root_mark = ir.Function(self.module, ir.FunctionType(ir.IntType(64), []), name="__nc_gc_root_mark")
+            self.gc_root_rewind = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [ir.IntType(64)]), name="__nc_gc_root_rewind")
+            self.gc_push_root_slot = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [I8PTR]), name="__nc_gc_push_root_slot")
             str_ptr = STR_TYPE.as_pointer()
             self.str_cat_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [str_ptr, str_ptr, str_ptr]), name="__nc_str_cat_out")
             self.str_slice_fn = ir.Function(

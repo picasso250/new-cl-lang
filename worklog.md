@@ -423,3 +423,11 @@
 - 已优化测试套件耗时：build_ncrt_obj 现在基于 runtime/ncrt.c 与 runtime/ncrt.h 内容哈希复用缓存对象，并仍复制到目标 out_dir/ncrt.obj；LLVM 单文件 case 测试改为进程内调用 compile_nc_sources_to_llvm_ir + run_llvm_ir，保留 CLI smoke 覆盖在既有项目/后端测试中。
 - 验证通过：python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py -q；python -m pytest tests/test_llvm_backend.py tests/test_llvm_cases.py -q；组合 pytest --durations=20 为 58 passed in 64.85s，最慢项 test_basic 28.55s、LLVM 正向 case 22.10s。
 
+## 2026-05-29
+
+- 预备实现 LLVM 真实 GC 与 C 端对齐：将共享 ncrt 从不释放 stub 升级为显式 mark-sweep；LLVM 后端按 C 后端 root slot 规则注册参数、局部、返回槽、异常值、closure env 与聚合内部 GC 指针字段；更新测试和设计文档以移除旧 LLVM GC 延期边界。
+
+- 已实现共享 ncrt 显式 mark-sweep GC：`__nc_gc_alloc` 记录 block header/size/mark/link 并清零 payload；`gc_collect` 从 root slot 表标记可达块，保守扫描已标记 heap payload 内 machine word，sweep 未标记块；`gc_live` 返回当前存活 block 数；root slot 表动态扩容并支持 mark/rewind/drop/pop。
+- LLVM 后端已接入 root frame：main 入口初始化 GC，函数/closure 入口 root mark，参数、receiver、closure env、局部变量、返回槽、catch error 和 throw 临时按类型递归注册 root，所有 return/异常传播出口 rewind；heap struct 分配改为 `__nc_gc_alloc`。
+- 已更新 LLVM GC hook 测试期望，并新增 helper 局部对象离开函数后可回收的 LLVM 覆盖。已验证：python -m pytest tests/test_llvm_backend.py tests/test_llvm_cases.py -q；python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py -q；python nc.py build test_cases\case_032_gc.nc；python nc.py build --backend c test_cases\case_032_gc.nc。
+
