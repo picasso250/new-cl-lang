@@ -31,6 +31,7 @@ class TokenKind(Enum):
     DEFER = auto()
     NIL = auto()
     IMPORT = auto()
+    EXTERN = auto()
     # 运算符
     PLUS = auto()
     MINUS = auto()
@@ -109,6 +110,7 @@ KEYWORDS = {
     "defer": TokenKind.DEFER,
     "nil": TokenKind.NIL,
     "import": TokenKind.IMPORT,
+    "extern": TokenKind.EXTERN,
     "type": TokenKind.TYPE,
     "true": TokenKind.BOOL,
     "false": TokenKind.BOOL,

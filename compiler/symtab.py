@@ -47,8 +47,9 @@ class SymbolTable:
         self._scopes.pop()
         self._level -= 1
 
-    def declare(self, name: str, nc_type: str):
-        _check_c_runtime_name(name)
+    def declare(self, name: str, nc_type: str, *, allow_c_runtime_name: bool = False):
+        if not allow_c_runtime_name:
+            _check_c_runtime_name(name)
         if name in self._scopes[-1]:
             raise NameError(f"Variable '{name}' already declared in this scope")
         self._scopes[-1][name] = Symbol(name, nc_type, self._level)
@@ -92,7 +93,7 @@ def build_symbol_table(program: "Program") -> SymbolTable:
     from compiler.ast import (
         Program, VariableDeclaration, ExpressionStatement,
         Assignment, Update, Block, While, FunctionDeclaration, Return,
-        StructDecl, EnumDecl, ForIn, ImportDecl,
+        StructDecl, EnumDecl, ForIn, ImportDecl, ExternBlock,
         IfExpr, BlockExpr, MatchExpr, BinaryOp, UnaryOp, FunctionCall, FunctionExpr,
         ArrayLiteral, IndexAccess, MethodCall, FieldAccess, StructLiteral, TryCatch, Throw, Defer
     )
@@ -102,10 +103,16 @@ def build_symbol_table(program: "Program") -> SymbolTable:
     table.declare_struct("str", [("ptr", "i64"), ("len", "i64")])
     table._methods = {}  # {type_name: {method_name: (ret_type, [(param, type)])}}
     table._functions = {}  # {function_name: (ret_type, [(param, type)])}
+    table._extern_functions = set()
 
     def walk_stmts(stmts: list):
         for stmt in stmts:
             if isinstance(stmt, FunctionDeclaration):
+                if getattr(stmt, "is_extern", False):
+                    table.declare(stmt.name, stmt.return_type or "void", allow_c_runtime_name=True)
+                    table._functions[stmt.name] = (stmt.return_type or "void", stmt.params)
+                    table._extern_functions.add(stmt.name)
+                    continue
                 if stmt.receiver_name:
                     # 方法：注册为 TypeName_methodName
                     rtype = stmt.receiver_type  # e.g. "*Stack"
@@ -137,6 +144,13 @@ def build_symbol_table(program: "Program") -> SymbolTable:
                 table.declare_enum(stmt.name, stmt.variants)
             elif isinstance(stmt, ImportDecl):
                 pass
+            elif isinstance(stmt, ExternBlock):
+                for fn in stmt.functions:
+                    if fn.name in table._functions:
+                        raise NameError(f"Function '{fn.name}' already declared")
+                    table.declare(fn.name, fn.return_type or "void", allow_c_runtime_name=True)
+                    table._functions[fn.name] = (fn.return_type or "void", fn.params)
+                    table._extern_functions.add(fn.name)
             elif isinstance(stmt, (While, Block, ForIn, TryCatch)):
                 _descend_stmt(stmt)
             elif isinstance(stmt, ExpressionStatement):

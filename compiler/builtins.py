@@ -48,9 +48,11 @@ def infer_builtin_call(node, require_arg_count, require_type, fail) -> str | Non
         if arg_type not in NUMERIC_TYPES:
             fail(f"{name}: expected numeric value, got {arg_type}", node)
         return name
-    if name == "gc_collect":
+    if name == "runtime.gc_collect":
+        require_arg_count(args, 0, "runtime.gc_collect", node)
         return "void"
-    if name == "gc_live":
+    if name == "runtime.gc_live":
+        require_arg_count(args, 0, "runtime.gc_live", node)
         return "i32"
     if name == "len":
         require_arg_count(args, 1, "len", node)

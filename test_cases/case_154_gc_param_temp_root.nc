@@ -1,8 +1,9 @@
+import runtime
 import io
 # STDOUT: 42
 
 fun use(s: str) {
-    gc_collect()
+    runtime.gc_collect()
     io.println(s)
 }
 

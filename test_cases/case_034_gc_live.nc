@@ -1,3 +1,4 @@
+import runtime
 import io
 # STDOUT: ok
 
@@ -8,6 +9,6 @@ fun helper() {
 
 fun main() {
     helper()
-    gc_collect()
+    runtime.gc_collect()
     io.println("ok")
 }

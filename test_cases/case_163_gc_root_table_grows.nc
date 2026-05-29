@@ -1,3 +1,4 @@
+import runtime
 import io
 # STDOUT: ok
 
@@ -7,6 +8,6 @@ fun main() {
         let s = str(i)
         i = i + 1
     }
-    gc_collect()
+    runtime.gc_collect()
     io.println("ok")
 }

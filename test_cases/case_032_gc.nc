@@ -1,3 +1,4 @@
+import runtime
 import io
 # STDOUT: before gc: alive
 # STDOUT: after gc: alive
@@ -5,6 +6,6 @@ import io
 fun main() {
     let s = "alive"
     io.println("before gc: " + s)
-    gc_collect()
+    runtime.gc_collect()
     io.println("after gc: " + s)
 }

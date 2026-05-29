@@ -11,10 +11,11 @@ from compiler.source import Module, SourceFile, annotate_source_file, module_nam
 from compiler.ast import (
     Program, ImportDecl, FunctionDeclaration, StructDecl, EnumDecl, FunctionCall,
     Identifier, StructLiteral, EnumRef, MethodCall, TypeAlias, FunctionExpr, VariableDeclaration,
+    ExternBlock,
     ArrayLiteral, SliceLiteral
 )
 
-BUILTIN_MODULES = {"io"}
+BUILTIN_MODULES = {"io", "runtime"}
 
 
 def _split_top_level_comma(s: str) -> list[str]:
@@ -172,6 +173,9 @@ def _top_names(module: Module) -> set[str]:
         for stmt in source_file.ast.statements:
             if isinstance(stmt, (FunctionDeclaration, StructDecl, EnumDecl)):
                 names.add(stmt.name)
+            elif isinstance(stmt, ExternBlock):
+                for fn in stmt.functions:
+                    names.add(fn.name)
     return names
 
 
@@ -231,6 +235,10 @@ def _rewrite_module_names(module: Module, entry: bool):
             node.fields = [(n, _qual_type(t, module.name, local_names)) for n, t in node.fields]
         elif isinstance(node, EnumDecl):
             node.name = q(node.name)
+        elif isinstance(node, ExternBlock):
+            for fn in node.functions:
+                fn.return_type = _qual_type(fn.return_type, module.name, local_names)
+                fn.params = [(n, _qual_type(t, module.name, local_names)) for n, t in fn.params]
         elif isinstance(node, FunctionCall):
             node.name = q(node.name)
         elif isinstance(node, Identifier):

@@ -457,6 +457,10 @@
 
 ## 2026-05-29
 
+- 合并 C 互操作设计：`runtime` 内置库 + `extern` 声明两条路径，写入 c-interop.md。删除 ffi-design.md 与 runtime-module-design.md。
+
+## 2026-05-29
+
 - 已实现类型别名 v1：
   - lexer 新增 `type` 关键字
   - ast 新增 TypeAlias 节点
@@ -468,3 +472,11 @@
   - 新增 case_181~186 覆盖基本/函数/struct/切片/循环错误/重复错误
 - 验证通过：python tests/test_basic.py（184/184）；python -m pytest tests/test_llvm_backend.py tests/test_builtin_boundary.py tests/test_projects.py tests/test_llvm_cases.py -q（57/57）。
 
+## 2026-05-29
+
+- 预备实现 runtime 内置模块与 extern "c" v1：runtime 只公开 gc_collect/gc_live，删除裸 GC builtin；新增最小 C ABI extern 函数声明、类型限制、LLVM declare 与正反向测试。
+
+- 已实现 runtime 内置模块与 extern "c" v1：`runtime` 加入内置模块集合，`runtime.gc_collect()` / `runtime.gc_live()` 替代裸 GC builtin；裸 `gc_collect()` / `gc_live()` 已删除并由错误 case 覆盖。
+- 已实现顶层 `extern "c" { fun name(params): Ret }` 解析、extern 函数符号注册、C ABI scalar/pointer 类型限制、LLVM `declare` 与普通调用 lowering；v1 明确不支持其他来源字符串、函数体、varargs、泛型 extern、`str`/聚合/NC runtime 类型。
+- 已更新 design.md 与 c-interop.md，使 `runtime` 公开面、`ncrt` 私有 ABI 和 extern v1 边界与实现一致。新增 case_187~196 与项目级 runtime 内置模块优先级测试。
+- 验证通过：python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py -q；python -m pytest tests/test_llvm_backend.py tests/test_llvm_cases.py -q；python nc.py build test_cases\case_189_extern_c_putchar.nc 并运行 build\main.exe 输出 A。

@@ -1,8 +1,9 @@
+import runtime
 import io
 # STDOUT: 1
 
 fun fail() {
-    defer { gc_collect() }
+    defer { runtime.gc_collect() }
     throw str(1)
 }
 
@@ -10,7 +11,7 @@ fun main() {
     try {
         fail()
     } catch e {
-        gc_collect()
+        runtime.gc_collect()
         io.println(e)
     }
 }

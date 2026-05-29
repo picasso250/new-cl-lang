@@ -19,7 +19,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         StructDecl, StructLiteral, FieldAccess,
         EnumDecl, EnumRef, ForIn,
         IfExpr, BlockExpr, MatchExpr, IntegerLiteral, FloatLiteral, StringLiteral, BoolLiteral, NilLiteral, BinaryOp, UnaryOp, FunctionCall, Identifier,
-        FunctionExpr,
+        ExternBlock, FunctionExpr,
         ArrayLiteral, SliceLiteral, IndexAccess, SliceExpr, MethodCall, TryCatch, Throw, Defer, Break
     )
 
@@ -84,7 +84,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         return None
 
     def tail_expr_type(expr):
-        if isinstance(expr, FunctionCall) and expr.name == "gc_live":
+        if isinstance(expr, FunctionCall) and expr.name == "runtime.gc_live":
             return None
         if getattr(expr, "type", None) == "void":
             return None
@@ -214,6 +214,27 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
 
     def is_integer_type(t):
         return t in {"i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"}
+
+    def is_extern_abi_type(t):
+        if t == "void":
+            return True
+        if t in {"i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "bool"}:
+            return True
+        if isinstance(t, str) and t.startswith("*"):
+            return is_extern_abi_type(t[1:])
+        if isinstance(t, str) and t.startswith("?*"):
+            return is_extern_abi_type(t[2:])
+        return False
+
+    def validate_extern_function(fn):
+        if fn.type_params:
+            fail("generic extern functions are not supported", fn)
+        ret = fn.return_type or "void"
+        if not is_extern_abi_type(ret):
+            fail(f"extern function {fn.name}: unsupported return type {ret}", fn)
+        for pname, ptype in fn.params:
+            if not is_extern_abi_type(ptype) or ptype == "void":
+                fail(f"extern function {fn.name}: unsupported parameter {pname}: {ptype}", fn)
 
     def is_assignable_type(actual, expected):
         if actual == expected:
@@ -601,6 +622,11 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 pass  # 已在 Pass 1 注册
             elif isinstance(stmt, ImportDecl):
                 pass
+            elif isinstance(stmt, ExternBlock):
+                if stmt.source != "c":
+                    fail('extern v1 only supports "c"', stmt)
+                for fn in stmt.functions:
+                    validate_extern_function(fn)
             elif isinstance(stmt, ForIn):
                 if stmt.start is not None:
                     walk_expr(stmt.start)

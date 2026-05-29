@@ -130,6 +130,16 @@ class TypeAlias(Node):
         return f"TypeAlias({self.name} = {self.target_type})"
 
 
+class ExternBlock(Node):
+    """extern "c" { fun name(params): ret }"""
+    def __init__(self, source: str, functions: list):
+        self.source = source
+        self.functions = functions
+
+    def __repr__(self):
+        return f'Extern("{self.source}", {self.functions})'
+
+
 class EnumDecl(Node):
     """enum Name { A, B, C } —— 纯标签，无变体数据。"""
     def __init__(self, name: str, variants: list[str]):

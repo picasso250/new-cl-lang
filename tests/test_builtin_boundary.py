@@ -24,7 +24,11 @@ def test_io_println_is_the_only_output_builtin():
     source = _read("compiler/builtins.py")
 
     assert 'name == "io.println"' in source
+    assert 'name == "runtime.gc_collect"' in source
+    assert 'name == "runtime.gc_live"' in source
     assert 'name == "print"' not in source
+    assert 'name == "gc_collect"' not in source
+    assert 'name == "gc_live"' not in source
 
 
 def test_llvm_declares_external_ncrt_symbols():

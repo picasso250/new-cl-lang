@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 from compiler.ast import (
     Assignment, Update, ArrayLiteral, BinaryOp, Block, BlockExpr, Defer, EnumDecl,
-    FieldAccess, ForIn, FunctionCall, FunctionDeclaration, FunctionExpr,
+    ExternBlock, FieldAccess, ForIn, FunctionCall, FunctionDeclaration, FunctionExpr,
     IfExpr, ImportDecl, IndexAccess, MatchExpr, MethodCall, Return, SliceExpr,
     SliceLiteral, StructDecl, StructLiteral, Throw, TryCatch, UnaryOp,
     VariableDeclaration, ExpressionStatement, While,
@@ -44,11 +44,16 @@ def collect_codegen_inputs(program) -> CodegenInputs:
             elif isinstance(stmt, EnumDecl):
                 result.enums.append(stmt)
             elif isinstance(stmt, FunctionDeclaration):
+                if getattr(stmt, "is_extern", False):
+                    result.other_funcs.append(stmt)
+                    continue
                 if stmt.name == "main":
                     result.main_func = stmt
                 else:
                     result.other_funcs.append(stmt)
                 collect_top_level(stmt.body.statements)
+            elif isinstance(stmt, ExternBlock):
+                result.other_funcs.extend(stmt.functions)
             elif isinstance(stmt, Block):
                 collect_top_level(stmt.statements)
             elif isinstance(stmt, While):
@@ -116,6 +121,8 @@ def collect_codegen_inputs(program) -> CodegenInputs:
                 collect_closure_expr(arg)
 
     def collect_closure_stmt(stmt):
+        if isinstance(stmt, ExternBlock):
+            return
         if isinstance(stmt, VariableDeclaration):
             collect_closure_expr(stmt.initializer)
         elif isinstance(stmt, Assignment):
@@ -227,6 +234,8 @@ def collect_codegen_inputs(program) -> CodegenInputs:
     def collect_stmt_types(stmt):
         collect_slice_type(getattr(stmt, "type", None))
         collect_fn_type(getattr(stmt, "type", None))
+        if isinstance(stmt, ExternBlock):
+            return
         if isinstance(stmt, VariableDeclaration):
             collect_expr_types(stmt.initializer)
         elif isinstance(stmt, Assignment):
@@ -277,6 +286,6 @@ def collect_codegen_inputs(program) -> CodegenInputs:
 
     result.top_stmts = [
         stmt for stmt in program.statements
-        if not isinstance(stmt, (FunctionDeclaration, StructDecl, EnumDecl, ImportDecl))
+        if not isinstance(stmt, (FunctionDeclaration, StructDecl, EnumDecl, ImportDecl, ExternBlock))
     ]
     return result

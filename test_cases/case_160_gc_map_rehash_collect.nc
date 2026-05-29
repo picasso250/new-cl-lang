@@ -1,3 +1,4 @@
+import runtime
 import io
 # STDOUT: v0
 # STDOUT: v19
@@ -24,8 +25,8 @@ fun main() {
     m["k17"] = "v17"
     m["k18"] = "v18"
     m["k19"] = "v19"
-    gc_collect()
-    gc_collect()
+    runtime.gc_collect()
+    runtime.gc_collect()
     io.println(m["k0"])
     io.println(m["k19"])
 }

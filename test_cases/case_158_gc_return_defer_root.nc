@@ -1,8 +1,9 @@
+import runtime
 import io
 # STDOUT: 1
 
 fun make(): str {
-    defer { gc_collect() }
+    defer { runtime.gc_collect() }
     return str(1)
 }
 

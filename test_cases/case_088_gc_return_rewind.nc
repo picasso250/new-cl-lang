@@ -1,3 +1,4 @@
+import runtime
 # STDOUT: 0
 
 fun helper(): i32 {
@@ -8,6 +9,6 @@ fun helper(): i32 {
 
 fun main() {
     helper()
-    gc_collect()
-    gc_live()
+    runtime.gc_collect()
+    runtime.gc_live()
 }

@@ -48,6 +48,9 @@ class Parser:
             if self.peek().kind == TokenKind.TYPE:
                 stmts.append(self._parse_type_alias())
                 continue
+            if self.peek().kind == TokenKind.EXTERN:
+                stmts.append(self._parse_extern_block())
+                continue
             stmts.append(self.parse_statement())
         return Program(stmts)
 
@@ -58,6 +61,8 @@ class Parser:
 
         if t.kind == TokenKind.IMPORT:
             raise ParseError("import is only allowed at top level")
+        if t.kind == TokenKind.EXTERN:
+            raise ParseError("extern is only allowed at top level")
         if t.kind == TokenKind.LET:
             return self._parse_let()
         if t.kind == TokenKind.IF:
@@ -141,6 +146,27 @@ class Parser:
         stmt = self.span(ImportDecl(name), start)
         self.match(TokenKind.SEMI)
         return stmt
+
+    def _parse_extern_block(self):
+        start = self.advance()
+        source = self.expect(TokenKind.STRING).value
+        if source != "c":
+            raise ParseError('extern v1 only supports "c"')
+        self.expect(TokenKind.LBRACE)
+        funcs = []
+        while self.peek().kind != TokenKind.RBRACE:
+            if self.peek().kind == TokenKind.EOF:
+                raise ParseError("unterminated extern block")
+            if self.peek().kind != TokenKind.FUN:
+                raise ParseError("extern block only allows function declarations")
+            fn = self._parse_function_signature_only()
+            fn.is_extern = True
+            fn.extern_source = source
+            funcs.append(fn)
+            self.match(TokenKind.SEMI)
+        self.expect(TokenKind.RBRACE)
+        self.match(TokenKind.SEMI)
+        return self.span(ExternBlock(source, funcs), start)
 
     def _parse_type(self) -> str:
         if self.peek().kind == TokenKind.QUESTION:
@@ -251,6 +277,41 @@ class Parser:
         self.match(TokenKind.SEMI)
         return FunctionDeclaration(name, params, return_type, body,
                                    receiver_name, receiver_type, return_type_explicit, type_params)
+
+    def _parse_function_signature_only(self):
+        self.advance()  # fun
+        if self.peek().kind == TokenKind.LPAREN:
+            raise ParseError("extern methods are not supported")
+        name = self.expect(TokenKind.IDENT).value
+        type_params = self._parse_type_params()
+        if type_params:
+            raise ParseError("generic extern functions are not supported")
+        self.expect(TokenKind.LPAREN)
+        params = []
+        if self.peek().kind != TokenKind.RPAREN:
+            pname = self.expect(TokenKind.IDENT).value
+            self.expect(TokenKind.COLON)
+            ptype = self._parse_type()
+            params.append((pname, ptype))
+            while self.peek().kind == TokenKind.COMMA:
+                self.advance()
+                if self.peek().kind in (TokenKind.DOT, TokenKind.DOTDOT):
+                    raise ParseError("extern v1 does not support varargs")
+                pname = self.expect(TokenKind.IDENT).value
+                self.expect(TokenKind.COLON)
+                ptype = self._parse_type()
+                params.append((pname, ptype))
+        self.expect(TokenKind.RPAREN)
+        return_type = None
+        return_type_explicit = False
+        if self.peek().kind == TokenKind.COLON:
+            self.advance()
+            return_type = self._parse_type()
+            return_type_explicit = True
+        if self.peek().kind == TokenKind.LBRACE:
+            raise ParseError("extern function bodies are not supported")
+        return FunctionDeclaration(name, params, return_type, Block([]),
+                                   return_type_explicit=return_type_explicit)
 
     def _parse_function_expr(self, start):
         self.expect(TokenKind.LPAREN)

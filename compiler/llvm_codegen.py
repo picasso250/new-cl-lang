@@ -60,6 +60,8 @@ def llvm_type(nc_type: str | None):
         return STR_TYPE
     if nc_type == "nc_map":
         return MAP_TYPE
+    if nc_type in ("*void", "?*void"):
+        return I8PTR
     fn_info = parse_fn_type(nc_type)
     if fn_info is not None:
         arg_types, ret_type = fn_info
@@ -178,7 +180,8 @@ class LLVMCodegen:
         for closure in collected.closures:
             self.emit_closure_function(closure)
         for fn in funcs:
-            self.emit_function(fn)
+            if not getattr(fn, "is_extern", False):
+                self.emit_function(fn)
         return str(self.module)
 
     def register_enums(self, enums: list[EnumDecl]):
@@ -221,6 +224,8 @@ class LLVMCodegen:
             self.fn_decls[fn.name] = fn
 
     def function_symbol(self, fn: FunctionDeclaration):
+        if getattr(fn, "is_extern", False):
+            return fn.name
         if fn.receiver_name:
             receiver_type = fn.receiver_type.lstrip("*").lstrip("?")
             return safe_user_ident(f"{receiver_type}_{fn.name}")
@@ -1152,14 +1157,13 @@ class LLVMCodegen:
             if len(node.args) != 2:
                 raise RuntimeError("write_file expects two arguments")
             return self.emit_write_file(node.args[0], node.args[1])
-        if node.name == "gc_collect":
+        if node.name == "runtime.gc_collect":
             if len(node.args) != 0:
-                raise RuntimeError("gc_collect expects no arguments")
+                raise RuntimeError("runtime.gc_collect expects no arguments")
             return self.emit_gc_collect()
-            return ir.Constant(ir.IntType(1), 0)
-        if node.name == "gc_live":
+        if node.name == "runtime.gc_live":
             if len(node.args) != 0:
-                raise RuntimeError("gc_live expects no arguments")
+                raise RuntimeError("runtime.gc_live expects no arguments")
             return self.emit_gc_live()
         if node.name in INT_TYPES or node.name in FLOAT_TYPES:
             if len(node.args) != 1:
@@ -1169,7 +1173,8 @@ class LLVMCodegen:
             return self.cast_numeric(self.emit_expr(node.args[0]), node.args[0].type, node.name)
         if node.name not in self.fn_decls:
             raise NotImplementedError(f"LLVM backend v1 cannot call {node.name}")
-        fn = self.module.globals[safe_user_ident(node.name)]
+        fn_decl = self.fn_decls[node.name]
+        fn = self.module.globals[self.function_symbol(fn_decl)]
         return self.builder.call(fn, [self.emit_expr(arg) for arg in node.args])
 
     def emit_function_expr(self, node: FunctionExpr):

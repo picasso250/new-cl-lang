@@ -327,6 +327,21 @@ def test_builtin_io_module_preempts_sibling_directory():
         assert result.stdout.strip() == "1"
 
 
+def test_builtin_runtime_module_preempts_sibling_directory():
+    with tempfile.TemporaryDirectory() as tmp:
+        main = os.path.join(tmp, "main")
+        runtime_dir = os.path.join(tmp, "runtime")
+        os.mkdir(main)
+        os.mkdir(runtime_dir)
+        write_file(os.path.join(main, "main.nc"), "import runtime\nfun main() { runtime.gc_collect() }\n")
+        write_file(os.path.join(runtime_dir, "runtime.nc"), "fun gc_collect() { bad() }\n")
+
+        result = run_nc("run", main)
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == ""
+
+
 def test_bare_print_and_unimported_io_println_errors():
     with tempfile.TemporaryDirectory() as tmp:
         main = os.path.join(tmp, "main")

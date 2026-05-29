@@ -413,11 +413,12 @@ fun main() {{
 
 def test_llvm_temporary_gc_hooks():
     source = """import io
+import runtime
 fun main() {
     let s = str(42)
-    gc_collect()
+    runtime.gc_collect()
     io.println(s)
-    gc_live()
+    runtime.gc_live()
 }
 """
     llvm_ir = compile_nc_to_llvm_ir(source)
@@ -426,12 +427,13 @@ fun main() {
 
 
 def test_llvm_gc_live_tracks_allocator_hook():
-    source = """fun main() {
+    source = """import runtime
+fun main() {
     let a = str(1)
     let b = "x" + "y"
-    gc_live()
-    gc_collect()
-    gc_live()
+    runtime.gc_live()
+    runtime.gc_collect()
+    runtime.gc_live()
 }
 """
     llvm_ir = compile_nc_to_llvm_ir(source)
@@ -440,15 +442,16 @@ def test_llvm_gc_live_tracks_allocator_hook():
 
 
 def test_llvm_gc_collect_releases_dead_helper_locals():
-    source = """fun helper() {
+    source = """import runtime
+fun helper() {
     let a = str(1)
     let b = "x" + "y"
-    gc_live()
+    runtime.gc_live()
 }
 fun main() {
     helper()
-    gc_collect()
-    gc_live()
+    runtime.gc_collect()
+    runtime.gc_live()
 }
 """
     llvm_ir = compile_nc_to_llvm_ir(source)
@@ -458,11 +461,12 @@ fun main() {
 
 def test_llvm_uses_external_ncrt_runtime():
     llvm_ir = compile_nc_to_llvm_ir("""import io
+import runtime
 fun main() {
     let m = map_new()
     m["a"] = "b"
     io.println(m["a"])
-    gc_live()
+    runtime.gc_live()
 }
 """)
 
@@ -511,15 +515,16 @@ fun main(): i32 {
     assert (stdout.strip(), stderr.strip(), rc) == ("3\n2\n1", "", 7)
 
     source = """import io
+import runtime
 fun fail() {
-    defer { gc_collect() }
+    defer { runtime.gc_collect() }
     throw str(1)
 }
 fun main() {
     try {
         fail()
     } catch e {
-        gc_collect()
+        runtime.gc_collect()
         io.println(e)
     }
 }
