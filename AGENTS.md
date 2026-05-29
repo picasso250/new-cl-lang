@@ -8,4 +8,5 @@
 - 动手或者做计划之前，要先阅读 design.md worklog.md
 - 更新 worklog 的时机：工作时，仅用 append 方式写，我预备做什么，成功与否。
 - 更新 design.md 的时机：我预备做什么新feature（design.md中没有的），做完之后，检查一遍 design.md 是否和实现一致
-- 新 feature 完成之后，git 提交。 
+- 新 feature 完成之后，git 提交。
+- 马斯克五步工作法。
