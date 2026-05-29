@@ -42,6 +42,7 @@ DEFAULT_TRIPLE = "x86_64-w64-windows-gnu"
 I8PTR = ir.IntType(8).as_pointer()
 STR_TYPE = ir.LiteralStructType([I8PTR, ir.IntType(64)])
 MAP_TYPE = ir.LiteralStructType([I8PTR, ir.IntType(64), ir.IntType(64), ir.IntType(64)])
+RAW_SLICE_TYPE = ir.LiteralStructType([I8PTR, ir.IntType(64), ir.IntType(64)])
 STRUCT_TYPES: dict[str, ir.LiteralStructType] = {}
 STRUCT_FIELDS: dict[str, list[tuple[str, str]]] = {}
 STRUCT_FIELD_INDEX: dict[str, dict[str, int]] = {}
@@ -130,6 +131,8 @@ class LLVMCodegen:
         self.map_get_str_fn = None
         self.map_set_str_fn = None
         self.map_has_fn = None
+        self.slice_copy_fn = None
+        self.slice_append_fn = None
         self.gc_live_count = None
         self.ex_active = None
         self.ex_value = None
@@ -721,27 +724,9 @@ class LLVMCodegen:
         end = self.cast_to(self.emit_expr(node.end), "i32") if node.end else default_end
         count32 = self.builder.sub(end, start, name="slice.count32")
         count64 = self.builder.sext(count32, ir.IntType(64), name="slice.count64")
-        dest = self.malloc_array(elem_type, count64)
-
-        cond_bb = self.func.append_basic_block("slice.copy.cond")
-        body_bb = self.func.append_basic_block("slice.copy.body")
-        end_bb = self.func.append_basic_block("slice.copy.end")
-        idx_slot = self.alloca_at_entry("__nc_slice_i", ir.IntType(32))
-        self.builder.store(ir.Constant(ir.IntType(32), 0), idx_slot)
-        self.builder.branch(cond_bb)
-        self.builder.position_at_end(cond_bb)
-        i = self.builder.load(idx_slot, name="slice.i")
-        self.builder.cbranch(self.builder.icmp_signed("<", i, count32), body_bb, end_bb)
-        self.builder.position_at_end(body_bb)
-        source_i = self.builder.add(start, i, name="slice.source.i")
-        source_elem_ptr = self.builder.gep(source_ptr, source_indices(source_i), inbounds=True)
-        dest_elem_ptr = self.builder.gep(dest, [i], inbounds=True)
-        self.builder.store(self.builder.load(source_elem_ptr), dest_elem_ptr)
-        next_i = self.builder.add(i, ir.Constant(ir.IntType(32), 1))
-        self.builder.store(next_i, idx_slot)
-        self.builder.branch(cond_bb)
-        self.builder.position_at_end(end_bb)
-        return self.slice_value(elem_type, dest, count64, count64)
+        source_i = self.builder.add(start, ir.Constant(ir.IntType(32), 0), name="slice.source.start")
+        source_elem_ptr = self.builder.gep(source_ptr, source_indices(source_i))
+        return self.emit_slice_copy_raw(elem_type, source_elem_ptr, count64)
 
     def emit_str_slice(self, node: SliceExpr):
         self.ensure_ncrt_runtime()
@@ -766,6 +751,21 @@ class LLVMCodegen:
         value = self.builder.insert_value(value, length, [1], name="slice.len")
         value = self.builder.insert_value(value, cap, [2], name="slice.cap")
         return value
+
+    def emit_slice_copy_raw(self, elem_type: str, source_ptr, count64):
+        self.ensure_ncrt_runtime()
+        slice_type = llvm_type(f"[]{elem_type}")
+        out = self.alloca_at_entry("__nc_slice_copy_out", slice_type)
+        self.builder.call(
+            self.slice_copy_fn,
+            [
+                self.builder.bitcast(out, RAW_SLICE_TYPE.as_pointer()),
+                self.builder.bitcast(source_ptr, I8PTR),
+                count64,
+                ir.Constant(ir.IntType(64), self.sizeof_type(elem_type)),
+            ],
+        )
+        return self.builder.load(out, name="slice.copy")
 
     def emit_lvalue(self, node):
         if isinstance(node, Identifier):
@@ -1092,34 +1092,23 @@ class LLVMCodegen:
         raise NotImplementedError(f"LLVM backend v1 cannot print type: {typ}")
 
     def emit_append(self, slice_expr, elem_expr, elem_type: str):
+        self.ensure_ncrt_runtime()
+        slice_type = llvm_type(f"[]{elem_type}")
         source = self.emit_expr(slice_expr)
-        source_ptr = self.builder.extract_value(source, 0)
-        source_len = self.builder.extract_value(source, 1)
-        one64 = ir.Constant(ir.IntType(64), 1)
-        new_len = self.builder.add(source_len, one64, name="append.new.len")
-        dest = self.malloc_array(elem_type, new_len)
-
-        cond_bb = self.func.append_basic_block("append.copy.cond")
-        body_bb = self.func.append_basic_block("append.copy.body")
-        end_bb = self.func.append_basic_block("append.copy.end")
-        idx_slot = self.alloca_at_entry("__nc_append_i", ir.IntType(64))
-        self.builder.store(ir.Constant(ir.IntType(64), 0), idx_slot)
-        self.builder.branch(cond_bb)
-        self.builder.position_at_end(cond_bb)
-        i = self.builder.load(idx_slot, name="append.i")
-        self.builder.cbranch(self.builder.icmp_unsigned("<", i, source_len), body_bb, end_bb)
-        self.builder.position_at_end(body_bb)
-        source_elem_ptr = self.builder.gep(source_ptr, [i], inbounds=True)
-        dest_elem_ptr = self.builder.gep(dest, [i], inbounds=True)
-        self.builder.store(self.builder.load(source_elem_ptr), dest_elem_ptr)
-        next_i = self.builder.add(i, one64)
-        self.builder.store(next_i, idx_slot)
-        self.builder.branch(cond_bb)
-        self.builder.position_at_end(end_bb)
-
-        appended_ptr = self.builder.gep(dest, [source_len], inbounds=True)
-        self.builder.store(self.cast_to(self.emit_expr(elem_expr), elem_type), appended_ptr)
-        return self.slice_value(elem_type, dest, new_len, new_len)
+        source_slot = self.value_to_stack_ptr(source, slice_type, "__nc_append_source")
+        elem_value = self.cast_to(self.emit_expr(elem_expr), elem_type)
+        elem_slot = self.value_to_stack_ptr(elem_value, llvm_type(elem_type), "__nc_append_elem")
+        out = self.alloca_at_entry("__nc_append_out", slice_type)
+        self.builder.call(
+            self.slice_append_fn,
+            [
+                self.builder.bitcast(out, RAW_SLICE_TYPE.as_pointer()),
+                self.builder.bitcast(source_slot, RAW_SLICE_TYPE.as_pointer()),
+                self.builder.bitcast(elem_slot, I8PTR),
+                ir.Constant(ir.IntType(64), self.sizeof_type(elem_type)),
+            ],
+        )
+        return self.builder.load(out, name="slice.append")
 
     def emit_str_cat(self, left, right):
         self.ensure_ncrt_runtime()
@@ -1262,6 +1251,17 @@ class LLVMCodegen:
             self.map_get_str_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [str_ptr, MAP_TYPE.as_pointer(), str_ptr]), name="__nc_map_get_str_out")
             self.map_set_str_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [MAP_TYPE.as_pointer(), str_ptr, str_ptr]), name="__nc_map_set_str_ptr")
             self.map_has_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [MAP_TYPE.as_pointer(), str_ptr]), name="__nc_map_has_ptr")
+            raw_slice_ptr = RAW_SLICE_TYPE.as_pointer()
+            self.slice_copy_fn = ir.Function(
+                self.module,
+                ir.FunctionType(ir.VoidType(), [raw_slice_ptr, I8PTR, ir.IntType(64), ir.IntType(64)]),
+                name="__nc_slice_copy_raw",
+            )
+            self.slice_append_fn = ir.Function(
+                self.module,
+                ir.FunctionType(ir.VoidType(), [raw_slice_ptr, raw_slice_ptr, I8PTR, ir.IntType(64)]),
+                name="__nc_slice_append_raw",
+            )
 
     def value_to_stack_ptr(self, value, typ, name):
         slot = self.alloca_at_entry(name, typ)

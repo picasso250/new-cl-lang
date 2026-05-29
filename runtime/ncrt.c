@@ -97,6 +97,30 @@ int __nc_str_eq_ptr(const str* a, const str* b) {
     return __nc_str_eq(*a, *b);
 }
 
+void __nc_slice_copy_raw(nc_slice_raw* out, const void* src, uint64_t len, uint64_t elem_size) {
+    out->ptr = NULL;
+    out->len = len;
+    out->cap = len;
+    if (len == 0) return;
+    out->ptr = __nc_gc_alloc((size_t)len * (size_t)elem_size);
+    memcpy(out->ptr, src, (size_t)len * (size_t)elem_size);
+}
+
+void __nc_slice_append_raw(nc_slice_raw* out, const nc_slice_raw* in, const void* elem, uint64_t elem_size) {
+    *out = *in;
+    if (out->len >= out->cap) {
+        uint64_t nc = out->cap ? out->cap * 2 : 4;
+        void* np = __nc_gc_alloc((size_t)nc * (size_t)elem_size);
+        if (out->ptr && out->len) {
+            memcpy(np, out->ptr, (size_t)out->len * (size_t)elem_size);
+        }
+        out->ptr = np;
+        out->cap = nc;
+    }
+    memcpy((uint8_t*)out->ptr + ((size_t)out->len * (size_t)elem_size), elem, (size_t)elem_size);
+    out->len++;
+}
+
 str __nc_str_cat(str a, str b) {
     uint8_t* buf = (uint8_t*)__nc_gc_alloc((size_t)(a.len + b.len + 1));
     if (a.len) memcpy(buf, a.ptr, (size_t)a.len);

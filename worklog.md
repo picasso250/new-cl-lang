@@ -400,3 +400,10 @@
 - LLVM nc_map 布局已改为匹配 ncrt.h 的 entries/cap/len/tombstones，entries 在 LLVM 侧 opaque，len(map) 读取 len 字段；C runtime 哈希表成为唯一 map 实现。
 - 验证通过：python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py -q；python -m pytest tests/test_llvm_backend.py tests/test_llvm_cases.py -q；默认 LLVM build 与 --backend c build smoke 均产出 ncrt.obj 并可运行。未迁移项：按元素类型生成的 slice append/copy helper 仍保留在 C 生成代码中。
 
+## 2026-05-29
+
+- 预备将 slice append/copy 迁入 ncrt：保持 `[]T = { ptr, len, cap }` 三字段布局不变，新增字节级 raw slice helper，C 后端只生成 typed wrapper，LLVM 后端调用同一组 ncrt helper，统一两后端 slice 复制/增长语义。
+
+- 已将 slice append/copy 迁入 ncrt：新增 `nc_slice_raw`、`__nc_slice_copy_raw`、`__nc_slice_append_raw`；C 后端 typed slice helper 只做 raw ABI wrapper，LLVM 后端的 slice copy/append 改为调用同一组 ncrt helper。`elem_size` 保持为调用点常量参数，不进入 slice header。
+- 验证通过：python -m pytest tests/test_llvm_backend.py -q；python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_cases.py -q。
+

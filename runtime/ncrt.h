@@ -35,6 +35,12 @@ typedef struct {
     int64_t tombstones;
 } nc_map;
 
+typedef struct {
+    void* ptr;
+    uint64_t len;
+    uint64_t cap;
+} nc_slice_raw;
+
 typedef struct __nc_ex_frame {
     jmp_buf jb;
     struct __nc_ex_frame* prev;
@@ -68,6 +74,9 @@ int __nc_str_to_i32_ptr(const str* s);
 void __nc_read_file_out(str* out, const char* path);
 void __nc_write_file_ptr(const char* path, const str* content);
 int __nc_str_eq_ptr(const str* a, const str* b);
+
+void __nc_slice_copy_raw(nc_slice_raw* out, const void* src, uint64_t len, uint64_t elem_size);
+void __nc_slice_append_raw(nc_slice_raw* out, const nc_slice_raw* in, const void* elem, uint64_t elem_size);
 
 void __nc_map_init(nc_map* m);
 void __nc_map_free(nc_map* m);
