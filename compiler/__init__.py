@@ -9,6 +9,7 @@ from compiler.lexer import lex
 from compiler.parser import parse
 from compiler.symtab import build_symbol_table
 from compiler.typecheck import infer_types
+from compiler.generics import monomorphize
 from compiler.codegen import generate_c
 from compiler.llvm_codegen import build_llvm_ir, generate_llvm_ir, run_llvm_ir
 from compiler.ncrt import build_ncrt_obj, copy_ncrt_header, RUNTIME_DIR
@@ -66,6 +67,23 @@ def _qual_type(nc_type, module_name: str, local_names: set[str]):
     if nc_type.startswith("[") and "]" in nc_type:
         head, tail = nc_type.split("]", 1)
         return head + "]" + _qual_type(tail, module_name, local_names)
+    if nc_type.endswith("]") and "[" in nc_type:
+        base, rest = nc_type.split("[", 1)
+        args_s = rest[:-1]
+        args = []
+        start = 0
+        depth = 0
+        for i, ch in enumerate(args_s):
+            if ch == "[":
+                depth += 1
+            elif ch == "]":
+                depth -= 1
+            elif ch == "," and depth == 0:
+                args.append(args_s[start:i])
+                start = i + 1
+        args.append(args_s[start:])
+        qbase = _qual_type(base, module_name, local_names)
+        return f"{qbase}[{','.join(_qual_type(arg.strip(), module_name, local_names) for arg in args if arg.strip())}]"
     if nc_type in local_names:
         return f"{module_name}.{nc_type}"
     return nc_type
@@ -205,6 +223,7 @@ def parse_project_sources(sources: "list[tuple[str, str]]") -> Module:
 
 def _typecheck_module(module: Module) -> Program:
     program = module.to_program()
+    program = monomorphize(program)
 
     # Pass 1: 建符号表
     symtab = build_symbol_table(program)

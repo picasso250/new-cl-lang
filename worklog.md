@@ -431,3 +431,11 @@
 - LLVM 后端已接入 root frame：main 入口初始化 GC，函数/closure 入口 root mark，参数、receiver、closure env、局部变量、返回槽、catch error 和 throw 临时按类型递归注册 root，所有 return/异常传播出口 rewind；heap struct 分配改为 `__nc_gc_alloc`。
 - 已更新 LLVM GC hook 测试期望，并新增 helper 局部对象离开函数后可回收的 LLVM 覆盖。已验证：python -m pytest tests/test_llvm_backend.py tests/test_llvm_cases.py -q；python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py -q；python nc.py build test_cases\case_032_gc.nc；python nc.py build --backend c test_cases\case_032_gc.nc。
 
+
+## 2026-05-29
+
+- 预备实现 Go 风格显式泛型 v1：支持 fun/struct 类型参数、显式类型实参调用与类型应用，通过 frontend monomorphization 在 symtab/typecheck 前生成普通声明；v1 仅支持 any 约束，不做类型推断和独立泛型方法。
+
+- 已实现显式泛型 v1：parser/AST 支持 fun/struct 类型参数、显式类型实参调用和类型应用；新增 frontend monomorphization pass，在 symtab/typecheck 前将用到的泛型函数/struct 实例化为普通声明，后端继续只接收具体 AST。
+- 已补正向与错误 case，覆盖 identity、generic struct/new、slice/pointer 字段、嵌套实例、跨模块泛型、缺失/错误类型实参、未知类型参数、实例化后类型不匹配和非泛型误用；design.md 已记录 v1 语法与限制。
+- 验证通过：python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py -q；python -m pytest tests/test_llvm_backend.py tests/test_llvm_cases.py -q；python nc.py build test_cases\case_170_generics_identity.nc；python nc.py build --backend c test_cases\case_170_generics_identity.nc。

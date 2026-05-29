@@ -146,6 +146,31 @@ fun main() {
         assert result.stdout.strip() == "7"
 
 
+def test_import_generic_function_and_struct_run():
+    with tempfile.TemporaryDirectory() as tmp:
+        main = os.path.join(tmp, "main")
+        box = os.path.join(tmp, "box")
+        os.mkdir(main)
+        os.mkdir(box)
+        write_file(os.path.join(main, "main.nc"), """import io
+import box
+fun main() {
+  let a = box.id[i32](7)
+  let b = box.Box[str] { value: "ok" }
+  io.println(a)
+  io.println(b.value)
+}
+""")
+        write_file(os.path.join(box, "box.nc"), """fun id[T](x: T): T { x }
+struct Box[T] { value: T }
+""")
+
+        result = run_nc("run", main)
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "7\nok"
+
+
 def test_import_same_public_names_do_not_conflict():
     with tempfile.TemporaryDirectory() as tmp:
         main = os.path.join(tmp, "main")
@@ -212,6 +237,27 @@ fun main() {
         result = run_nc("run", "--backend", "llvm", main)
         assert result.returncode == 0, result.stderr
         assert result.stdout.strip() == "6"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        main = os.path.join(tmp, "main")
+        box = os.path.join(tmp, "box")
+        os.mkdir(main)
+        os.mkdir(box)
+        write_file(os.path.join(main, "main.nc"), """import io
+import box
+fun main() {
+  let a = box.id[i32](7)
+  let b = box.Box[str] { value: "ok" }
+  io.println(a)
+  io.println(b.value)
+}
+""")
+        write_file(os.path.join(box, "box.nc"), """fun id[T](x: T): T { x }
+struct Box[T] { value: T }
+""")
+        result = run_nc("run", "--backend", "llvm", main)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "7\nok"
 
 
 def test_import_private_symbol_error():

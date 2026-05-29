@@ -163,7 +163,40 @@ class Parser:
         if self.peek().kind == TokenKind.DOT:
             self.advance()
             name = f"{name}.{self.expect(TokenKind.IDENT).value}"
+        if self.peek().kind == TokenKind.LBRACKET:
+            args = self._parse_type_arg_list()
+            return f"{name}[{','.join(args)}]"
         return name
+
+    def _parse_type_arg_list(self) -> list[str]:
+        self.expect(TokenKind.LBRACKET)
+        args = []
+        if self.peek().kind != TokenKind.RBRACKET:
+            args.append(self._parse_type())
+            while self.peek().kind == TokenKind.COMMA:
+                self.advance()
+                args.append(self._parse_type())
+        self.expect(TokenKind.RBRACKET)
+        return args
+
+    def _parse_type_params(self) -> list[str]:
+        if self.peek().kind != TokenKind.LBRACKET:
+            return []
+        self.advance()
+        params = []
+        if self.peek().kind != TokenKind.RBRACKET:
+            while True:
+                name = self.expect(TokenKind.IDENT).value
+                if self.peek().kind == TokenKind.IDENT:
+                    constraint = self.advance().value
+                    if constraint != "any":
+                        raise ParseError("generic v1 only supports any constraints")
+                params.append(name)
+                if self.peek().kind != TokenKind.COMMA:
+                    break
+                self.advance()
+        self.expect(TokenKind.RBRACKET)
+        return params
 
     def _parse_function(self):
         self.advance()  # 吃 fun
@@ -179,6 +212,7 @@ class Parser:
             receiver_name = rname
             receiver_type = "*" + rtype
         name = self.expect(TokenKind.IDENT).value
+        type_params = self._parse_type_params()
         self.expect(TokenKind.LPAREN)
         params = []
         if self.peek().kind != TokenKind.RPAREN:
@@ -202,7 +236,7 @@ class Parser:
         body = self._parse_block()
         self.match(TokenKind.SEMI)
         return FunctionDeclaration(name, params, return_type, body,
-                                   receiver_name, receiver_type, return_type_explicit)
+                                   receiver_name, receiver_type, return_type_explicit, type_params)
 
     def _parse_function_expr(self, start):
         self.expect(TokenKind.LPAREN)
@@ -292,6 +326,7 @@ class Parser:
     def _parse_struct(self):
         self.advance()  # 吞 struct
         name = self.expect(TokenKind.IDENT).value
+        type_params = self._parse_type_params()
         self.expect(TokenKind.LBRACE)
         fields = []
         if self.peek().kind != TokenKind.RBRACE:
@@ -306,7 +341,7 @@ class Parser:
                 ftype = self._parse_type()
                 fields.append((fname, ftype))
         self.expect(TokenKind.RBRACE)
-        stmt = StructDecl(name, fields)
+        stmt = StructDecl(name, fields, type_params)
         self.match(TokenKind.SEMI)
         return stmt
 
@@ -422,16 +457,68 @@ class Parser:
                         args.append(self.parse_expression())
                 self.expect(TokenKind.RPAREN)
                 if isinstance(start_expr, Identifier):
-                    expr = FunctionCall(start_expr.name, args)
+                    expr = FunctionCall(start_expr.name, args, getattr(start_expr, "generic_type_args", []))
                     if hasattr(start_expr, "span"):
                         expr.span = (start_expr.span[0], self.tokens[self.pos - 1].pos)
                 else:
                     raise ParseError("Only named functions and closure variables can be called")
+            elif (self.peek().kind == TokenKind.LBRACKET and isinstance(expr, Identifier)
+                    and self.pos + 1 < len(self.tokens)
+                    and self.tokens[self.pos + 1].kind not in (TokenKind.INTEGER, TokenKind.STRING)):
+                save = self.pos
+                type_args = self._parse_type_arg_list()
+                if self.peek().kind == TokenKind.LPAREN:
+                    expr.generic_type_args = type_args
+                else:
+                    self.pos = save
+                    self.advance()
+                    first = self.parse_expression()
+                    if self.peek().kind == TokenKind.COLON:
+                        self.advance()
+                        end = None if self.peek().kind == TokenKind.RBRACKET else self.parse_expression()
+                        self.expect(TokenKind.RBRACKET)
+                        expr = SliceExpr(expr, first, end)
+                    else:
+                        self.expect(TokenKind.RBRACKET)
+                        expr = IndexAccess(expr, first)
             elif self.peek().kind == TokenKind.DOT:
                 start_pos = getattr(expr, "span", (self.peek().pos, self.peek().pos))[0]
                 self.advance()
                 field = self.expect(TokenKind.IDENT).value
-                if self.peek().kind == TokenKind.LPAREN:
+                if (self.peek().kind == TokenKind.LBRACKET and isinstance(expr, Identifier)
+                        and self.pos + 1 < len(self.tokens)
+                        and self.tokens[self.pos + 1].kind != TokenKind.INTEGER):
+                    qname = f"{expr.name}.{field}"
+                    type_args = self._parse_type_arg_list()
+                    if self.peek().kind == TokenKind.LPAREN:
+                        self.advance()
+                        args = []
+                        if self.peek().kind != TokenKind.RPAREN:
+                            args.append(self.parse_expression())
+                            while self.peek().kind == TokenKind.COMMA:
+                                self.advance()
+                                args.append(self.parse_expression())
+                        self.expect(TokenKind.RPAREN)
+                        expr = FunctionCall(qname, args, type_args)
+                    elif self.peek().kind == TokenKind.LBRACE:
+                        self.advance()
+                        fields = []
+                        if self.peek().kind != TokenKind.RBRACE:
+                            fname = self.expect(TokenKind.IDENT).value
+                            self.expect(TokenKind.COLON)
+                            fval = self.parse_expression()
+                            fields.append((fname, fval))
+                            while self.peek().kind == TokenKind.COMMA:
+                                self.advance()
+                                fname = self.expect(TokenKind.IDENT).value
+                                self.expect(TokenKind.COLON)
+                                fval = self.parse_expression()
+                                fields.append((fname, fval))
+                        self.expect(TokenKind.RBRACE)
+                        expr = StructLiteral(f"{qname}[{','.join(type_args)}]", fields)
+                    else:
+                        raise ParseError("generic type application must be used in a call or struct literal")
+                elif self.peek().kind == TokenKind.LPAREN:
                     # 方法调用: obj.method(args)
                     self.advance()
                     args = []
@@ -539,6 +626,8 @@ class Parser:
             if self.peek().kind == TokenKind.DOT:
                 self.advance()
                 name = f"{name}.{self.expect(TokenKind.IDENT).value}"
+            if self.peek().kind == TokenKind.LBRACKET:
+                name = f"{name}[{','.join(self._parse_type_arg_list())}]"
             self.expect(TokenKind.LBRACE)
             fields = []
             if self.peek().kind != TokenKind.RBRACE:
@@ -591,6 +680,25 @@ class Parser:
                 variant = self.expect(TokenKind.IDENT).value
                 return EnumRef(name, variant)
             # struct 字面量: Name { field: val, ... }
+            if (self.peek().kind == TokenKind.LBRACKET
+                    and self.pos + 1 < len(self.tokens)
+                    and self.tokens[self.pos + 1].kind not in (TokenKind.INTEGER, TokenKind.STRING)):
+                save = self.pos
+                type_args = self._parse_type_arg_list()
+                if self.peek().kind == TokenKind.LPAREN:
+                    self.advance()
+                    args = []
+                    if self.peek().kind != TokenKind.RPAREN:
+                        args.append(self.parse_expression())
+                        while self.peek().kind == TokenKind.COMMA:
+                            self.advance()
+                            args.append(self.parse_expression())
+                    self.expect(TokenKind.RPAREN)
+                    return self.span(FunctionCall(name, args, type_args), start)
+                if self.peek().kind == TokenKind.LBRACE:
+                    name = f"{name}[{','.join(type_args)}]"
+                else:
+                    self.pos = save
             # 前瞻避免混淆 if 块：需 { 后首个 IDENT 之后是 :
             if self.peek().kind == TokenKind.LBRACE:
                 save = self.pos
@@ -630,7 +738,7 @@ class Parser:
                 if suffix is not None:
                     raise ParseError("array length literal cannot have a type suffix")
             self.expect(TokenKind.RBRACKET)
-            elem_type = self.expect(TokenKind.IDENT).value
+            elem_type = self._parse_type()
             self.expect(TokenKind.LBRACE)
             elements = []
             if self.peek().kind != TokenKind.RBRACE:

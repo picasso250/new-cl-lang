@@ -110,9 +110,10 @@ class ForIn(Node):
 
 class StructDecl(Node):
     """struct Name { field: type, ... }"""
-    def __init__(self, name: str, fields: list):
+    def __init__(self, name: str, fields: list, type_params: list[str] | None = None):
         self.name = name
         self.fields = fields  # [(name, type), ...]
+        self.type_params = type_params or []
 
     def __repr__(self):
         fs = ', '.join(f'{n}: {t}' for n, t in self.fields)
@@ -256,7 +257,7 @@ class FunctionDeclaration(Node):
        或  fun (r *T) name(params): return_type { body }"""
     def __init__(self, name: str, params: list, return_type: str | None, body: Block,
                  receiver_name: str | None = None, receiver_type: str | None = None,
-                 return_type_explicit: bool = False):
+                 return_type_explicit: bool = False, type_params: list[str] | None = None):
         self.name = name
         self.params = params   # [(name, type), ...]
         self.return_type = return_type
@@ -264,6 +265,7 @@ class FunctionDeclaration(Node):
         self.body = body
         self.receiver_name = receiver_name  # 方法接收者名
         self.receiver_type = receiver_type  # 方法接收者类型 (如 "*Stack")
+        self.type_params = type_params or []
 
     def __repr__(self):
         p = ', '.join(f'{n}: {t}' for n, t in self.params)
@@ -393,9 +395,10 @@ class UnaryOp(Node):
 
 
 class FunctionCall(Node):
-    def __init__(self, name: str, args: list):
+    def __init__(self, name: str, args: list, type_args: list[str] | None = None):
         self.name = name
         self.args = args
+        self.type_args = type_args or []
 
     def __repr__(self):
         return f"Call({self.name}, {self.args})"

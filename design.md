@@ -188,6 +188,33 @@ type ID = u64
 type Point = struct { x: f64, y: f64 }
 ```
 
+### 4.8 显式泛型 v1
+
+泛型当前只支持函数和 struct，使用显式类型实参，并在前端 monomorphization 为普通声明后再进入符号表、类型检查和后端。
+
+```nc
+fun id[T](x: T): T { x }
+fun pick[T any](x: T): T { x }
+
+struct Box[T] { value: T }
+
+fun main() {
+    let a = id[i32](42)
+    let b = Box[str] { value: "ok" }
+    let c = new Box[i32] { value: 7 }
+}
+```
+
+当前边界：
+
+- `[T]` 与 `[T any]` 等价；v1 只有 `any` 约束。
+- 调用泛型函数必须显式写类型实参：`id[i32](x)`；不做类型实参推断。
+- 使用泛型类型必须显式写类型实参：`Box[i32]`、`[]Box[str]`、`*Box[i32]`、`Box[Box[i32]]`。
+- 未实例化的泛型模板不进入后端，不生成代码；每个使用到的实例生成稳定普通名，如 `id__i32`、`Box__str`。
+- 泛型函数体按具体实例检查；类型不匹配在实例化后的普通函数/struct 上报错。
+- 泛型方法（receiver 自带类型参数）暂不支持；可为具体实例类型写普通方法，例如 `fun (b *Box[i32]) get(): i32`。
+- 不支持 `comparable`、`numeric`、接口约束、类型集合、运行时类型擦除或胖指针泛型。
+
 ---
 
 ## 五、变量
