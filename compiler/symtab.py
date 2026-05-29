@@ -91,7 +91,7 @@ def build_symbol_table(program: "Program") -> SymbolTable:
     """
     from compiler.ast import (
         Program, VariableDeclaration, ExpressionStatement,
-        Assignment, Block, While, FunctionDeclaration, Return,
+        Assignment, Update, Block, While, FunctionDeclaration, Return,
         StructDecl, EnumDecl, ForIn, ImportDecl,
         IfExpr, BlockExpr, MatchExpr, BinaryOp, UnaryOp, FunctionCall, FunctionExpr,
         ArrayLiteral, IndexAccess, MethodCall, FieldAccess, StructLiteral, TryCatch, Throw, Defer
@@ -142,7 +142,10 @@ def build_symbol_table(program: "Program") -> SymbolTable:
             elif isinstance(stmt, ExpressionStatement):
                 _walk_expr(stmt.expr)
             elif isinstance(stmt, Assignment):
+                _walk_expr(stmt.target)
                 _walk_expr(stmt.expr)
+            elif isinstance(stmt, Update):
+                _walk_expr(stmt.target)
             elif isinstance(stmt, Return):
                 if stmt.expr:
                     _walk_expr(stmt.expr)

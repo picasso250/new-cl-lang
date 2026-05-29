@@ -45,13 +45,24 @@ class ExpressionStatement(Node):
 
 
 class Assignment(Node):
-    """x = expr;  重赋值。target 为 Identifier 或 IndexAccess。"""
-    def __init__(self, target, expr):
+    """x = expr 或 x += expr 等重赋值。"""
+    def __init__(self, target, expr, op: str = "="):
         self.target = target
         self.expr = expr
+        self.op = op
 
     def __repr__(self):
-        return f"Assign({self.target} = {self.expr})"
+        return f"Assign({self.target} {self.op} {self.expr})"
+
+
+class Update(Node):
+    """x++ / x--，只作为语句。"""
+    def __init__(self, target, op: str):
+        self.target = target
+        self.op = op
+
+    def __repr__(self):
+        return f"Update({self.target}{self.op})"
 
 
 class Block(Node):

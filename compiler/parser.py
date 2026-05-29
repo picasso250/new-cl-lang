@@ -336,16 +336,24 @@ class Parser:
     def _parse_ident_stmt(self):
         """解析 标识符语句 或 表达式语句，含 a = expr 和 a[idx] = expr"""
         expr = self.parse_expression()
-        if self.peek().kind == TokenKind.EQ:
-            self.advance()
+        assign_ops = {
+            TokenKind.EQ, TokenKind.PLUSEQ, TokenKind.MINUSEQ, TokenKind.STAREQ,
+            TokenKind.SLASHEQ, TokenKind.PERCENTEQ, TokenKind.AMPEQ, TokenKind.PIPEEQ,
+            TokenKind.CARETEQ, TokenKind.SHLEQ, TokenKind.SHREQ,
+        }
+        if self.peek().kind in assign_ops:
+            op = self.advance().value
             rhs = self.parse_expression()
-            stmt = Assignment(expr, rhs)
+            stmt = Assignment(expr, rhs, op)
+        elif self.peek().kind in (TokenKind.PLUSPLUS, TokenKind.MINUSMINUS):
+            op = self.advance().value
+            stmt = Update(expr, op)
         else:
             stmt = ExpressionStatement(expr)
         self.match(TokenKind.SEMI)
         return stmt
 
-    # ========== 表达式（优先级链：逻辑或 > 逻辑与 > 比较 > 加减 > 乘除 > 前缀 > 后缀 > 基本）
+    # ========== 表达式（优先级链：逻辑或 > 逻辑与 > 比较 > Go 风格加减位或异或 > 乘除移位位与 > 前缀 > 后缀 > 基本）
 
     def parse_expression(self):
         return self.parse_logic_or()
@@ -377,7 +385,7 @@ class Parser:
 
     def parse_additive(self):
         left = self.parse_multiplicative()
-        while self.peek().kind in (TokenKind.PLUS, TokenKind.MINUS):
+        while self.peek().kind in (TokenKind.PLUS, TokenKind.MINUS, TokenKind.PIPE, TokenKind.CARET):
             op = self.advance().value
             right = self.parse_multiplicative()
             left = BinaryOp(left, op, right)
@@ -385,7 +393,7 @@ class Parser:
 
     def parse_multiplicative(self):
         left = self.parse_unary()
-        while self.peek().kind in (TokenKind.STAR, TokenKind.SLASH, TokenKind.PERCENT):
+        while self.peek().kind in (TokenKind.STAR, TokenKind.SLASH, TokenKind.PERCENT, TokenKind.SHL, TokenKind.SHR, TokenKind.AMP):
             op = self.advance().value
             right = self.parse_unary()
             left = BinaryOp(left, op, right)
@@ -393,7 +401,7 @@ class Parser:
 
     def parse_unary(self):
         """前缀一元运算符：! 等。"""
-        if self.peek().kind == TokenKind.NOT:
+        if self.peek().kind in (TokenKind.NOT, TokenKind.TILDE, TokenKind.MINUS):
             op = self.advance().value
             operand = self.parse_unary()
             return UnaryOp(op, operand)

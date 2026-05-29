@@ -36,7 +36,25 @@ class TokenKind(Enum):
     STAR = auto()
     SLASH = auto()
     PERCENT = auto()
+    AMP = auto()
+    PIPE = auto()
+    CARET = auto()
+    TILDE = auto()
+    SHL = auto()
+    SHR = auto()
     EQ = auto()
+    PLUSEQ = auto()
+    MINUSEQ = auto()
+    STAREQ = auto()
+    SLASHEQ = auto()
+    PERCENTEQ = auto()
+    AMPEQ = auto()
+    PIPEEQ = auto()
+    CARETEQ = auto()
+    SHLEQ = auto()
+    SHREQ = auto()
+    PLUSPLUS = auto()
+    MINUSMINUS = auto()
     GT = auto()
     LT = auto()
     GE = auto()
@@ -199,9 +217,40 @@ def lex(source: str):
             yield Token(kind, value, start)
             continue
 
+        if i + 2 < n:
+            three = source[i:i+3]
+            if three == "<<=":
+                yield Token(TokenKind.SHLEQ, "<<=", i); i += 3; continue
+            if three == ">>=":
+                yield Token(TokenKind.SHREQ, ">>=", i); i += 3; continue
+
         # 双字符符号（先试两字符）
         if i + 1 < n:
             two = source[i:i+2]
+            if two == "+=":
+                yield Token(TokenKind.PLUSEQ, "+=", i); i += 2; continue
+            if two == "-=":
+                yield Token(TokenKind.MINUSEQ, "-=", i); i += 2; continue
+            if two == "*=":
+                yield Token(TokenKind.STAREQ, "*=", i); i += 2; continue
+            if two == "/=":
+                yield Token(TokenKind.SLASHEQ, "/=", i); i += 2; continue
+            if two == "%=":
+                yield Token(TokenKind.PERCENTEQ, "%=", i); i += 2; continue
+            if two == "&=":
+                yield Token(TokenKind.AMPEQ, "&=", i); i += 2; continue
+            if two == "|=":
+                yield Token(TokenKind.PIPEEQ, "|=", i); i += 2; continue
+            if two == "^=":
+                yield Token(TokenKind.CARETEQ, "^=", i); i += 2; continue
+            if two == "++":
+                yield Token(TokenKind.PLUSPLUS, "++", i); i += 2; continue
+            if two == "--":
+                yield Token(TokenKind.MINUSMINUS, "--", i); i += 2; continue
+            if two == "<<":
+                yield Token(TokenKind.SHL, "<<", i); i += 2; continue
+            if two == ">>":
+                yield Token(TokenKind.SHR, ">>", i); i += 2; continue
             if two == ">=":
                 yield Token(TokenKind.GE, ">=", i); i += 2; continue
             if two == "<=":
@@ -230,6 +279,14 @@ def lex(source: str):
             yield Token(TokenKind.SLASH, "/", i); i += 1; continue
         if ch == "%":
             yield Token(TokenKind.PERCENT, "%", i); i += 1; continue
+        if ch == "&":
+            yield Token(TokenKind.AMP, "&", i); i += 1; continue
+        if ch == "|":
+            yield Token(TokenKind.PIPE, "|", i); i += 1; continue
+        if ch == "^":
+            yield Token(TokenKind.CARET, "^", i); i += 1; continue
+        if ch == "~":
+            yield Token(TokenKind.TILDE, "~", i); i += 1; continue
         if ch == "=":
             yield Token(TokenKind.EQ, "=", i); i += 1; continue
         if ch == ">":

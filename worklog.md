@@ -407,3 +407,10 @@
 - 已将 slice append/copy 迁入 ncrt：新增 `nc_slice_raw`、`__nc_slice_copy_raw`、`__nc_slice_append_raw`；C 后端 typed slice helper 只做 raw ABI wrapper，LLVM 后端的 slice copy/append 改为调用同一组 ncrt helper。`elem_size` 保持为调用点常量参数，不进入 slice header。
 - 验证通过：python -m pytest tests/test_llvm_backend.py -q；python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_cases.py -q。
 
+
+## 2026-05-29
+
+- 预备补齐运算符实现：新增位运算、复合赋值和语句级自增/自减，按 Go 风格优先级接入 lexer/parser/typecheck/C 后端/LLVM 后端，并补正向与错误 case。
+
+- 已补齐运算符实现：lexer/parser 支持位运算、复合赋值和语句级 ++/--；typecheck 收紧整数位运算、复合赋值与自增自减 lvalue 规则；C/LLVM 后端均支持对应 lowering。新增 case_164~169 覆盖正向优先级/复合赋值/++-- 与错误路径。
+- 验证通过：python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py -q；python -m pytest tests/test_llvm_backend.py tests/test_llvm_cases.py -q；默认 LLVM run/build smoke 与 --backend c build smoke 均通过。

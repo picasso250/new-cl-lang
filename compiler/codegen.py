@@ -20,7 +20,7 @@ _slice_copy_name = slice_copy_name
 def generate_c(program: "Program") -> str:
     from compiler.ast import (
         FunctionDeclaration, StructDecl, EnumDecl, ImportDecl, ForIn, Block, While,
-        VariableDeclaration, ExpressionStatement, Assignment,
+        VariableDeclaration, ExpressionStatement, Assignment, Update,
         Return, SliceExpr, ArrayLiteral, SliceLiteral, FunctionCall,
         IfExpr, BlockExpr, MatchExpr, IntegerLiteral, FloatLiteral, StringLiteral, BoolLiteral, NilLiteral, Identifier, BinaryOp, UnaryOp,
         FunctionExpr,
@@ -283,6 +283,37 @@ def generate_c(program: "Program") -> str:
             _lines.append(f'{pad}{gen_expr(expr)};')
         ctx.expr_indent = old_indent
 
+    def compound_expr_c(left_c, op, right_c, value_type):
+        if op == "+" and value_type == "str":
+            return f'__nc_str_cat({left_c}, {right_c})'
+        return f'({left_c} {op} {right_c})'
+
+    def gen_update_stmt(target, op, rhs_c, indent):
+        pad = '    ' * indent
+        if isinstance(target, Identifier):
+            target_name = c_user_ident(target.name)
+            _lines.append(f'{pad}{target_name} = {rhs_c if op == "=" else compound_expr_c(target_name, op, rhs_c, target.type)};')
+        elif isinstance(target, IndexAccess):
+            obj_c = gen_expr(target.obj)
+            idx_c = gen_expr(target.index)
+            obj_type = getattr(target.obj, "type", "")
+            if obj_type == "nc_map":
+                if op == "=":
+                    _lines.append(f'{pad}__nc_map_set_str(&{obj_c}, {idx_c}, {rhs_c});')
+                else:
+                    old_tmp = ctx.next_tmp("__nc_old")
+                    _lines.append(f'{pad}{_type_to_c(target.type)} {old_tmp} = __nc_map_get_str(&{obj_c}, {idx_c});')
+                    _lines.append(f'{pad}__nc_map_set_str(&{obj_c}, {idx_c}, {compound_expr_c(old_tmp, op, rhs_c, target.type)});')
+            elif obj_type.startswith("[]"):
+                place = f'{obj_c}.ptr[{idx_c}]'
+                _lines.append(f'{pad}{place} = {rhs_c if op == "=" else compound_expr_c(place, op, rhs_c, target.type)};')
+            else:
+                place = f'{obj_c}[{idx_c}]'
+                _lines.append(f'{pad}{place} = {rhs_c if op == "=" else compound_expr_c(place, op, rhs_c, target.type)};')
+        else:
+            place = gen_expr(target)
+            _lines.append(f'{pad}{place} = {rhs_c if op == "=" else compound_expr_c(place, op, rhs_c, target.type)};')
+
     def block_tail_expr(block):
         if not block.statements:
             return None
@@ -462,23 +493,14 @@ def generate_c(program: "Program") -> str:
             ctx.expr_indent = old_indent
             return
         if isinstance(stmt, Assignment):
-            if isinstance(stmt.target, Identifier):
-                target_name = c_user_ident(stmt.target.name)
-                _lines.append(f'{pad}{target_name} = {gen_expr(stmt.expr)};')
-            elif isinstance(stmt.target, IndexAccess):
-                obj_c = gen_expr(stmt.target.obj)
-                idx_c = gen_expr(stmt.target.index)
-                obj_type = getattr(stmt.target.obj, "type", "")
-                if obj_type == "nc_map":
-                    _lines.append(f'{pad}__nc_map_set_str(&{obj_c}, {idx_c}, {gen_expr(stmt.expr)});')
-                elif obj_type.startswith("[]"):
-                    _lines.append(f'{pad}{obj_c}.ptr[{idx_c}] = {gen_expr(stmt.expr)};')
-                else:
-                    _lines.append(f'{pad}{obj_c}[{idx_c}] = {gen_expr(stmt.expr)};')
-            elif isinstance(stmt.target, FieldAccess):
-                _lines.append(f'{pad}{gen_expr(stmt.target)} = {gen_expr(stmt.expr)};')
-            else:
-                _lines.append(f'{pad}{gen_expr(stmt.target)} = {gen_expr(stmt.expr)};')
+            op = "=" if stmt.op == "=" else stmt.op[:-1]
+            gen_update_stmt(stmt.target, op, gen_expr(stmt.expr), indent)
+            ctx.expr_indent = old_indent
+            return
+        if isinstance(stmt, Update):
+            one = "1.0" if stmt.target.type in ("f32", "f64") else "1"
+            op = "+" if stmt.op == "++" else "-"
+            gen_update_stmt(stmt.target, op, one, indent)
             ctx.expr_indent = old_indent
             return
         if isinstance(stmt, ExpressionStatement):

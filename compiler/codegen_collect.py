@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 
 from compiler.ast import (
-    Assignment, ArrayLiteral, BinaryOp, Block, BlockExpr, Defer, EnumDecl,
+    Assignment, Update, ArrayLiteral, BinaryOp, Block, BlockExpr, Defer, EnumDecl,
     FieldAccess, ForIn, FunctionCall, FunctionDeclaration, FunctionExpr,
     IfExpr, ImportDecl, IndexAccess, MatchExpr, MethodCall, Return, SliceExpr,
     SliceLiteral, StructDecl, StructLiteral, Throw, TryCatch, UnaryOp,
@@ -121,6 +121,8 @@ def collect_codegen_inputs(program) -> CodegenInputs:
         elif isinstance(stmt, Assignment):
             collect_closure_expr(stmt.target)
             collect_closure_expr(stmt.expr)
+        elif isinstance(stmt, Update):
+            collect_closure_expr(stmt.target)
         elif isinstance(stmt, ExpressionStatement):
             collect_closure_expr(stmt.expr)
         elif isinstance(stmt, While):
@@ -230,6 +232,8 @@ def collect_codegen_inputs(program) -> CodegenInputs:
         elif isinstance(stmt, Assignment):
             collect_expr_types(stmt.target)
             collect_expr_types(stmt.expr)
+        elif isinstance(stmt, Update):
+            collect_expr_types(stmt.target)
         elif isinstance(stmt, ExpressionStatement):
             collect_expr_types(stmt.expr)
         elif isinstance(stmt, While):

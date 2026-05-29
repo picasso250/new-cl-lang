@@ -12,7 +12,7 @@ import tempfile
 from llvmlite import binding, ir
 
 from compiler.ast import (
-    ArrayLiteral, Assignment, BinaryOp, Block, BlockExpr, BoolLiteral, Break,
+    ArrayLiteral, Assignment, Update, BinaryOp, Block, BlockExpr, BoolLiteral, Break,
     Defer, ExpressionStatement, EnumDecl, EnumRef, FieldAccess, FloatLiteral, FunctionCall,
     FunctionExpr,
     ForIn, FunctionDeclaration, Identifier, IfExpr, IndexAccess, IntegerLiteral,
@@ -332,11 +332,23 @@ class LLVMCodegen:
             return
         if isinstance(stmt, Assignment):
             if isinstance(stmt.target, IndexAccess) and stmt.target.obj.type == "nc_map":
-                self.emit_map_set(stmt.target.obj, stmt.target.index, stmt.expr)
+                self.emit_map_set(stmt.target.obj, stmt.target.index, stmt.expr, stmt.op)
                 self.branch_on_exception()
                 return
             ptr, target_type = self.emit_lvalue(stmt.target)
-            self.builder.store(self.cast_to(self.emit_expr(stmt.expr), target_type), ptr)
+            rhs = self.cast_to(self.emit_expr(stmt.expr), target_type)
+            if stmt.op != "=":
+                old = self.builder.load(ptr, name="assign.old")
+                rhs = self.emit_binary_values(old, stmt.op[:-1], rhs, target_type)
+            self.builder.store(rhs, ptr)
+            self.branch_on_exception()
+            return
+        if isinstance(stmt, Update):
+            ptr, target_type = self.emit_lvalue(stmt.target)
+            old = self.builder.load(ptr, name="update.old")
+            one = ir.Constant(llvm_type(target_type), 1.0 if target_type in FLOAT_TYPES else 1)
+            op = "+" if stmt.op == "++" else "-"
+            self.builder.store(self.emit_binary_values(old, op, one, target_type), ptr)
             self.branch_on_exception()
             return
         if isinstance(stmt, ExpressionStatement):
@@ -647,6 +659,8 @@ class LLVMCodegen:
                 if node.operand.type in FLOAT_TYPES:
                     return self.builder.fneg(val)
                 return self.builder.neg(val)
+            if node.op == "~":
+                return self.builder.xor(val, ir.Constant(llvm_type(node.operand.type), -1))
             raise NotImplementedError(f"LLVM backend v1 does not support unary operator {node.op}")
         if isinstance(node, BinaryOp):
             return self.emit_binary(node)
@@ -824,31 +838,44 @@ class LLVMCodegen:
             return eq
         if typ == "str" and node.op == "+":
             return self.emit_str_cat(left, right)
+        return self.emit_binary_values(left, node.op, right, typ)
+
+    def emit_binary_values(self, left, op, right, typ):
         if typ in FLOAT_TYPES:
-            return self.emit_float_binary(left, node.op, right)
-        if node.op == "+":
+            return self.emit_float_binary(left, op, right)
+        if op == "+":
             return self.builder.add(left, right)
-        if node.op == "-":
+        if op == "-":
             return self.builder.sub(left, right)
-        if node.op == "*":
+        if op == "*":
             return self.builder.mul(left, right)
-        if node.op == "/":
+        if op == "/":
             return self.builder.sdiv(left, right) if typ in SIGNED_INT_TYPES else self.builder.udiv(left, right)
-        if node.op == "%":
+        if op == "%":
             return self.builder.srem(left, right) if typ in SIGNED_INT_TYPES else self.builder.urem(left, right)
-        if node.op in ("==", "!=", "<", "<=", ">", ">="):
+        if op == "&":
+            return self.builder.and_(left, right)
+        if op == "|":
+            return self.builder.or_(left, right)
+        if op == "^":
+            return self.builder.xor(left, right)
+        if op == "<<":
+            return self.builder.shl(left, right)
+        if op == ">>":
+            return self.builder.ashr(left, right) if typ in SIGNED_INT_TYPES else self.builder.lshr(left, right)
+        if op in ("==", "!=", "<", "<=", ">", ">="):
             pred = {
                 "==": "==", "!=": "!=", "<": "<", "<=": "<=", ">": ">", ">=": ">=",
-            }[node.op]
+            }[op]
             if typ in UNSIGNED_INT_TYPES:
                 return self.builder.icmp_unsigned(pred, left, right)
             else:
                 return self.builder.icmp_signed(pred, left, right)
-        if node.op == "&&":
+        if op == "&&":
             return self.builder.and_(self.bool_value(left), self.bool_value(right))
-        if node.op == "||":
+        if op == "||":
             return self.builder.or_(self.bool_value(left), self.bool_value(right))
-        raise NotImplementedError(f"LLVM backend v1 does not support binary operator {node.op}")
+        raise NotImplementedError(f"LLVM backend v1 does not support binary operator {op}")
 
     def emit_float_binary(self, left, op, right):
         if op == "+":
@@ -1165,13 +1192,18 @@ class LLVMCodegen:
         key_ptr = self.value_to_stack_ptr(key, STR_TYPE, "__nc_map_has_key")
         return self.builder.call(self.map_has_fn, [map_ptr, key_ptr], name="map.has")
 
-    def emit_map_set(self, map_expr, key_expr, value_expr):
+    def emit_map_set(self, map_expr, key_expr, value_expr, assign_op="="):
         self.ensure_ncrt_runtime()
         map_ptr, map_type = self.emit_lvalue(map_expr)
         if map_type != "nc_map":
             raise NotImplementedError(f"LLVM backend v1 cannot map-set {map_type}")
         key = self.emit_expr(key_expr)
         value = self.emit_expr(value_expr)
+        if assign_op != "=":
+            old_out = self.alloca_at_entry("__nc_map_old_out", STR_TYPE)
+            key_ptr_for_get = self.value_to_stack_ptr(key, STR_TYPE, "__nc_map_get_key")
+            self.builder.call(self.map_get_str_fn, [old_out, map_ptr, key_ptr_for_get])
+            value = self.emit_str_cat(self.builder.load(old_out, name="map.old"), value)
         key_ptr = self.value_to_stack_ptr(key, STR_TYPE, "__nc_map_set_key")
         value_ptr = self.value_to_stack_ptr(value, STR_TYPE, "__nc_map_set_value")
         self.builder.call(self.map_set_str_fn, [map_ptr, key_ptr, value_ptr])

@@ -15,7 +15,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
     """Pass 2: 标注 Program 中所有表达式和语句的类型。"""
     from compiler.ast import (
         Program, VariableDeclaration, ExpressionStatement,
-        Assignment, Block, While, FunctionDeclaration, Return, ImportDecl,
+        Assignment, Update, Block, While, FunctionDeclaration, Return, ImportDecl,
         StructDecl, StructLiteral, FieldAccess,
         EnumDecl, EnumRef, ForIn,
         IfExpr, BlockExpr, MatchExpr, IntegerLiteral, FloatLiteral, StringLiteral, BoolLiteral, NilLiteral, BinaryOp, UnaryOp, FunctionCall, Identifier,
@@ -273,6 +273,14 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             if node.op == "!":
                 require_type(node.operand.type, "bool", "logical not", node)
                 node.type = "bool"
+            elif node.op == "~":
+                if not is_integer_type(node.operand.type):
+                    fail(f"unary operator ~: expected integer operand, got {node.operand.type}", node)
+                node.type = node.operand.type
+            elif node.op == "-":
+                if not is_numeric_type(node.operand.type):
+                    fail(f"unary operator -: expected numeric operand, got {node.operand.type}", node)
+                node.type = node.operand.type
             else:
                 node.type = node.operand.type
         elif isinstance(node, BinaryOp):
@@ -315,6 +323,9 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             if node.op == "%":
                 if not (is_integer_type(node.left.type) and is_integer_type(node.right.type)):
                     fail(f"binary operator %: expected integer operands, got {node.left.type} and {node.right.type}", node)
+            if node.op in ("&", "|", "^", "<<", ">>"):
+                if not (is_integer_type(node.left.type) and is_integer_type(node.right.type)):
+                    fail(f"binary operator {node.op}: expected integer operands, got {node.left.type} and {node.right.type}", node)
             require_type(node.right.type, node.left.type, f"binary operator {node.op}", node)
             node.type = node.left.type
         elif isinstance(node, FunctionCall):
@@ -512,7 +523,37 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 if isinstance(stmt.target, Identifier) and getattr(stmt.target, "is_capture", False):
                     fail(f"cannot assign to captured variable '{stmt.target.name}'", stmt.target)
                 walk_expr(stmt.expr)
-                require_type(stmt.expr.type, stmt.target.type, "assignment", stmt.expr)
+                if stmt.op == "=":
+                    require_type(stmt.expr.type, stmt.target.type, "assignment", stmt.expr)
+                else:
+                    compound_op = stmt.op[:-1]
+                    fake = BinaryOp(stmt.target, compound_op, stmt.expr)
+                    fake.span = getattr(stmt, "span", None)
+                    fake.left.type = stmt.target.type
+                    fake.right.type = stmt.expr.type
+                    if compound_op in ("&", "|", "^", "<<", ">>"):
+                        if not (is_integer_type(stmt.target.type) and is_integer_type(stmt.expr.type)):
+                            fail(f"binary operator {compound_op}: expected integer operands, got {stmt.target.type} and {stmt.expr.type}", stmt)
+                    elif compound_op == "%":
+                        if not (is_integer_type(stmt.target.type) and is_integer_type(stmt.expr.type)):
+                            fail(f"binary operator %: expected integer operands, got {stmt.target.type} and {stmt.expr.type}", stmt)
+                    elif compound_op == "+" and stmt.target.type == "str":
+                        require_type(stmt.expr.type, "str", "string concatenation", stmt.expr)
+                    elif compound_op in ("+", "-", "*", "/"):
+                        if not (is_numeric_type(stmt.target.type) and is_numeric_type(stmt.expr.type)):
+                            fail(f"binary operator {compound_op}: expected numeric operands, got {stmt.target.type} and {stmt.expr.type}", stmt)
+                    else:
+                        fail(f"unsupported assignment operator {stmt.op}", stmt)
+                    require_type(stmt.expr.type, stmt.target.type, f"binary operator {compound_op}", stmt.expr)
+            elif isinstance(stmt, Update):
+                walk_expr(stmt.target)
+                require_assignable(stmt.target)
+                if isinstance(stmt.target, Identifier) and is_assignment_forbidden(stmt.target.name):
+                    fail(f"cannot assign to narrowed nullable pointer '{stmt.target.name}' inside non-nil block", stmt.target)
+                if isinstance(stmt.target, Identifier) and getattr(stmt.target, "is_capture", False):
+                    fail(f"cannot assign to captured variable '{stmt.target.name}'", stmt.target)
+                if not is_numeric_type(stmt.target.type) or is_pointer_type(stmt.target.type) or is_nullable_pointer_type(stmt.target.type):
+                    fail(f"{stmt.op}: expected numeric lvalue, got {stmt.target.type}", stmt)
             elif isinstance(stmt, While):
                 walk_expr(stmt.condition)
                 require_type(stmt.condition.type, "bool", "for condition", stmt.condition)
