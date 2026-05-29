@@ -52,9 +52,16 @@ def test_build_outputs_generated_c_and_exe():
         build = run_nc("build", "--backend", "c", project, cwd=tmp)
         assert build.returncode == 0, build.stderr
         c_path = os.path.join(tmp, "build", "main.c")
+        h_path = os.path.join(tmp, "build", "ncrt.h")
+        ncrt_obj_path = os.path.join(tmp, "build", "ncrt.obj")
         exe_path = os.path.join(tmp, "build", "main.exe")
         assert os.path.exists(c_path)
+        assert os.path.exists(h_path)
+        assert os.path.exists(ncrt_obj_path)
         assert os.path.exists(exe_path)
+        result = subprocess.run([exe_path], capture_output=True, text=True)
+        assert result.stdout.strip() == "5"
+        assert result.returncode == 0
 
 
 def test_default_build_outputs_llvm_ir_obj_and_exe():
@@ -64,10 +71,15 @@ def test_default_build_outputs_llvm_ir_obj_and_exe():
         assert build.returncode == 0, build.stderr
         ll_path = os.path.join(tmp, "build", "main.ll")
         obj_path = os.path.join(tmp, "build", "main.obj")
+        ncrt_obj_path = os.path.join(tmp, "build", "ncrt.obj")
         exe_path = os.path.join(tmp, "build", "main.exe")
         assert os.path.exists(ll_path)
         assert os.path.exists(obj_path)
+        assert os.path.exists(ncrt_obj_path)
         assert os.path.exists(exe_path)
+        result = subprocess.run([exe_path], capture_output=True, text=True)
+        assert result.stdout.strip() == "5"
+        assert result.returncode == 0
 
 
 def test_multifile_diagnostic_uses_source_file():

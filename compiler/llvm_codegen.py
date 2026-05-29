@@ -21,6 +21,7 @@ from compiler.ast import (
 )
 from compiler.c_abi import c_user_ident
 from compiler.codegen_collect import collect_codegen_inputs, parse_fn_type
+from compiler.ncrt import build_ncrt_obj
 
 
 INT_TYPES = {
@@ -40,8 +41,7 @@ FLOAT_TYPES = {"f32": ir.FloatType(), "f64": ir.DoubleType()}
 DEFAULT_TRIPLE = "x86_64-w64-windows-gnu"
 I8PTR = ir.IntType(8).as_pointer()
 STR_TYPE = ir.LiteralStructType([I8PTR, ir.IntType(64)])
-MAP_ENTRY_TYPE = ir.LiteralStructType([STR_TYPE, STR_TYPE])
-MAP_TYPE = ir.LiteralStructType([MAP_ENTRY_TYPE.as_pointer(), ir.IntType(64), ir.IntType(64)])
+MAP_TYPE = ir.LiteralStructType([I8PTR, ir.IntType(64), ir.IntType(64), ir.IntType(64)])
 STRUCT_TYPES: dict[str, ir.LiteralStructType] = {}
 STRUCT_FIELDS: dict[str, list[tuple[str, str]]] = {}
 STRUCT_FIELD_INDEX: dict[str, dict[str, int]] = {}
@@ -118,6 +118,18 @@ class LLVMCodegen:
         self.acrt_iob_func = None
         self.malloc = None
         self.gc_alloc = None
+        self.gc_collect = None
+        self.gc_live = None
+        self.str_cat_fn = None
+        self.str_slice_fn = None
+        self.i32_to_str_fn = None
+        self.str_to_i32_fn = None
+        self.read_file_fn = None
+        self.write_file_fn = None
+        self.map_init_fn = None
+        self.map_get_str_fn = None
+        self.map_set_str_fn = None
+        self.map_has_fn = None
         self.gc_live_count = None
         self.ex_active = None
         self.ex_value = None
@@ -732,34 +744,17 @@ class LLVMCodegen:
         return self.slice_value(elem_type, dest, count64, count64)
 
     def emit_str_slice(self, node: SliceExpr):
+        self.ensure_ncrt_runtime()
         source = self.emit_expr(node.array)
-        source_ptr = self.builder.extract_value(source, 0)
         source_len = self.builder.extract_value(source, 1)
         start = self.cast_to(self.emit_expr(node.start), "i32") if node.start else ir.Constant(ir.IntType(32), 0)
         end = self.cast_to(self.emit_expr(node.end), "i32") if node.end else self.builder.trunc(source_len, ir.IntType(32))
-        count32 = self.builder.sub(end, start, name="str.slice.count32")
-        count64 = self.builder.zext(count32, ir.IntType(64), name="str.slice.count64")
-        dest = self.malloc_bytes(count64)
-
-        cond_bb = self.func.append_basic_block("str.slice.copy.cond")
-        body_bb = self.func.append_basic_block("str.slice.copy.body")
-        end_bb = self.func.append_basic_block("str.slice.copy.end")
-        idx_slot = self.alloca_at_entry("__nc_str_slice_i", ir.IntType(32))
-        self.builder.store(ir.Constant(ir.IntType(32), 0), idx_slot)
-        self.builder.branch(cond_bb)
-        self.builder.position_at_end(cond_bb)
-        i = self.builder.load(idx_slot, name="str.slice.i")
-        self.builder.cbranch(self.builder.icmp_signed("<", i, count32), body_bb, end_bb)
-        self.builder.position_at_end(body_bb)
-        source_i = self.builder.add(start, i, name="str.slice.source.i")
-        source_elem_ptr = self.builder.gep(source_ptr, [source_i], inbounds=True)
-        dest_elem_ptr = self.builder.gep(dest, [i], inbounds=True)
-        self.builder.store(self.builder.load(source_elem_ptr), dest_elem_ptr)
-        next_i = self.builder.add(i, ir.Constant(ir.IntType(32), 1))
-        self.builder.store(next_i, idx_slot)
-        self.builder.branch(cond_bb)
-        self.builder.position_at_end(end_bb)
-        return self.str_value(dest, count64)
+        start64 = self.builder.zext(start, ir.IntType(64), name="str.slice.start64")
+        end64 = self.builder.zext(end, ir.IntType(64), name="str.slice.end64")
+        out = self.alloca_at_entry("__nc_str_slice_out", STR_TYPE)
+        source_ptr = self.value_to_stack_ptr(source, STR_TYPE, "__nc_str_slice_source")
+        self.builder.call(self.str_slice_fn, [out, source_ptr, start64, end64])
+        return self.builder.load(out, name="str.slice")
 
     def slice_value(self, elem_type, ptr, length, cap):
         if isinstance(length, int):
@@ -1127,15 +1122,12 @@ class LLVMCodegen:
         return self.slice_value(elem_type, dest, new_len, new_len)
 
     def emit_str_cat(self, left, right):
-        left_ptr = self.builder.extract_value(left, 0)
-        left_len = self.builder.extract_value(left, 1)
-        right_ptr = self.builder.extract_value(right, 0)
-        right_len = self.builder.extract_value(right, 1)
-        total_len = self.builder.add(left_len, right_len, name="str.cat.len")
-        dest = self.malloc_bytes(total_len)
-        self.copy_bytes(dest, ir.Constant(ir.IntType(64), 0), left_ptr, ir.Constant(ir.IntType(64), 0), left_len, "str.cat.left")
-        self.copy_bytes(dest, left_len, right_ptr, ir.Constant(ir.IntType(64), 0), right_len, "str.cat.right")
-        return self.str_value(dest, total_len)
+        self.ensure_ncrt_runtime()
+        out = self.alloca_at_entry("__nc_str_cat_out", STR_TYPE)
+        left_ptr = self.value_to_stack_ptr(left, STR_TYPE, "__nc_str_cat_left")
+        right_ptr = self.value_to_stack_ptr(right, STR_TYPE, "__nc_str_cat_right")
+        self.builder.call(self.str_cat_fn, [out, left_ptr, right_ptr])
+        return self.builder.load(out, name="str.cat")
 
     def str_value(self, ptr, length):
         value = ir.Constant(STR_TYPE, ir.Undefined)
@@ -1148,166 +1140,53 @@ class LLVMCodegen:
         value = self.builder.insert_value(value, entries, [0], name="map.entries")
         value = self.builder.insert_value(value, cap, [1], name="map.cap")
         value = self.builder.insert_value(value, length, [2], name="map.len")
+        value = self.builder.insert_value(value, ir.Constant(ir.IntType(64), 0), [3], name="map.tombstones")
         return value
 
     def emit_map_new(self):
-        cap = ir.Constant(ir.IntType(64), 16)
-        entries = self.malloc_map_entries(cap)
-        return self.map_value(entries, cap, ir.Constant(ir.IntType(64), 0))
+        self.ensure_ncrt_runtime()
+        slot = self.alloca_at_entry("__nc_map_new", MAP_TYPE)
+        self.builder.call(self.map_init_fn, [slot])
+        return self.builder.load(slot, name="map.new")
 
-    def malloc_map_entries(self, count):
-        self.ensure_gc_runtime()
-        size = self.builder.mul(count, ir.Constant(ir.IntType(64), 32), name="map.malloc.size")
-        raw = self.builder.call(self.gc_alloc, [size], name="map.gc.alloc.raw")
-        return self.builder.bitcast(raw, MAP_ENTRY_TYPE.as_pointer(), name="map.entries.ptr")
-
-    def map_entry_key_ptr(self, entries, idx):
-        zero = ir.Constant(ir.IntType(32), 0)
-        return self.builder.gep(entries, [idx, zero], inbounds=True, name="map.key.ptr")
-
-    def map_entry_value_ptr(self, entries, idx):
-        one = ir.Constant(ir.IntType(32), 1)
-        return self.builder.gep(entries, [idx, one], inbounds=True, name="map.value.ptr")
-
-    def emit_map_find_index(self, map_value, key_value, label):
-        entries = self.builder.extract_value(map_value, 0)
-        length = self.builder.extract_value(map_value, 2)
-        result_slot = self.alloca_at_entry(f"__nc_{label}_result", ir.IntType(64))
-        idx_slot = self.alloca_at_entry(f"__nc_{label}_i", ir.IntType(64))
-        self.builder.store(ir.Constant(ir.IntType(64), -1), result_slot)
-        self.builder.store(ir.Constant(ir.IntType(64), 0), idx_slot)
-
-        cond_bb = self.func.append_basic_block(f"{label}.find.cond")
-        body_bb = self.func.append_basic_block(f"{label}.find.body")
-        hit_bb = self.func.append_basic_block(f"{label}.find.hit")
-        step_bb = self.func.append_basic_block(f"{label}.find.step")
-        end_bb = self.func.append_basic_block(f"{label}.find.end")
-        self.builder.branch(cond_bb)
-        self.builder.position_at_end(cond_bb)
-        i = self.builder.load(idx_slot, name=f"{label}.i")
-        self.builder.cbranch(self.builder.icmp_unsigned("<", i, length), body_bb, end_bb)
-        self.builder.position_at_end(body_bb)
-        entry_key = self.builder.load(self.map_entry_key_ptr(entries, i), name=f"{label}.key")
-        self.builder.cbranch(self.emit_str_eq(entry_key, key_value), hit_bb, step_bb)
-        self.builder.position_at_end(hit_bb)
-        self.builder.store(i, result_slot)
-        self.builder.branch(end_bb)
-        self.builder.position_at_end(step_bb)
-        self.builder.store(self.builder.add(i, ir.Constant(ir.IntType(64), 1)), idx_slot)
-        self.builder.branch(cond_bb)
-        self.builder.position_at_end(end_bb)
-        return self.builder.load(result_slot, name=f"{label}.result")
+    def map_pointer_for_expr(self, map_expr):
+        try:
+            map_ptr, map_type = self.emit_lvalue(map_expr)
+            if map_type == "nc_map":
+                return map_ptr
+        except NotImplementedError:
+            pass
+        slot = self.alloca_at_entry("__nc_map_tmp", MAP_TYPE)
+        self.builder.store(self.emit_expr(map_expr), slot)
+        return slot
 
     def emit_map_get(self, map_expr, key_expr):
-        map_value = self.emit_expr(map_expr)
+        self.ensure_ncrt_runtime()
+        map_ptr = self.map_pointer_for_expr(map_expr)
         key = self.emit_expr(key_expr)
-        found = self.emit_map_find_index(map_value, key, "map.get")
-        has_value = self.builder.icmp_signed("!=", found, ir.Constant(ir.IntType(64), -1))
-        found_bb = self.func.append_basic_block("map.get.found")
-        empty_bb = self.func.append_basic_block("map.get.empty")
-        end_bb = self.func.append_basic_block("map.get.end")
-        self.builder.cbranch(has_value, found_bb, empty_bb)
-
-        self.builder.position_at_end(found_bb)
-        entries = self.builder.extract_value(map_value, 0)
-        value = self.builder.load(self.map_entry_value_ptr(entries, found), name="map.get.value")
-        self.builder.branch(end_bb)
-        value_incoming = self.builder.block
-
-        self.builder.position_at_end(empty_bb)
-        empty = self.str_value(ir.Constant(I8PTR, None), ir.Constant(ir.IntType(64), 0))
-        self.builder.branch(end_bb)
-        empty_incoming = self.builder.block
-
-        self.builder.position_at_end(end_bb)
-        phi = self.builder.phi(STR_TYPE, name="map.get.result")
-        phi.add_incoming(value, value_incoming)
-        phi.add_incoming(empty, empty_incoming)
-        return phi
+        out = self.alloca_at_entry("__nc_map_get_out", STR_TYPE)
+        key_ptr = self.value_to_stack_ptr(key, STR_TYPE, "__nc_map_get_key")
+        self.builder.call(self.map_get_str_fn, [out, map_ptr, key_ptr])
+        return self.builder.load(out, name="map.get")
 
     def emit_map_has(self, map_expr, key_expr):
-        map_value = self.emit_expr(map_expr)
+        self.ensure_ncrt_runtime()
+        map_ptr = self.map_pointer_for_expr(map_expr)
         key = self.emit_expr(key_expr)
-        found = self.emit_map_find_index(map_value, key, "map.has")
-        has_value = self.builder.icmp_signed("!=", found, ir.Constant(ir.IntType(64), -1))
-        return self.builder.zext(has_value, ir.IntType(32), name="map.has.i32")
+        key_ptr = self.value_to_stack_ptr(key, STR_TYPE, "__nc_map_has_key")
+        return self.builder.call(self.map_has_fn, [map_ptr, key_ptr], name="map.has")
 
     def emit_map_set(self, map_expr, key_expr, value_expr):
+        self.ensure_ncrt_runtime()
         map_ptr, map_type = self.emit_lvalue(map_expr)
         if map_type != "nc_map":
             raise NotImplementedError(f"LLVM backend v1 cannot map-set {map_type}")
-        map_value = self.builder.load(map_ptr, name="map.set.map")
         key = self.emit_expr(key_expr)
         value = self.emit_expr(value_expr)
-        found = self.emit_map_find_index(map_value, key, "map.set")
-        has_value = self.builder.icmp_signed("!=", found, ir.Constant(ir.IntType(64), -1))
-
-        update_bb = self.func.append_basic_block("map.set.update")
-        append_bb = self.func.append_basic_block("map.set.append")
-        end_bb = self.func.append_basic_block("map.set.end")
-        self.builder.cbranch(has_value, update_bb, append_bb)
-
-        self.builder.position_at_end(update_bb)
-        entries = self.builder.extract_value(map_value, 0)
-        self.builder.store(value, self.map_entry_value_ptr(entries, found))
-        self.builder.branch(end_bb)
-
-        self.builder.position_at_end(append_bb)
-        new_map = self.emit_map_append(map_value, key, value)
-        self.builder.store(new_map, map_ptr)
-        self.builder.branch(end_bb)
-
-        self.builder.position_at_end(end_bb)
+        key_ptr = self.value_to_stack_ptr(key, STR_TYPE, "__nc_map_set_key")
+        value_ptr = self.value_to_stack_ptr(value, STR_TYPE, "__nc_map_set_value")
+        self.builder.call(self.map_set_str_fn, [map_ptr, key_ptr, value_ptr])
         return ir.Constant(ir.IntType(1), 0)
-
-    def emit_map_append(self, map_value, key, value):
-        entries = self.builder.extract_value(map_value, 0)
-        cap = self.builder.extract_value(map_value, 1)
-        length = self.builder.extract_value(map_value, 2)
-        full = self.builder.icmp_unsigned(">=", length, cap)
-        grow_bb = self.func.append_basic_block("map.grow")
-        keep_bb = self.func.append_basic_block("map.keep")
-        copy_bb = self.func.append_basic_block("map.copy")
-        end_bb = self.func.append_basic_block("map.grow.end")
-        self.builder.cbranch(full, grow_bb, keep_bb)
-
-        self.builder.position_at_end(grow_bb)
-        new_cap = self.builder.mul(cap, ir.Constant(ir.IntType(64), 2), name="map.new.cap")
-        new_entries = self.malloc_map_entries(new_cap)
-        idx_slot = self.alloca_at_entry("__nc_map_copy_i", ir.IntType(64))
-        self.builder.store(ir.Constant(ir.IntType(64), 0), idx_slot)
-        self.builder.branch(copy_bb)
-
-        self.builder.position_at_end(copy_bb)
-        i = self.builder.load(idx_slot, name="map.copy.i")
-        copy_body_bb = self.func.append_basic_block("map.copy.body")
-        copy_done_bb = self.func.append_basic_block("map.copy.done")
-        self.builder.cbranch(self.builder.icmp_unsigned("<", i, length), copy_body_bb, copy_done_bb)
-        self.builder.position_at_end(copy_body_bb)
-        old_entry = self.builder.load(self.builder.gep(entries, [i], inbounds=True), name="map.old.entry")
-        self.builder.store(old_entry, self.builder.gep(new_entries, [i], inbounds=True))
-        self.builder.store(self.builder.add(i, ir.Constant(ir.IntType(64), 1)), idx_slot)
-        self.builder.branch(copy_bb)
-        self.builder.position_at_end(copy_done_bb)
-        self.builder.branch(end_bb)
-        grow_incoming = self.builder.block
-
-        self.builder.position_at_end(keep_bb)
-        self.builder.branch(end_bb)
-        keep_incoming = self.builder.block
-
-        self.builder.position_at_end(end_bb)
-        entries_phi = self.builder.phi(MAP_ENTRY_TYPE.as_pointer(), name="map.entries.active")
-        cap_phi = self.builder.phi(ir.IntType(64), name="map.cap.active")
-        entries_phi.add_incoming(new_entries, grow_incoming)
-        entries_phi.add_incoming(entries, keep_incoming)
-        cap_phi.add_incoming(new_cap, grow_incoming)
-        cap_phi.add_incoming(cap, keep_incoming)
-
-        self.builder.store(key, self.map_entry_key_ptr(entries_phi, length))
-        self.builder.store(value, self.map_entry_value_ptr(entries_phi, length))
-        new_len = self.builder.add(length, ir.Constant(ir.IntType(64), 1), name="map.len.next")
-        return self.map_value(entries_phi, cap_phi, new_len)
 
     def ensure_printf(self):
         if self.printf is None:
@@ -1357,28 +1236,37 @@ class LLVMCodegen:
             self.malloc = ir.Function(self.module, ir.FunctionType(I8PTR, [ir.IntType(64)]), name="malloc")
 
     def ensure_gc_runtime(self):
-        if self.gc_live_count is None:
-            self.gc_live_count = ir.GlobalVariable(self.module, ir.IntType(32), name="__nc_gc_live_count")
-            self.gc_live_count.linkage = "internal"
-            self.gc_live_count.initializer = ir.Constant(ir.IntType(32), 0)
+        self.ensure_ncrt_runtime()
+
+    def ensure_ncrt_runtime(self):
         if self.gc_alloc is None:
             self.gc_alloc = ir.Function(
                 self.module,
                 ir.FunctionType(I8PTR, [ir.IntType(64)]),
                 name="__nc_gc_alloc",
             )
-            block = self.gc_alloc.append_basic_block("entry")
-            saved_builder, saved_func = self.builder, self.func
-            self.builder = ir.IRBuilder(block)
-            self.func = self.gc_alloc
-            self.ensure_malloc()
-            size = self.gc_alloc.args[0]
-            raw = self.builder.call(self.malloc, [size], name="gc.malloc.raw")
-            live = self.builder.load(self.gc_live_count, name="gc.live")
-            live_next = self.builder.add(live, ir.Constant(ir.IntType(32), 1), name="gc.live.next")
-            self.builder.store(live_next, self.gc_live_count)
-            self.builder.ret(raw)
-            self.builder, self.func = saved_builder, saved_func
+            self.gc_collect = ir.Function(self.module, ir.FunctionType(ir.VoidType(), []), name="__nc_gc_collect")
+            self.gc_live = ir.Function(self.module, ir.FunctionType(ir.IntType(64), []), name="__nc_gc_live")
+            str_ptr = STR_TYPE.as_pointer()
+            self.str_cat_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [str_ptr, str_ptr, str_ptr]), name="__nc_str_cat_out")
+            self.str_slice_fn = ir.Function(
+                self.module,
+                ir.FunctionType(ir.VoidType(), [str_ptr, str_ptr, ir.IntType(64), ir.IntType(64)]),
+                name="__nc_str_slice_copy_out",
+            )
+            self.i32_to_str_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [str_ptr, ir.IntType(32)]), name="__nc_i32_to_str_out")
+            self.str_to_i32_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [str_ptr]), name="__nc_str_to_i32_ptr")
+            self.read_file_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [str_ptr, I8PTR]), name="__nc_read_file_out")
+            self.write_file_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [I8PTR, str_ptr]), name="__nc_write_file_ptr")
+            self.map_init_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [MAP_TYPE.as_pointer()]), name="__nc_map_init")
+            self.map_get_str_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [str_ptr, MAP_TYPE.as_pointer(), str_ptr]), name="__nc_map_get_str_out")
+            self.map_set_str_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [MAP_TYPE.as_pointer(), str_ptr, str_ptr]), name="__nc_map_set_str_ptr")
+            self.map_has_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [MAP_TYPE.as_pointer(), str_ptr]), name="__nc_map_has_ptr")
+
+    def value_to_stack_ptr(self, value, typ, name):
+        slot = self.alloca_at_entry(name, typ)
+        self.builder.store(value, slot)
+        return slot
 
     def malloc_array(self, elem_type: str, count):
         self.ensure_gc_runtime()
@@ -1392,31 +1280,29 @@ class LLVMCodegen:
         return self.builder.call(self.gc_alloc, [count], name="malloc.bytes")
 
     def emit_i32_to_str(self, arg_expr):
-        self.ensure_sprintf()
-        buf = self.malloc_bytes(ir.Constant(ir.IntType(64), 24))
-        fmt = self.global_c_string("%d", "fmt_i32_to_str")
+        self.ensure_ncrt_runtime()
         value = self.cast_to(self.emit_expr(arg_expr), "i32")
-        length = self.builder.call(self.sprintf, [buf, fmt, value], name="i32.str.len")
-        length64 = self.builder.sext(length, ir.IntType(64), name="i32.str.len64")
-        return self.str_value(buf, length64)
+        out = self.alloca_at_entry("__nc_i32_str_out", STR_TYPE)
+        self.builder.call(self.i32_to_str_fn, [out, value])
+        return self.builder.load(out, name="i32.str")
 
     def emit_str_to_i32(self, arg_expr):
-        self.ensure_atoi()
+        self.ensure_ncrt_runtime()
         value = self.emit_expr(arg_expr)
-        ptr = self.builder.extract_value(value, 0)
-        return self.builder.call(self.atoi, [ptr], name="str.i32")
+        return self.builder.call(self.str_to_i32_fn, [self.value_to_stack_ptr(value, STR_TYPE, "__nc_str_to_i32_arg")], name="str.i32")
 
     def emit_gc_live(self):
-        self.ensure_gc_runtime()
+        self.ensure_ncrt_runtime()
         self.ensure_printf()
         fmt = self.global_c_string("%d\n", "fmt_gc_live")
-        live = self.builder.load(self.gc_live_count, name="gc.live")
+        live64 = self.builder.call(self.gc_live, [], name="gc.live")
+        live = self.builder.trunc(live64, ir.IntType(32), name="gc.live.i32")
         self.builder.call(self.printf, [fmt, live])
         return live
 
     def emit_gc_collect(self):
-        self.ensure_gc_runtime()
-        self.builder.store(ir.Constant(ir.IntType(32), 0), self.gc_live_count)
+        self.ensure_ncrt_runtime()
+        self.builder.call(self.gc_collect, [])
         return ir.Constant(ir.IntType(1), 0)
 
     def copy_bytes(self, dest, dest_offset, source, source_offset, count, label):
@@ -1452,7 +1338,7 @@ class LLVMCodegen:
         if nc_type == "str":
             return 16
         if nc_type == "nc_map":
-            return 24
+            return 32
         if isinstance(nc_type, str) and (nc_type.startswith("*") or nc_type.startswith("?*")):
             return 8
         if parse_fn_type(nc_type) is not None:
@@ -1510,75 +1396,32 @@ class LLVMCodegen:
             )
 
     def emit_read_file(self, path_expr):
-        self.ensure_file_io()
+        self.ensure_ncrt_runtime()
         path = self.emit_expr(path_expr)
         path_ptr = self.builder.extract_value(path, 0)
-        mode = self.global_c_string("rb", "file_mode")
-        fp = self.builder.call(self.fopen, [path_ptr, mode], name="read.fp")
-        fp_is_null = self.builder.icmp_unsigned("==", fp, ir.Constant(I8PTR, None))
-
-        open_bb = self.func.append_basic_block("read.open")
-        empty_bb = self.func.append_basic_block("read.empty")
-        end_bb = self.func.append_basic_block("read.end")
-        self.builder.cbranch(fp_is_null, empty_bb, open_bb)
-
-        self.builder.position_at_end(empty_bb)
-        empty_value = self.str_value(ir.Constant(I8PTR, None), ir.Constant(ir.IntType(64), 0))
-        self.builder.branch(end_bb)
-        empty_incoming = self.builder.block
-
-        self.builder.position_at_end(open_bb)
-        self.builder.call(self.fseek, [fp, ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 2)])
-        len32 = self.builder.call(self.ftell, [fp], name="read.len32")
-        self.builder.call(self.fseek, [fp, ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)])
-        len64 = self.builder.zext(len32, ir.IntType(64), name="read.len64")
-        alloc_len = self.builder.add(len64, ir.Constant(ir.IntType(64), 1), name="read.alloc.len")
-        buf = self.malloc_bytes(alloc_len)
-        self.builder.call(self.fread, [buf, ir.Constant(ir.IntType(64), 1), len64, fp])
-        nul_ptr = self.builder.gep(buf, [len64], inbounds=True)
-        self.builder.store(ir.Constant(ir.IntType(8), 0), nul_ptr)
-        self.builder.call(self.fclose, [fp])
-        file_value = self.str_value(buf, len64)
-        self.builder.branch(end_bb)
-        file_incoming = self.builder.block
-
-        self.builder.position_at_end(end_bb)
-        phi = self.builder.phi(STR_TYPE, name="read.result")
-        phi.add_incoming(empty_value, empty_incoming)
-        phi.add_incoming(file_value, file_incoming)
-        return phi
+        out = self.alloca_at_entry("__nc_read_file_out", STR_TYPE)
+        self.builder.call(self.read_file_fn, [out, path_ptr])
+        return self.builder.load(out, name="read.result")
 
     def emit_write_file(self, path_expr, content_expr):
-        self.ensure_file_io()
+        self.ensure_ncrt_runtime()
         path = self.emit_expr(path_expr)
         content = self.emit_expr(content_expr)
         path_ptr = self.builder.extract_value(path, 0)
-        mode = self.global_c_string("wb", "file_mode")
-        fp = self.builder.call(self.fopen, [path_ptr, mode], name="write.fp")
-        fp_is_null = self.builder.icmp_unsigned("==", fp, ir.Constant(I8PTR, None))
-
-        body_bb = self.func.append_basic_block("write.body")
-        end_bb = self.func.append_basic_block("write.end")
-        self.builder.cbranch(fp_is_null, end_bb, body_bb)
-        self.builder.position_at_end(body_bb)
-        ptr = self.builder.extract_value(content, 0)
-        length = self.builder.extract_value(content, 1)
-        self.builder.call(self.fwrite, [ptr, ir.Constant(ir.IntType(64), 1), length, fp])
-        self.builder.call(self.fclose, [fp])
-        self.builder.branch(end_bb)
-        self.builder.position_at_end(end_bb)
+        content_ptr = self.value_to_stack_ptr(content, STR_TYPE, "__nc_write_file_content")
+        self.builder.call(self.write_file_fn, [path_ptr, content_ptr])
         return ir.Constant(ir.IntType(1), 0)
 
     def emit_str_eq(self, left, right):
-        self.ensure_memcmp()
-        left_ptr = self.builder.extract_value(left, 0)
-        left_len = self.builder.extract_value(left, 1)
-        right_ptr = self.builder.extract_value(right, 0)
-        right_len = self.builder.extract_value(right, 1)
-        len_eq = self.builder.icmp_unsigned("==", left_len, right_len)
-        cmp_val = self.builder.call(self.memcmp, [left_ptr, right_ptr, left_len])
-        bytes_eq = self.builder.icmp_signed("==", cmp_val, ir.Constant(ir.IntType(32), 0))
-        return self.builder.and_(len_eq, bytes_eq)
+        self.ensure_ncrt_runtime()
+        fn = (
+            ir.Function(self.module, ir.FunctionType(ir.IntType(32), [STR_TYPE.as_pointer(), STR_TYPE.as_pointer()]), name="__nc_str_eq_ptr")
+            if "__nc_str_eq_ptr" not in self.module.globals else self.module.globals["__nc_str_eq_ptr"]
+        )
+        left_ptr = self.value_to_stack_ptr(left, STR_TYPE, "__nc_str_eq_left")
+        right_ptr = self.value_to_stack_ptr(right, STR_TYPE, "__nc_str_eq_right")
+        eq = self.builder.call(fn, [left_ptr, right_ptr], name="str.eq.i32")
+        return self.builder.icmp_signed("!=", eq, ir.Constant(ir.IntType(32), 0), name="str.eq")
 
     def global_c_string(self, text: str, hint: str):
         key = (hint, text)
@@ -1673,11 +1516,12 @@ def build_llvm_ir(llvm_ir: str, out_dir: str, name: str = "main") -> tuple[str, 
     ll_path = os.path.join(out_dir, f"{name}.ll")
     obj_path = os.path.join(out_dir, f"{name}.obj")
     exe_path = os.path.join(out_dir, f"{name}.exe")
+    ncrt_obj = build_ncrt_obj(out_dir)
     with open(ll_path, "w", encoding="utf-8") as f:
         f.write(llvm_ir)
     with open(obj_path, "wb") as f:
         f.write(object_from_llvm_ir(llvm_ir))
-    result = subprocess.run(["gcc", obj_path, "-o", exe_path], capture_output=True, text=True)
+    result = subprocess.run(["gcc", obj_path, ncrt_obj, "-o", exe_path], capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"LLVM object link failed:\n{result.stderr}")
     return ll_path, obj_path, exe_path

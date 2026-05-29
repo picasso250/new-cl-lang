@@ -390,3 +390,13 @@
 
 - 已明确 LLVM v1 默认后端的 GC 边界和放弃点：design.md 记录默认 LLVM 采用不释放的 __nc_gc_alloc shim 保证动态分配对象保活，真正 root slot、heap 扫描、释放/复用和 runtime GC ABI 延期；已验证 C/reference 回归与 LLVM 全量 case/project pytest。
 
+
+## 2026-05-29
+
+- 预备提取独立 ncrt 静态运行时：新增 runtime/ncrt.h + runtime/ncrt.c 并编译为 ncrt.obj，C/LLVM 后端共享链接该对象；LLVM 保持当前不释放 GC 边界，gc_collect 只清零 live counter。
+
+- 已提取独立 ncrt 静态运行时：新增 runtime/ncrt.h + runtime/ncrt.c，run/build 路径按需编译 ncrt.obj；C 后端输出改为 include ncrt.h 并链接 ncrt.obj，不再内联共享 runtime。
+- LLVM 后端删除内部 __nc_gc_alloc/live counter 实现，改为声明外部 ncrt 函数并链接 ncrt.obj；str cat/slice/eq、str(i32)、i32(str)、read_file/write_file、map_new/get/set/has 均通过 ncrt ABI。Windows aggregate ABI 下 LLVM 使用指针式 ncrt 包装函数，避免 str 按值跨 C 边界不匹配。
+- LLVM nc_map 布局已改为匹配 ncrt.h 的 entries/cap/len/tombstones，entries 在 LLVM 侧 opaque，len(map) 读取 len 字段；C runtime 哈希表成为唯一 map 实现。
+- 验证通过：python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py -q；python -m pytest tests/test_llvm_backend.py tests/test_llvm_cases.py -q；默认 LLVM build 与 --backend c build smoke 均产出 ncrt.obj 并可运行。未迁移项：按元素类型生成的 slice append/copy helper 仍保留在 C 生成代码中。
+

@@ -7,7 +7,7 @@
 | 项 | 决策 |
 |-----|------|
 | 编译目标 | **默认后端为 LLVM**；C 后端保留为 reference/debug 后端 |
-| 运行时 | **自带运行时库**（GC）；迁移目标是独立 runtime C ABI，供 LLVM 后端链接 |
+| 运行时 | **自带运行时库**（GC）；当前为独立 `ncrt` C ABI，C/LLVM 后端共享静态对象链接 |
 | 性能级别 | **Go 级性能**即可（非 C 级零开销），接受胖指针、间接调用 |
 | 调试 | 迁移期保留 NC 行号 → 生成产物定位；LLVM 后端后续接 debug metadata |
 | 内存管理 | **GC**（自动管理，不搞所有权 / borrow checker） |
@@ -65,12 +65,13 @@ import io                # 内置标准模块，不要求存在同级 io/ 目录
 
 当前后端边界：
 
-- 默认后端是 LLVM：`compile` 输出 LLVM IR，`build` 输出 `build/main.ll`、`build/main.obj` 与 `build/main.exe`。
-- 显式 `--backend c` 走 C reference/debug 后端：`compile --backend c` 输出 C，`build --backend c` 输出 `build/main.c` 与 `build/main.exe`。C 后端是否删除需在 LLVM 默认稳定后再决策。
+- 默认后端是 LLVM：`compile` 输出 LLVM IR，`build` 输出 `build/main.ll`、`build/main.obj`、`build/ncrt.obj` 与 `build/main.exe`。
+- 显式 `--backend c` 走 C reference/debug 后端：`compile --backend c` 输出 C，`build --backend c` 输出 `build/main.c`、`build/ncrt.h`、`build/ncrt.obj` 与 `build/main.exe`。C 后端是否删除需在 LLVM 默认稳定后再决策。
 - LLVM 后端 v1 当前承诺基础闭环：基础数值/bool 类型、`str` 字面量/索引/切片/拼接、数值转换、`str(i32)`、`i32(str)`、`len(str)`、`str ==/!=`、定长数组字面量/索引/索引赋值、slice layout/literal/index/`len`/`append`、定长数组与 slice 切片复制、slice `for i, item in s`、struct 值类型声明/字面量/字段读写/参数与返回、heap struct `new`、指针 receiver 方法声明/调用、nullable pointer `nil`/`!= nil` 窄化后字段与方法访问、enum tag/variant/比较、整数/字符串/bool/enum `match` 表达式、block 表达式、算术/比较、`let`、重赋值、函数、显式 `return` 与尾表达式返回、`if`、条件 `for`、range `for i in start..end`、`break`、临时文件 IO builtins `read_file`/`write_file`、`nc_map` 的 `map_new`/字符串键读写/`map_has`/`len(map)`、函数调用与 `io.println`。
-- LLVM `nc_map` 当前使用 LLVM 内部连续 entry 布局、线性查找和满容量复制增长；语言可见语义对齐当前字符串键/字符串值 map，但尚未复用 C runtime 哈希表实现。
-- LLVM slice、map、closure env、heap struct 与运行时构造字符串的动态存储统一通过 LLVM 内部 `__nc_gc_alloc` shim 分配；该 shim 当前委托 libc `malloc` 并维护 live 计数。LLVM v1 默认后端接受“不释放”的分配策略：对象保活通过不回收保证，不实现 root slot、heap 扫描、释放或复用。
-- LLVM 临时 GC 测试钩子当前仅用于保持测试路径可运行：`gc_collect()` 不释放对象，只清零 live 计数；`gc_live()` 输出/返回当前 `__nc_gc_alloc` 分配计数。这不是完整 GC registry/root 实现。
+- C/LLVM 后端共享 `runtime/ncrt.h` + `runtime/ncrt.c` 编译出的 `ncrt.obj`。`ncrt` 固定基础 ABI：`str`、`nc_map`、`__nc_gc_alloc`/`__nc_gc_collect`/`__nc_gc_live`、root slot 兼容 stub、字符串/file/cast/map helper 与 C 异常入口。C 生成代码只 include `ncrt.h`，不再内联共享 runtime；程序特化 slice append/copy helper 仍由 C 后端按元素类型生成。
+- LLVM `nc_map` 布局匹配 `ncrt.h`：`{ entries, cap, len, tombstones }`，entries 在 LLVM 侧为 opaque pointer；map_new/get/set/has 统一调用 `ncrt` 哈希表实现，`len(map)` 读取 len 字段。
+- LLVM slice、map、closure env、heap struct 与运行时构造字符串的动态存储统一通过外部 `__nc_gc_alloc` 分配；该入口由 `ncrt.obj` 提供。LLVM v1 默认后端接受“不释放”的分配策略：对象保活通过不回收保证，不实现 root slot、heap 扫描、释放或复用。
+- GC 测试钩子当前仅用于保持测试路径可运行：`gc_collect()` 不释放对象，只清零 live 计数；`gc_live()` 输出/返回当前 `__nc_gc_alloc` 分配计数。root slot API 作为 C 后端兼容入口保留，但在 ncrt v1 中不参与回收。这不是完整 GC registry/root 实现。
 - LLVM `throw`/`try`/`catch` 当前使用轻量异常模型：全局异常 flag + `str` value，函数边界返回默认值传播异常，`try` 块在语句边界检查 flag 并跳转 `catch`；uncaught throw 在 `main` 输出到 stderr 并返回 1。`defer` 使用函数内动态 site 栈，按 LIFO 在函数 fallthrough、显式 `return`、`throw` 传播前执行。该模型不依赖 `setjmp`/`longjmp`。
 - LLVM function value 当前支持 `{ call, env }` 胖指针：`call` 首参为 `i8* env`，无捕获时 `env == null`；捕获 closure 生成 env struct 并按值拷贝捕获字段，env 通过 `__nc_gc_alloc` 分配，但仍不参与 root slot/扫描/释放。
 - LLVM 后端当前使用 MinGW GNU triple `x86_64-w64-windows-gnu` 生成 Windows COFF object，并用 `gcc` 链接。

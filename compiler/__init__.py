@@ -11,6 +11,7 @@ from compiler.symtab import build_symbol_table
 from compiler.typecheck import infer_types
 from compiler.codegen import generate_c
 from compiler.llvm_codegen import build_llvm_ir, generate_llvm_ir, run_llvm_ir
+from compiler.ncrt import build_ncrt_obj, copy_ncrt_header, RUNTIME_DIR
 from compiler.source import Module, SourceFile, annotate_source_file, module_name_from_sources
 from compiler.ast import (
     Program, ImportDecl, FunctionDeclaration, StructDecl, EnumDecl, FunctionCall,
@@ -251,12 +252,13 @@ def run_c_code(c_code: str) -> "tuple[str, str, int]":
     with tempfile.TemporaryDirectory() as tmpdir:
         c_path = os.path.join(tmpdir, "out.c")
         exe_path = os.path.join(tmpdir, "out.exe")
+        ncrt_obj = build_ncrt_obj(tmpdir)
 
         with open(c_path, "w", encoding="utf-8") as f:
             f.write(c_code)
 
         result = subprocess.run(
-            ["gcc", c_path, "-o", exe_path],
+            ["gcc", c_path, ncrt_obj, "-I", RUNTIME_DIR, "-o", exe_path],
             capture_output=True, text=True
         )
         if result.returncode != 0:
@@ -274,12 +276,14 @@ def build_c_code(c_code: str, out_dir: str, name: str = "main") -> "tuple[str, s
     os.makedirs(out_dir, exist_ok=True)
     c_path = os.path.join(out_dir, f"{name}.c")
     exe_path = os.path.join(out_dir, f"{name}.exe")
+    ncrt_obj = build_ncrt_obj(out_dir)
+    copy_ncrt_header(out_dir)
 
     with open(c_path, "w", encoding="utf-8") as f:
         f.write(c_code)
 
     result = subprocess.run(
-        ["gcc", c_path, "-o", exe_path],
+        ["gcc", c_path, ncrt_obj, "-I", out_dir, "-o", exe_path],
         capture_output=True, text=True
     )
     if result.returncode != 0:

@@ -439,6 +439,21 @@ def test_llvm_gc_live_tracks_allocator_hook():
     assert (stdout.strip(), stderr.strip(), rc) == ("2\n0", "", 0)
 
 
+def test_llvm_uses_external_ncrt_runtime():
+    llvm_ir = compile_nc_to_llvm_ir("""import io
+fun main() {
+    let m = map_new()
+    m["a"] = "b"
+    io.println(m["a"])
+    gc_live()
+}
+""")
+
+    assert 'define i8* @"__nc_gc_alloc"' not in llvm_ir
+    assert 'declare i8* @"__nc_gc_alloc"' in llvm_ir
+    assert "__nc_map_get_str_out" in llvm_ir
+
+
 def test_llvm_throw_try_catch_and_uncaught():
     source = """import io
 fun risky(path: str): str {
@@ -559,6 +574,7 @@ def test_llvm_build_writes_ir_obj_and_exe(tmp_path):
     ll_path, obj_path, exe_path = build_llvm_ir(llvm_ir, str(tmp_path), "main")
     assert os.path.exists(ll_path)
     assert os.path.exists(obj_path)
+    assert os.path.exists(tmp_path / "ncrt.obj")
     assert os.path.exists(exe_path)
     result = subprocess.run([exe_path], capture_output=True, text=True)
     assert result.stdout.strip() == "42"
