@@ -414,3 +414,12 @@
 
 - 已补齐运算符实现：lexer/parser 支持位运算、复合赋值和语句级 ++/--；typecheck 收紧整数位运算、复合赋值与自增自减 lvalue 规则；C/LLVM 后端均支持对应 lowering。新增 case_164~169 覆盖正向优先级/复合赋值/++-- 与错误路径。
 - 验证通过：python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py -q；python -m pytest tests/test_llvm_backend.py tests/test_llvm_cases.py -q；默认 LLVM run/build smoke 与 --backend c build smoke 均通过。
+
+## 2026-05-29
+
+- 预备优化测试套件耗时：为共享 ncrt.obj 增加内容哈希缓存，减少重复 runtime 编译；LLVM 单文件 case 改为进程内调用编译/运行入口，避免每个 case 启动 Python CLI 子进程。
+
+
+- 已优化测试套件耗时：build_ncrt_obj 现在基于 runtime/ncrt.c 与 runtime/ncrt.h 内容哈希复用缓存对象，并仍复制到目标 out_dir/ncrt.obj；LLVM 单文件 case 测试改为进程内调用 compile_nc_sources_to_llvm_ir + run_llvm_ir，保留 CLI smoke 覆盖在既有项目/后端测试中。
+- 验证通过：python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py -q；python -m pytest tests/test_llvm_backend.py tests/test_llvm_cases.py -q；组合 pytest --durations=20 为 58 passed in 64.85s，最慢项 test_basic 28.55s、LLVM 正向 case 22.10s。
+

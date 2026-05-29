@@ -2,9 +2,9 @@
 
 import os
 import re
-import subprocess
-import sys
 from pathlib import Path
+
+from compiler import compile_nc_sources_to_llvm_ir, run_llvm_ir
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -79,24 +79,23 @@ def llvm_error_cases():
     return cases
 
 
-def run_nc(*args):
-    return subprocess.run(
-        [sys.executable, str(ROOT / "nc.py"), *args],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-    )
-
-
 def test_llvm_positive_single_file_cases():
     failures = []
     for path, expected in llvm_positive_cases():
-        result = run_nc("run", "--backend", "llvm", str(path))
-        actual = (result.stdout.strip(), result.stderr.strip(), result.returncode)
+        try:
+            source = path.read_text(encoding="utf-8")
+            llvm_ir = compile_nc_sources_to_llvm_ir([(str(path), source)])
+            stdout, stderr, rc = run_llvm_ir(llvm_ir)
+        except Exception as exc:
+            failures.append(
+                f"{os.path.relpath(path, ROOT)}: raised={type(exc).__name__}: {exc}"
+            )
+            continue
+        actual = (stdout.strip(), stderr.strip(), rc)
         if actual != expected:
             failures.append(
                 f"{os.path.relpath(path, ROOT)}: actual={actual!r}, "
-                f"expected={expected!r}, tail_stderr={result.stderr[-500:]!r}"
+                f"expected={expected!r}, tail_stderr={stderr[-500:]!r}"
             )
     assert not failures, "\n".join(failures)
 
@@ -104,11 +103,19 @@ def test_llvm_positive_single_file_cases():
 def test_llvm_error_single_file_cases():
     failures = []
     for path, expected in llvm_error_cases():
-        result = run_nc("compile", "--backend", "llvm", str(path))
-        diagnostic = (result.stderr + result.stdout).strip()
-        if result.returncode == 0 or expected not in diagnostic:
+        try:
+            source = path.read_text(encoding="utf-8")
+            compile_nc_sources_to_llvm_ir([(str(path), source)])
+        except Exception as exc:
+            diagnostic = str(exc)
+            if expected not in diagnostic:
+                failures.append(
+                    f"{os.path.relpath(path, ROOT)}: expected error containing={expected!r}, "
+                    f"diagnostic={diagnostic[-500:]!r}"
+                )
+        else:
             failures.append(
-                f"{os.path.relpath(path, ROOT)}: rc={result.returncode}, "
-                f"expected error containing={expected!r}, diagnostic={diagnostic[-500:]!r}"
+                f"{os.path.relpath(path, ROOT)}: expected error containing={expected!r}, "
+                "but compile succeeded"
             )
     assert not failures, "\n".join(failures)
