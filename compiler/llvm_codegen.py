@@ -1,8 +1,7 @@
 """LLVM Lite backend v1.
 
-This backend is intentionally small: it shares the existing frontend and typed
-AST, then lowers a conservative subset to LLVM IR. Unsupported language nodes
-fail explicitly so the C backend remains the authority for the full language.
+This backend shares the existing frontend and typed AST, then lowers to LLVM IR.
+Unsupported language nodes fail explicitly.
 """
 
 import os
@@ -19,8 +18,8 @@ from compiler.ast import (
     MatchExpr, MethodCall, NilLiteral, Return, SliceExpr, SliceLiteral, StringLiteral, StructDecl,
     StructLiteral, Throw, TryCatch, UnaryOp, VariableDeclaration, While,
 )
-from compiler.c_abi import c_user_ident
 from compiler.codegen_collect import collect_codegen_inputs, parse_fn_type
+from compiler.names import safe_user_ident
 from compiler.ncrt import build_ncrt_obj
 
 
@@ -224,8 +223,8 @@ class LLVMCodegen:
     def function_symbol(self, fn: FunctionDeclaration):
         if fn.receiver_name:
             receiver_type = fn.receiver_type.lstrip("*").lstrip("?")
-            return c_user_ident(f"{receiver_type}_{fn.name}")
-        return c_user_ident(fn.name)
+            return safe_user_ident(f"{receiver_type}_{fn.name}")
+        return safe_user_ident(fn.name)
 
     def closure_symbol(self, closure: FunctionExpr):
         return f"__nc_lambda_{closure.closure_id}"
@@ -257,12 +256,12 @@ class LLVMCodegen:
                 env_ptr,
                 [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), i)],
                 inbounds=True,
-                name=f"capture.{c_user_ident(capture_name)}.ptr",
+                name=f"capture.{safe_user_ident(capture_name)}.ptr",
             )
             self.vars[capture_name] = (field_ptr, capture_type)
         for arg, (param_name, param_type) in zip(llvm_fn.args[1:], closure.params):
-            arg.name = c_user_ident(param_name)
-            slot = self.alloca_at_entry(c_user_ident(param_name), llvm_type(param_type))
+            arg.name = safe_user_ident(param_name)
+            slot = self.alloca_at_entry(safe_user_ident(param_name), llvm_type(param_type))
             self.builder.store(arg, slot)
             self.vars[param_name] = (slot, param_type)
             self.root_slots_for_type(slot, param_type)
@@ -286,8 +285,8 @@ class LLVMCodegen:
         self.init_gc_frame(is_main=fn.name == "main")
         all_params = ([(fn.receiver_name, fn.receiver_type)] if fn.receiver_name else []) + fn.params
         for arg, (param_name, param_type) in zip(llvm_fn.args, all_params):
-            arg.name = c_user_ident(param_name)
-            slot = self.alloca_at_entry(c_user_ident(param_name), llvm_type(param_type))
+            arg.name = safe_user_ident(param_name)
+            slot = self.alloca_at_entry(safe_user_ident(param_name), llvm_type(param_type))
             self.builder.store(arg, slot)
             self.vars[param_name] = (slot, param_type)
             self.root_slots_for_type(slot, param_type)
@@ -433,7 +432,7 @@ class LLVMCodegen:
             return
         if isinstance(stmt, VariableDeclaration):
             typ = llvm_type(stmt.type)
-            slot = self.alloca_at_entry(c_user_ident(stmt.name), typ)
+            slot = self.alloca_at_entry(safe_user_ident(stmt.name), typ)
             self.vars[stmt.name] = (slot, stmt.type)
             self.root_slots_for_type(slot, stmt.type)
             self.builder.store(self.cast_to(self.emit_expr(stmt.initializer), stmt.type), slot)
@@ -519,7 +518,7 @@ class LLVMCodegen:
 
         saved_vars = self.vars.copy()
         self.builder.position_at_end(catch_bb)
-        err_slot = self.alloca_at_entry(c_user_ident(stmt.error_name), STR_TYPE)
+        err_slot = self.alloca_at_entry(safe_user_ident(stmt.error_name), STR_TYPE)
         self.vars[stmt.error_name] = (err_slot, "str")
         self.root_slots_for_type(err_slot, "str")
         self.builder.store(self.builder.load(self.ex_value, name="catch.ex"), err_slot)
@@ -665,7 +664,7 @@ class LLVMCodegen:
             return
 
         idx_type = ir.IntType(32)
-        idx_slot = self.alloca_at_entry(c_user_ident(stmt.index), idx_type)
+        idx_slot = self.alloca_at_entry(safe_user_ident(stmt.index), idx_type)
         self.vars[stmt.index] = (idx_slot, "i32")
         start = self.cast_to(self.emit_expr(stmt.start), "i32")
         end = self.cast_to(self.emit_expr(stmt.end), "i32")
@@ -676,14 +675,14 @@ class LLVMCodegen:
         end_bb = self.func.append_basic_block("for.range.end")
         self.builder.branch(cond_bb)
         self.builder.position_at_end(cond_bb)
-        current = self.builder.load(idx_slot, name=c_user_ident(stmt.index))
+        current = self.builder.load(idx_slot, name=safe_user_ident(stmt.index))
         self.builder.cbranch(self.builder.icmp_signed("<", current, end), body_bb, end_bb)
         self.builder.position_at_end(body_bb)
         self.break_stack.append(end_bb)
         self.emit_block(stmt.body)
         self.break_stack.pop()
         if not self.builder.block.is_terminated:
-            current = self.builder.load(idx_slot, name=c_user_ident(stmt.index))
+            current = self.builder.load(idx_slot, name=safe_user_ident(stmt.index))
             next_value = self.builder.add(current, ir.Constant(idx_type, 1))
             self.builder.store(next_value, idx_slot)
             self.builder.branch(cond_bb)
@@ -696,8 +695,8 @@ class LLVMCodegen:
 
         saved_vars = self.vars.copy()
         idx_type = ir.IntType(32)
-        idx_slot = self.alloca_at_entry(c_user_ident(stmt.index), idx_type)
-        value_slot = self.alloca_at_entry(c_user_ident(stmt.value), llvm_type(elem_type))
+        idx_slot = self.alloca_at_entry(safe_user_ident(stmt.index), idx_type)
+        value_slot = self.alloca_at_entry(safe_user_ident(stmt.value), llvm_type(elem_type))
         self.vars[stmt.index] = (idx_slot, "i32")
         self.vars[stmt.value] = (value_slot, elem_type)
         self.root_slots_for_type(value_slot, elem_type)
@@ -713,7 +712,7 @@ class LLVMCodegen:
         end_bb = self.func.append_basic_block("for.slice.end")
         self.builder.branch(cond_bb)
         self.builder.position_at_end(cond_bb)
-        current = self.builder.load(idx_slot, name=c_user_ident(stmt.index))
+        current = self.builder.load(idx_slot, name=safe_user_ident(stmt.index))
         self.builder.cbranch(self.builder.icmp_signed("<", current, length32), body_bb, end_bb)
         self.builder.position_at_end(body_bb)
         elem_ptr = self.builder.gep(ptr, [current], inbounds=True, name="for.slice.elem.ptr")
@@ -722,7 +721,7 @@ class LLVMCodegen:
         self.emit_block(stmt.body)
         self.break_stack.pop()
         if not self.builder.block.is_terminated:
-            current = self.builder.load(idx_slot, name=c_user_ident(stmt.index))
+            current = self.builder.load(idx_slot, name=safe_user_ident(stmt.index))
             next_value = self.builder.add(current, ir.Constant(idx_type, 1))
             self.builder.store(next_value, idx_slot)
             self.builder.branch(cond_bb)
@@ -748,7 +747,7 @@ class LLVMCodegen:
             return ir.Constant(ir.IntType(32), ENUM_VARIANTS[node.enum_name][node.variant])
         if isinstance(node, Identifier):
             slot, _typ = self.vars[node.name]
-            return self.builder.load(slot, name=c_user_ident(node.name))
+            return self.builder.load(slot, name=safe_user_ident(node.name))
         if isinstance(node, StructLiteral):
             return self.emit_struct_literal(node)
         if isinstance(node, FieldAccess):
@@ -1170,7 +1169,7 @@ class LLVMCodegen:
             return self.cast_numeric(self.emit_expr(node.args[0]), node.args[0].type, node.name)
         if node.name not in self.fn_decls:
             raise NotImplementedError(f"LLVM backend v1 cannot call {node.name}")
-        fn = self.module.globals[c_user_ident(node.name)]
+        fn = self.module.globals[safe_user_ident(node.name)]
         return self.builder.call(fn, [self.emit_expr(arg) for arg in node.args])
 
     def emit_function_expr(self, node: FunctionExpr):
@@ -1192,12 +1191,12 @@ class LLVMCodegen:
         env_ptr = self.builder.bitcast(raw, env_type.as_pointer(), name="closure.env.alloc")
         for i, (capture_name, capture_type) in enumerate(captures):
             source_ptr, _source_type = self.vars[capture_name]
-            capture_value = self.builder.load(source_ptr, name=f"capture.{c_user_ident(capture_name)}")
+            capture_value = self.builder.load(source_ptr, name=f"capture.{safe_user_ident(capture_name)}")
             field_ptr = self.builder.gep(
                 env_ptr,
                 [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), i)],
                 inbounds=True,
-                name=f"capture.{c_user_ident(capture_name)}.store.ptr",
+                name=f"capture.{safe_user_ident(capture_name)}.store.ptr",
             )
             self.builder.store(self.cast_to(capture_value, capture_type), field_ptr)
         return self.builder.bitcast(env_ptr, I8PTR, name="closure.env.i8")
@@ -1210,7 +1209,7 @@ class LLVMCodegen:
             receiver_base = obj_type[1:]
         else:
             receiver_base = obj_type
-        name = c_user_ident(f"{receiver_base}_{node.method}")
+        name = safe_user_ident(f"{receiver_base}_{node.method}")
         if name not in self.module.globals:
             raise NotImplementedError(f"LLVM backend v1 cannot call method {receiver_base}.{node.method}")
         fn = self.module.globals[name]

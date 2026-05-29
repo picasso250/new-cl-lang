@@ -1,4 +1,4 @@
-"""Pre-generation collection for the C backend."""
+"""Pre-generation collection for backend code generation."""
 
 from dataclasses import dataclass, field
 

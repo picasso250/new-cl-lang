@@ -11,7 +11,7 @@ import re
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from compiler import compile_nc_to_c, run_c_code
+from compiler import compile_nc_to_llvm_ir, run_llvm_ir
 
 CASE_DIR = os.path.join(os.path.dirname(__file__), "..", "test_cases")
 
@@ -42,10 +42,10 @@ def _parse_expected(source: str) -> tuple[str, str, int]:
 
 def _compile_and_run(source: str) -> tuple[str, str, int]:
     try:
-        c_code = compile_nc_to_c(source)
+        llvm_ir = compile_nc_to_llvm_ir(source)
     except Exception as e:
         return "__ERROR__", str(e), 0
-    stdout, stderr, rc = run_c_code(c_code)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir)
     return stdout.strip(), stderr.strip(), rc
 
 

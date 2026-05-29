@@ -439,3 +439,14 @@
 - 已实现显式泛型 v1：parser/AST 支持 fun/struct 类型参数、显式类型实参调用和类型应用；新增 frontend monomorphization pass，在 symtab/typecheck 前将用到的泛型函数/struct 实例化为普通声明，后端继续只接收具体 AST。
 - 已补正向与错误 case，覆盖 identity、generic struct/new、slice/pointer 字段、嵌套实例、跨模块泛型、缺失/错误类型实参、未知类型参数、实例化后类型不匹配和非泛型误用；design.md 已记录 v1 语法与限制。
 - 验证通过：python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py -q；python -m pytest tests/test_llvm_backend.py tests/test_llvm_cases.py -q；python nc.py build test_cases\case_170_generics_identity.nc；python nc.py build --backend c test_cases\case_170_generics_identity.nc。
+
+## 2026-05-29
+
+- 预备删除 C 后端：移除 NC→C 代码生成实现、--backend c|llvm 双入口和旧 C API；CLI 固定使用 LLVM，runtime/ncrt.c 作为 LLVM 链接运行时保留。
+
+
+- 已删除 C 后端：移除 compiler/codegen.py、compiler/codegen_context.py、compiler/runtime.py 和 compiler/c_abi.py；CLI run/compile/build 固定走 LLVM，显式 --backend 报错；compiler API 只保留 LLVM IR/run/build 路径。
+- 已将 builtin boundary 收敛为类型推断，命名清洗迁到 backend-neutral names helper；runtime/ncrt.c 与 ncrt.h 继续作为 LLVM 链接运行时保留。
+- 已更新 tests/test_basic.py 改用 LLVM IR 跑全部 case，项目/builtin 测试移除 C 输出断言并新增 --backend 删除断言；design.md 已更新为 LLVM-only 当前边界。
+- 验证通过：python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py -q；python -m pytest tests/test_llvm_backend.py tests/test_llvm_cases.py -q；python nc.py build test_cases\case_170_generics_identity.nc；python nc.py build --backend c test_cases\case_170_generics_identity.nc 按预期失败。
+

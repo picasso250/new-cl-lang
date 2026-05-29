@@ -6,12 +6,12 @@
 
 | 项 | 决策 |
 |-----|------|
-| 编译目标 | **默认后端为 LLVM**；C 后端保留为 reference/debug 后端 |
-| 运行时 | **自带运行时库**（GC）；当前为独立 `ncrt` C ABI，C/LLVM 后端共享静态对象链接 |
+| 编译目标 | **LLVM** 是唯一后端 |
+| 运行时 | **自带运行时库**（GC）；LLVM 后端链接由 `runtime/ncrt.c` 编译出的静态对象 |
 | 性能级别 | **Go 级性能**即可（非 C 级零开销），接受胖指针、间接调用 |
 | 调试 | 迁移期保留 NC 行号 → 生成产物定位；LLVM 后端后续接 debug metadata |
 | 内存管理 | **GC**（自动管理，不搞所有权 / borrow checker） |
-| 构建系统 | **自带**（无需外部 make/cmake）；默认 LLVM 后端生成 `build/main.ll` + `build/main.obj` + exe，C 后端可通过 `--backend c` 生成 `build/main.c` + exe |
+| 构建系统 | **自带**（无需外部 make/cmake）；生成 `build/main.ll`、`build/main.obj`、`build/ncrt.obj` 与 exe |
 | 入口点 | `fun main()` —— 程序从 main 函数启动 |
 | 标准库 | `println` 在内置一级模块 `io` 中，需 `import io` 后用 `io.println(value)` |
 | 并发 | 延迟决策，不走语言级关键字，后续以库函数提供 |
@@ -54,7 +54,7 @@ import io                # 内置标准模块，不要求存在同级 io/ 目录
 - 导入模块后，跨模块符号必须命名空间限定访问：`foo.add()`、`foo.User`、`foo.User { ... }`、`new foo.User { ... }`、`foo.Color::Red`。
 - 同目录 `.nc` 文件仍自动共享命名空间，无需 import。
 - 导入图递归加载；重复 import 只加载一次；import cycle 报错。
-- 编译仍生成单个 C 文件；非入口模块顶层 C 符号用模块名前缀降名，例如 `foo.add` → `foo_add`、`foo.User` → `foo_User`。
+- 编译生成单个 LLVM module；非入口模块顶层符号用模块名前缀降名，例如 `foo.add` → `foo_add`、`foo.User` → `foo_User`。
 
 当前内置标准模块边界：
 
@@ -65,23 +65,23 @@ import io                # 内置标准模块，不要求存在同级 io/ 目录
 
 当前后端边界：
 
-- 默认后端是 LLVM：`compile` 输出 LLVM IR，`build` 输出 `build/main.ll`、`build/main.obj`、`build/ncrt.obj` 与 `build/main.exe`。
-- 显式 `--backend c` 走 C reference/debug 后端：`compile --backend c` 输出 C，`build --backend c` 输出 `build/main.c`、`build/ncrt.h`、`build/ncrt.obj` 与 `build/main.exe`。C 后端是否删除需在 LLVM 默认稳定后再决策。
+- LLVM 是唯一后端：`compile` 输出 LLVM IR，`build` 输出 `build/main.ll`、`build/main.obj`、`build/ncrt.obj` 与 `build/main.exe`。
+- `--backend` 入口已删除；显式传入 `--backend` 会报错。旧 C 后端和旧 `compile_nc_to_c` / `run_c_code` / `build_c_code` API 不保留向前兼容。
 - LLVM 后端 v1 当前承诺基础闭环：基础数值/bool 类型、`str` 字面量/索引/切片/拼接、数值转换、`str(i32)`、`i32(str)`、`len(str)`、`str ==/!=`、定长数组字面量/索引/索引赋值、slice layout/literal/index/`len`/`append`、定长数组与 slice 切片复制、slice `for i, item in s`、struct 值类型声明/字面量/字段读写/参数与返回、heap struct `new`、指针 receiver 方法声明/调用、nullable pointer `nil`/`!= nil` 窄化后字段与方法访问、enum tag/variant/比较、整数/字符串/bool/enum `match` 表达式、block 表达式、算术/比较、`let`、重赋值、函数、显式 `return` 与尾表达式返回、`if`、条件 `for`、range `for i in start..end`、`break`、临时文件 IO builtins `read_file`/`write_file`、`nc_map` 的 `map_new`/字符串键读写/`map_has`/`len(map)`、函数调用与 `io.println`。
-- C/LLVM 后端共享 `runtime/ncrt.h` + `runtime/ncrt.c` 编译出的 `ncrt.obj`。`ncrt` 固定基础 ABI：`str`、`nc_map`、`nc_slice_raw`、`__nc_gc_alloc`/`__nc_gc_collect`/`__nc_gc_live`、root slot、字符串/file/cast/map helper、字节级 slice append/copy helper 与 C 异常入口。C 生成代码只 include `ncrt.h`，不再内联共享 runtime；`[]T` 语言布局仍为 `{ T* ptr; u64 len; u64 cap }`，`elem_size` 仅作为 runtime helper 调用参数传入，不进入 slice header。
+- LLVM 后端链接 `runtime/ncrt.h` + `runtime/ncrt.c` 编译出的 `ncrt.obj`。`ncrt` 固定基础 ABI：`str`、`nc_map`、`nc_slice_raw`、`__nc_gc_alloc`/`__nc_gc_collect`/`__nc_gc_live`、root slot、字符串/file/cast/map helper、字节级 slice append/copy helper 与 C 异常入口。`[]T` 语言布局仍为 `{ T* ptr; u64 len; u64 cap }`，`elem_size` 仅作为 runtime helper 调用参数传入，不进入 slice header。
 - LLVM `nc_map` 布局匹配 `ncrt.h`：`{ entries, cap, len, tombstones }`，entries 在 LLVM 侧为 opaque pointer；map_new/get/set/has 统一调用 `ncrt` 哈希表实现，`len(map)` 读取 len 字段。
 - LLVM slice、map、closure env、heap struct 与运行时构造字符串的动态存储统一通过外部 `__nc_gc_alloc` 分配；该入口由 `ncrt.obj` 提供。共享 `ncrt` 当前实现显式 mark-sweep GC：`gc_collect()` 从已注册 root slot 出发标记可达块，保守扫描已标记 heap payload 内的 machine word，释放不可达块；`gc_live()` 返回当前存活 GC block 数。
-- C/LLVM 后端都负责为持有 GC 指针的栈槽注册 root：`str.ptr`、`[]T.ptr`、`nc_map.entries`、`*T/?*T`、function value `env`、struct 字段和定长数组元素。LLVM 函数/closure 会为参数、receiver、closure env、局部变量、返回槽、catch/throw 值注册 root，并在所有出口 rewind 到函数入口 mark。
+- LLVM 后端负责为持有 GC 指针的栈槽注册 root：`str.ptr`、`[]T.ptr`、`nc_map.entries`、`*T/?*T`、function value `env`、struct 字段和定长数组元素。LLVM 函数/closure 会为参数、receiver、closure env、局部变量、返回槽、catch/throw 值注册 root，并在所有出口 rewind 到函数入口 mark。
 - LLVM `throw`/`try`/`catch` 当前使用轻量异常模型：全局异常 flag + `str` value，函数边界返回默认值传播异常，`try` 块在语句边界检查 flag 并跳转 `catch`；uncaught throw 在 `main` 输出到 stderr 并返回 1。`defer` 使用函数内动态 site 栈，按 LIFO 在函数 fallthrough、显式 `return`、`throw` 传播前执行。该模型不依赖 `setjmp`/`longjmp`。
 - LLVM function value 当前支持 `{ call, env }` 胖指针：`call` 首参为 `i8* env`，无捕获时 `env == null`；捕获 closure 生成 env struct 并按值拷贝捕获字段，env 通过 `__nc_gc_alloc` 分配并由 function value 的 `env` root 与保守 heap 扫描保活。
 - LLVM 后端当前使用 MinGW GNU triple `x86_64-w64-windows-gnu` 生成 Windows COFF object，并用 `gcc` 链接。
-- C 后端仍是语言全集和回归权威；LLVM 后端不向前兼容未声明支持的节点，遇到未支持语义应明确报错。
+- LLVM 后端是语言全集和回归权威；不向前兼容未声明支持的节点，遇到未支持语义应明确报错。
 
 LLVM 默认后端达标门槛：
 
 - LLVM 后端通过全部 `test_cases` 正向/错误用例，以及项目级 import/module 测试。
 - str、slice、array、struct、enum、match、nullable pointer、closure/function value、defer/throw/try/catch、动态分配保活、runtime helper 链接路径均有 LLVM 覆盖。
-- `python nc.py compile <target>`、`python nc.py build <target>` 默认走 LLVM；仍可用 `--backend c` 运行 C 后端回归。
+- `python nc.py compile <target>`、`python nc.py build <target>` 走 LLVM；不再提供 C 后端回归入口。
 - LLVM 默认后端已接入共享 `ncrt` 显式 GC；当前 GC 不后台运行，也不在分配时自动触发，只有显式 `gc_collect()` 会回收不可达对象。
 - 若迁移中确认其他能力暂时放弃或延期，必须在 worklog/design 中记录放弃点、原因和替代边界。
 
@@ -98,9 +98,9 @@ fun _helper(x: i32): i32 { ... }     # 私有 —— 仅模块内可见
 
 关键字：**`fun`**（非 `fn`）。
 
-编译到 C 时：
-- 公开 → 声明写入 `.h`，实现写入 `.c`
-- 私有（`_` 前缀）→ 只在 `.c` 中 `static`，不写入 `.h`
+后端符号生成时：
+- 公开 → 可被导入模块通过命名空间限定访问
+- 私有（`_` 前缀）→ 仅模块内可见，跨模块访问报错
 
 ---
 
@@ -384,7 +384,7 @@ extern struct stat { st_size: u64; st_mode: u32 }
 extern fun stat(path: *u8, buf: *stat): i32
 ```
 
-因编译到 C，FFI 天然成立。
+FFI 暂未重新定义；C 后端删除后，后续需要基于 LLVM extern 声明和 `ncrt` ABI 重新落地。
 
 ---
 

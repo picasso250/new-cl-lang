@@ -34,36 +34,6 @@ def test_multifile_inferred_return_run():
     assert result.stdout.strip() == "11"
 
 
-def test_llvm_multifile_project_runs():
-    cases = [
-        ("project_095_multifile", "5"),
-        ("project_096_multifile_struct", "7"),
-        ("project_120_multifile_infer_return", "11"),
-    ]
-    for case, expected in cases:
-        result = run_nc("run", "--backend", "llvm", os.path.join("test_cases", case))
-        assert result.returncode == 0, result.stderr
-        assert result.stdout.strip() == expected
-
-
-def test_build_outputs_generated_c_and_exe():
-    with tempfile.TemporaryDirectory() as tmp:
-        project = os.path.join(ROOT, "test_cases", "project_095_multifile")
-        build = run_nc("build", "--backend", "c", project, cwd=tmp)
-        assert build.returncode == 0, build.stderr
-        c_path = os.path.join(tmp, "build", "main.c")
-        h_path = os.path.join(tmp, "build", "ncrt.h")
-        ncrt_obj_path = os.path.join(tmp, "build", "ncrt.obj")
-        exe_path = os.path.join(tmp, "build", "main.exe")
-        assert os.path.exists(c_path)
-        assert os.path.exists(h_path)
-        assert os.path.exists(ncrt_obj_path)
-        assert os.path.exists(exe_path)
-        result = subprocess.run([exe_path], capture_output=True, text=True)
-        assert result.stdout.strip() == "5"
-        assert result.returncode == 0
-
-
 def test_default_build_outputs_llvm_ir_obj_and_exe():
     with tempfile.TemporaryDirectory() as tmp:
         project = os.path.join(ROOT, "test_cases", "project_095_multifile")
@@ -198,7 +168,7 @@ def test_llvm_import_projects_run():
         write_file(os.path.join(main, "main.nc"), "import io\nimport math\nfun main() { io.println(math.add_twice(2, 3)) }\n")
         write_file(os.path.join(math, "a.nc"), "fun add_twice(a: i32, b: i32): i32 { return add(a, b) }\n")
         write_file(os.path.join(math, "b.nc"), "fun add(a: i32, b: i32): i32 { return a + b }\n")
-        result = run_nc("run", "--backend", "llvm", main)
+        result = run_nc("run", main)
         assert result.returncode == 0, result.stderr
         assert result.stdout.strip() == "5"
 
@@ -220,7 +190,7 @@ fun main() {
 """)
         write_file(os.path.join(model, "model.nc"), "struct User { age: i32 }\n")
         write_file(os.path.join(color, "color.nc"), "enum Color { Red, Blue }\nfun pick(): Color { return Color::Red }\n")
-        result = run_nc("run", "--backend", "llvm", main)
+        result = run_nc("run", main)
         assert result.returncode == 0, result.stderr
         assert result.stdout.strip() == "7"
 
@@ -234,7 +204,7 @@ fun main() {
         write_file(os.path.join(main, "main.nc"), "import io\nimport a\nimport b\nfun value(): i32 { return 1 }\nfun main() { io.println(value() + a.value() + b.value()) }\n")
         write_file(os.path.join(a, "a.nc"), "fun value(): i32 { return 2 }\n")
         write_file(os.path.join(b, "b.nc"), "fun value(): i32 { return 3 }\n")
-        result = run_nc("run", "--backend", "llvm", main)
+        result = run_nc("run", main)
         assert result.returncode == 0, result.stderr
         assert result.stdout.strip() == "6"
 
@@ -255,9 +225,16 @@ fun main() {
         write_file(os.path.join(box, "box.nc"), """fun id[T](x: T): T { x }
 struct Box[T] { value: T }
 """)
-        result = run_nc("run", "--backend", "llvm", main)
+        result = run_nc("run", main)
         assert result.returncode == 0, result.stderr
         assert result.stdout.strip() == "7\nok"
+
+
+def test_backend_option_is_removed():
+    result = run_nc("build", "--backend", "c", os.path.join("test_cases", "case_170_generics_identity.nc"))
+    assert result.returncode != 0
+    assert "C backend 已删除" in result.stderr
+    assert "LLVM 是唯一后端" in result.stderr
 
 
 def test_import_private_symbol_error():

@@ -4,44 +4,34 @@ NC 编译器 CLI。
   python nc.py run <file.nc>              # 编译 + 运行
   python nc.py run <dir>                  # 编译并运行目录内所有 .nc
   python nc.py run -c "<code>"            # 直接运行代码
-  python nc.py compile [--backend c|llvm] <file.nc>
-  python nc.py compile [--backend c|llvm] <dir>
-  python nc.py compile [--backend c|llvm] -c "<code>"
-  python nc.py build [--backend c|llvm] <file.nc|dir>
+  python nc.py compile <file.nc>
+  python nc.py compile <dir>
+  python nc.py compile -c "<code>"
+  python nc.py build <file.nc|dir>
 """
 import sys
 import os
 
 from compiler import (
-    build_c_code, build_llvm_ir, compile_nc_sources_to_c,
-    compile_nc_sources_to_llvm_ir, run_c_code, run_llvm_ir,
+    build_llvm_ir, compile_nc_sources_to_llvm_ir, run_llvm_ir,
 )
 
 
-def _parse_backend(args: list[str]) -> tuple[str, list[str]]:
-    """Parse --backend c|llvm. LLVM is the default backend."""
-    backend = "llvm"
+def _reject_backend(args: list[str]) -> list[str]:
+    """Reject the removed backend selector."""
     rest = []
     i = 0
     while i < len(args):
         arg = args[i]
         if arg == "--backend":
-            if i + 1 >= len(args):
-                print("用法: --backend 后需跟 c 或 llvm")
-                sys.exit(1)
-            backend = args[i + 1]
-            i += 2
-            continue
+            print("C backend 已删除；LLVM 是唯一后端，不能再使用 --backend。", file=sys.stderr)
+            sys.exit(1)
         if arg.startswith("--backend="):
-            backend = arg.split("=", 1)[1]
-            i += 1
-            continue
+            print("C backend 已删除；LLVM 是唯一后端，不能再使用 --backend。", file=sys.stderr)
+            sys.exit(1)
         rest.append(arg)
         i += 1
-    if backend not in ("c", "llvm"):
-        print(f"未知 backend: {backend}")
-        sys.exit(1)
-    return backend, rest
+    return rest
 
 
 def _read_sources(args: list[str]) -> list[tuple[str, str]]:
@@ -73,14 +63,10 @@ def _read_sources(args: list[str]) -> list[tuple[str, str]]:
 
 def cmd_run(args: list[str]):
     """编译并运行。"""
-    backend, args = _parse_backend(args)
+    args = _reject_backend(args)
     sources = _read_sources(args)
-    if backend == "llvm":
-        llvm_ir = compile_nc_sources_to_llvm_ir(sources)
-        stdout, stderr, rc = run_llvm_ir(llvm_ir)
-    else:
-        c_code = compile_nc_sources_to_c(sources)
-        stdout, stderr, rc = run_c_code(c_code)
+    llvm_ir = compile_nc_sources_to_llvm_ir(sources)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir)
     if stdout:
         sys.stdout.write(stdout)
     if stderr:
@@ -90,29 +76,20 @@ def cmd_run(args: list[str]):
 
 def cmd_compile(args: list[str]):
     """仅输出后端代码。"""
-    backend, args = _parse_backend(args)
+    args = _reject_backend(args)
     sources = _read_sources(args)
-    if backend == "llvm":
-        print(compile_nc_sources_to_llvm_ir(sources))
-    else:
-        print(compile_nc_sources_to_c(sources))
+    print(compile_nc_sources_to_llvm_ir(sources))
 
 
 def cmd_build(args: list[str]):
     """生成 build/main.* 和 build/main.exe。"""
-    backend, args = _parse_backend(args)
+    args = _reject_backend(args)
     sources = _read_sources(args)
-    if backend == "llvm":
-        llvm_ir = compile_nc_sources_to_llvm_ir(sources)
-        ll_path, obj_path, exe_path = build_llvm_ir(llvm_ir, "build", "main")
-        print(ll_path)
-        print(obj_path)
-        print(exe_path)
-    else:
-        c_code = compile_nc_sources_to_c(sources)
-        c_path, exe_path = build_c_code(c_code, "build", "main")
-        print(c_path)
-        print(exe_path)
+    llvm_ir = compile_nc_sources_to_llvm_ir(sources)
+    ll_path, obj_path, exe_path = build_llvm_ir(llvm_ir, "build", "main")
+    print(ll_path)
+    print(obj_path)
+    print(exe_path)
 
 
 def main():
