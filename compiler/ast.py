@@ -120,6 +120,16 @@ class StructDecl(Node):
         return f"Struct({self.name} {{ {fs} }})"
 
 
+class TypeAlias(Node):
+    """type Name = Type"""
+    def __init__(self, name: str, target_type: str):
+        self.name = name
+        self.target_type = target_type
+
+    def __repr__(self):
+        return f"TypeAlias({self.name} = {self.target_type})"
+
+
 class EnumDecl(Node):
     """enum Name { A, B, C } —— 纯标签，无变体数据。"""
     def __init__(self, name: str, variants: list[str]):

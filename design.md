@@ -81,6 +81,7 @@ LLVM 默认后端达标门槛：
 
 - LLVM 后端通过全部 `test_cases` 正向/错误用例，以及项目级 import/module 测试。
 - str、slice、array、struct、enum、match、nullable pointer、closure/function value、defer/throw/try/catch、动态分配保活、runtime helper 链接路径均有 LLVM 覆盖。
+- type alias `type Name = Type` 在前端 `_expand_type_aliases_in_module` 中展开为底层类型字符串，对后续所有 pass（泛型实例化、typecheck、LLVM codegen）透明。
 - `python nc.py compile <target>`、`python nc.py build <target>` 走 LLVM；不再提供 C 后端回归入口。
 - LLVM 默认后端已接入共享 `ncrt` 显式 GC；当前 GC 不后台运行，也不在分配时自动触发，只有显式 `gc_collect()` 会回收不可达对象。
 - 若迁移中确认其他能力暂时放弃或延期，必须在 worklog/design 中记录放弃点、原因和替代边界。

@@ -10,10 +10,134 @@ from compiler.llvm_codegen import build_llvm_ir, generate_llvm_ir, run_llvm_ir
 from compiler.source import Module, SourceFile, annotate_source_file, module_name_from_sources
 from compiler.ast import (
     Program, ImportDecl, FunctionDeclaration, StructDecl, EnumDecl, FunctionCall,
-    Identifier, StructLiteral, EnumRef, MethodCall
+    Identifier, StructLiteral, EnumRef, MethodCall, TypeAlias, FunctionExpr, VariableDeclaration,
+    ArrayLiteral, SliceLiteral
 )
 
 BUILTIN_MODULES = {"io"}
+
+
+def _split_top_level_comma(s: str) -> list[str]:
+    """按顶层逗号分割，忽略括号内的逗号。"""
+    parts = []
+    start = 0
+    depth = 0
+    for i, ch in enumerate(s):
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            parts.append(s[start:i])
+            start = i + 1
+    parts.append(s[start:])
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _expand_type_str(t: str, aliases: dict[str, str], stack: list[str]) -> str:
+    """递归展开类型字符串中的别名。"""
+    if not isinstance(t, str):
+        return t
+    # 指针 / nullable 指针
+    for prefix in ("?*", "*", "[]"):
+        if t.startswith(prefix):
+            return prefix + _expand_type_str(t[len(prefix):], aliases, stack)
+    # 定长数组 [N]T
+    if t.startswith("[") and "]" in t:
+        head, tail = t.split("]", 1)
+        return head + "]" + _expand_type_str(tail, aliases, stack)
+    # 函数类型 fn(args)->ret
+    if t.startswith("fn("):
+        close = t.find(")->")
+        if close >= 0:
+            args_str = t[3:close]
+            args = _split_top_level_comma(args_str) if args_str else []
+            ret = t[close + 3:]
+            return f"fn({','.join(_expand_type_str(a, aliases, stack) for a in args)})->{_expand_type_str(ret, aliases, stack)}"
+    # 泛型类型应用 Foo[T, U]
+    if "[" in t and t.endswith("]"):
+        lb = t.find("[")
+        base = t[:lb]
+        args_s = t[lb + 1:-1]
+        args = _split_top_level_comma(args_s)
+        expanded_args = [_expand_type_str(a.strip(), aliases, stack) for a in args]
+        return f"{_expand_type_str(base, aliases, stack)}[{','.join(expanded_args)}]"
+    # 简单别名名
+    if t in aliases:
+        if t in stack:
+            raise RuntimeError(f"type alias cycle: {' -> '.join(stack + [t])}")
+        stack.append(t)
+        result = _expand_type_str(aliases[t], aliases, stack)
+        stack.pop()
+        return result
+    return t
+
+
+def _expand_type_aliases_in_module(module: Module):
+    """收集 TypeAlias 定义并从 AST 中展开。"""
+    aliases: dict[str, str] = {}
+
+    # 第一遍：收集别名定义并验证
+    for source_file in module.files:
+        remaining = []
+        for stmt in source_file.ast.statements:
+            if isinstance(stmt, TypeAlias):
+                if stmt.name in aliases:
+                    raise RuntimeError(f"duplicate type alias '{stmt.name}'")
+                aliases[stmt.name] = stmt.target_type
+            else:
+                remaining.append(stmt)
+        source_file.ast.statements = remaining
+
+    if not aliases:
+        return
+
+    # 验证别名无循环（即使未使用也检测）
+    for name in list(aliases.keys()):
+        _expand_type_str(name, aliases, [])
+
+    # 第二遍：展开 AST 中所有类型字符串
+    def expand_type(t):
+        return _expand_type_str(t, aliases, [])
+
+    def walk(node):
+        if not hasattr(node, "__dict__"):
+            return
+        if isinstance(node, FunctionDeclaration):
+            node.params = [(n, expand_type(t)) for n, t in node.params]
+            node.return_type = expand_type(node.return_type)
+            node.receiver_type = expand_type(node.receiver_type)
+        elif isinstance(node, StructDecl):
+            node.fields = [(n, expand_type(t)) for n, t in node.fields]
+        elif isinstance(node, FunctionExpr):
+            node.params = [(n, expand_type(t)) for n, t in node.params]
+            node.return_type = expand_type(node.return_type)
+        elif isinstance(node, StructLiteral):
+            node.name = expand_type(node.name)
+        elif isinstance(node, FunctionCall):
+            node.type_args = [expand_type(a) for a in node.type_args]
+        for key in ("annotation", "elem_type"):
+            if hasattr(node, key):
+                setattr(node, key, expand_type(getattr(node, key)))
+        for value in list(node.__dict__.values()):
+            if isinstance(value, SourceFile):
+                continue
+            if isinstance(value, list):
+                for item in value:
+                    if isinstance(item, tuple):
+                        for part in item:
+                            walk(part)
+                    else:
+                        walk(item)
+            elif isinstance(value, tuple):
+                for item in value:
+                    walk(item)
+            else:
+                walk(value)
+
+    for source_file in module.files:
+        for stmt in source_file.ast.statements:
+            walk(stmt)
 
 
 def parse_module_sources(sources: "list[tuple[str, str]]") -> Module:
@@ -29,6 +153,7 @@ def parse_module_sources(sources: "list[tuple[str, str]]") -> Module:
         tokens = list(lex(source_file.source))
         source_file.ast = parse(tokens)
         annotate_source_file(source_file.ast, source_file)
+    _expand_type_aliases_in_module(module)
     return module
 
 

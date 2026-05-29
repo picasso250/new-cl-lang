@@ -15,6 +15,7 @@ class TokenKind(Enum):
     LET = auto()
     IF = auto()
     ELSE = auto()
+    TYPE = auto()
     FUN = auto()
     RETURN = auto()
     STRUCT = auto()
@@ -108,6 +109,7 @@ KEYWORDS = {
     "defer": TokenKind.DEFER,
     "nil": TokenKind.NIL,
     "import": TokenKind.IMPORT,
+    "type": TokenKind.TYPE,
     "true": TokenKind.BOOL,
     "false": TokenKind.BOOL,
 }

@@ -450,3 +450,21 @@
 - 已更新 tests/test_basic.py 改用 LLVM IR 跑全部 case，项目/builtin 测试移除 C 输出断言并新增 --backend 删除断言；design.md 已更新为 LLVM-only 当前边界。
 - 验证通过：python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py -q；python -m pytest tests/test_llvm_backend.py tests/test_llvm_cases.py -q；python nc.py build test_cases\case_170_generics_identity.nc；python nc.py build --backend c test_cases\case_170_generics_identity.nc 按预期失败。
 
+## 2026-05-29
+
+- 预备实现类型别名 v1：支持 `type Name = Type` 语法，在 parse_module_sources 阶段展开别名（替换为底层类型字符串），对后续所有 pass 透明。
+- 仅限同模块内使用，不跨模块。
+
+## 2026-05-29
+
+- 已实现类型别名 v1：
+  - lexer 新增 `type` 关键字
+  - ast 新增 TypeAlias 节点
+  - parser 新增 `type Name = Type` 语法和 `_parse_type_alias`
+  - `__init__.py` 新增 `_expand_type_aliases_in_module`，在 parse_module_sources 中收集别名并展开
+  - 别名展开支持：简单名、指针/切片/数组/函数类型/泛型应用中的递归替换
+  - 循环别名检测（展开前验证所有别名无循环）
+  - 重复别名检测
+  - 新增 case_181~186 覆盖基本/函数/struct/切片/循环错误/重复错误
+- 验证通过：python tests/test_basic.py（184/184）；python -m pytest tests/test_llvm_backend.py tests/test_builtin_boundary.py tests/test_projects.py tests/test_llvm_cases.py -q（57/57）。
+

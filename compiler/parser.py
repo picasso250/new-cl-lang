@@ -45,6 +45,9 @@ class Parser:
             if self.peek().kind == TokenKind.IMPORT:
                 stmts.append(self._parse_import())
                 continue
+            if self.peek().kind == TokenKind.TYPE:
+                stmts.append(self._parse_type_alias())
+                continue
             stmts.append(self.parse_statement())
         return Program(stmts)
 
@@ -78,6 +81,8 @@ class Parser:
             return self._parse_throw()
         if t.kind == TokenKind.DEFER:
             return self._parse_defer()
+        if t.kind == TokenKind.TYPE:
+            raise ParseError("type alias is only allowed at top level")
         if t.kind == TokenKind.BREAK:
             start = self.advance()
             self.match(TokenKind.SEMI)
@@ -114,6 +119,15 @@ class Parser:
         self.expect(TokenKind.EQ)
         init = self.parse_expression()
         stmt = self.span(VariableDeclaration(name, init, annotation), start)
+        self.match(TokenKind.SEMI)
+        return stmt
+
+    def _parse_type_alias(self):
+        start = self.advance()
+        name = self.expect(TokenKind.IDENT).value
+        self.expect(TokenKind.EQ)
+        target = self._parse_type()
+        stmt = self.span(TypeAlias(name, target), start)
         self.match(TokenKind.SEMI)
         return stmt
 
