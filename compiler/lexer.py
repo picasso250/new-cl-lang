@@ -123,6 +123,133 @@ INTEGER_SUFFIXES = {"i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"}
 FLOAT_SUFFIXES = {"f32", "f64"}
 
 
+def _decode_escape(source: str, i: int, quote: str) -> tuple[str, int]:
+    if i + 1 >= len(source):
+        raise SyntaxError(f"Unterminated escape sequence at position {i}")
+    ec = source[i + 1]
+    if ec == 'n': return '\n', i + 2
+    if ec == 't': return '\t', i + 2
+    if ec == 'r': return '\r', i + 2
+    if ec == '\\': return '\\', i + 2
+    if ec == quote: return quote, i + 2
+    if ec == '"': return '"', i + 2
+    if ec == "'": return "'", i + 2
+    if ec == 'u' and i + 2 < len(source) and source[i + 2] == "{":
+        j = i + 3
+        while j < len(source) and source[j] != "}":
+            j += 1
+        if j >= len(source):
+            raise SyntaxError(f"Unterminated unicode escape at position {i}")
+        digits = source[i + 3:j]
+        if not digits:
+            raise SyntaxError(f"Invalid unicode escape at position {i}")
+        try:
+            cp = int(digits, 16)
+        except ValueError:
+            raise SyntaxError(f"Invalid unicode escape at position {i}")
+        if cp > 0x10FFFF or 0xD800 <= cp <= 0xDFFF:
+            raise SyntaxError(f"Invalid unicode code point U+{cp:X} at position {i}")
+        return chr(cp), j + 1
+    return ec, i + 2
+
+
+def _scan_interpolation_expr(source: str, i: int) -> tuple[str, int]:
+    start = i
+    depth = 1
+    quote = None
+    while i < len(source):
+        ch = source[i]
+        if quote:
+            if ch == '\\':
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            i += 1
+            continue
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            if ch == "}":
+                depth -= 1
+                if depth == 0:
+                    expr = source[start:i].strip()
+                    if not expr:
+                        raise SyntaxError(f"Empty string interpolation at position {start - 1}")
+                    return expr, i + 1
+            else:
+                depth -= 1
+                if depth < 1:
+                    raise SyntaxError(f"Unbalanced string interpolation at position {start - 1}")
+        i += 1
+    raise SyntaxError(f"Unterminated string interpolation at position {start - 1}")
+
+
+def _scan_string(source: str, start: int) -> tuple[str | tuple, int]:
+    i = start + 1
+    chars = []
+    parts = []
+    interpolated = False
+    while i < len(source):
+        ch = source[i]
+        if ch == '"':
+            i += 1
+            literal = ''.join(chars)
+            if interpolated:
+                if literal:
+                    parts.append(("literal", literal))
+                return ("interpolated", parts), i
+            return literal, i
+        if ch == '\\':
+            value, i = _decode_escape(source, i, '"')
+            chars.append(value)
+            continue
+        if ch == "{":
+            if i + 1 < len(source) and source[i + 1] == "{":
+                chars.append("{")
+                i += 2
+                continue
+            interpolated = True
+            literal = ''.join(chars)
+            if literal:
+                parts.append(("literal", literal))
+            chars = []
+            expr, i = _scan_interpolation_expr(source, i + 1)
+            parts.append(("expr", expr))
+            continue
+        if ch == "}":
+            if i + 1 < len(source) and source[i + 1] == "}":
+                chars.append("}")
+                i += 2
+                continue
+            raise SyntaxError(f"Unescaped '}}' in string literal at position {i}")
+        chars.append(ch)
+        i += 1
+    raise SyntaxError(f"Unterminated string literal at position {start}")
+
+
+def _scan_char(source: str, start: int) -> tuple[int, int]:
+    i = start + 1
+    if i >= len(source):
+        raise SyntaxError(f"Unterminated char literal at {start}")
+    if source[i] == "'":
+        raise SyntaxError(f"Empty char literal at position {start}")
+    if source[i] == '\\':
+        value, i = _decode_escape(source, i, "'")
+    else:
+        value = source[i]
+        i += 1
+    if i >= len(source) or source[i] != "'":
+        raise SyntaxError(f"Char literal must contain exactly one Unicode code point at position {start}")
+    if len(value) != 1:
+        raise SyntaxError(f"Char literal must contain exactly one Unicode code point at position {start}")
+    return ord(value), i + 1
+
+
 def lex(source: str):
     """生成器，逐 token 产出。"""
     i = 0
@@ -171,47 +298,14 @@ def lex(source: str):
 
         # 字符串
         if ch == '"':
-            i += 1
-            chars = []
-            while i < n and source[i] != '"':
-                if source[i] == '\\' and i + 1 < n:
-                    ec = source[i + 1]
-                    if ec == 'n': chars.append('\n')
-                    elif ec == 't': chars.append('\t')
-                    elif ec == 'r': chars.append('\r')
-                    elif ec == '\\': chars.append('\\')
-                    elif ec == '"': chars.append('"')
-                    else: chars.append(source[i]); chars.append(ec)
-                    i += 2
-                else:
-                    chars.append(source[i])
-                    i += 1
-            value = ''.join(chars)
-            if i < n:
-                i += 1
-            yield Token(TokenKind.STRING, value, i - len(value) - 2)
+            value, i = _scan_string(source, i)
+            yield Token(TokenKind.STRING, value, i)
             continue
 
         # 字符字面量
         if ch == "'":
-            i += 1
-            if i >= n: raise SyntaxError(f"Unterminated char literal at {i}")
-            if source[i] == '\\' and i + 1 < n:
-                ec = source[i + 1]
-                if ec == 'n': val = 10
-                elif ec == 't': val = 9
-                elif ec == 'r': val = 13
-                elif ec == '\\': val = 92
-                elif ec == "'" : val = 39
-                elif ec == '"': val = 34
-                else: val = ord(ec)
-                i += 2
-            else:
-                val = ord(source[i])
-                i += 1
-            if i >= n or source[i] != "'": raise SyntaxError(f"Unterminated char literal at {i}")
-            i += 1
-            yield Token(TokenKind.CHAR, val, i - 3)
+            val, i = _scan_char(source, i)
+            yield Token(TokenKind.CHAR, val, i)
             continue
         if ch.isalpha() or ch == "_":
             start = i

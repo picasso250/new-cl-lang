@@ -4,6 +4,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
 
 struct nc_entry {
     str key;
@@ -31,6 +35,10 @@ static void __nc_abort_oom(void) {
 }
 
 void __nc_gc_init(void) {
+#ifdef _WIN32
+    _setmode(_fileno(stdout), _O_BINARY);
+    _setmode(_fileno(stderr), _O_BINARY);
+#endif
     __nc_gc_block* b = __nc_gc_blocks;
     while (b) {
         __nc_gc_block* next = b->next;
@@ -234,6 +242,53 @@ str __nc_i32_to_str(int n) {
 
 void __nc_i32_to_str_out(str* out, int n) {
     *out = __nc_i32_to_str(n);
+}
+
+void __nc_i64_to_str_out(str* out, int64_t n) {
+    uint8_t* buf = (uint8_t*)__nc_gc_alloc(32);
+    int len = snprintf((char*)buf, 32, "%lld", (long long)n);
+    if (len < 0) len = 0;
+    *out = (str){buf, (uint64_t)len};
+}
+
+void __nc_u64_to_str_out(str* out, uint64_t n) {
+    uint8_t* buf = (uint8_t*)__nc_gc_alloc(32);
+    int len = snprintf((char*)buf, 32, "%llu", (unsigned long long)n);
+    if (len < 0) len = 0;
+    *out = (str){buf, (uint64_t)len};
+}
+
+void __nc_f64_to_str_out(str* out, double n) {
+    uint8_t* buf = (uint8_t*)__nc_gc_alloc(64);
+    int len = snprintf((char*)buf, 64, "%g", n);
+    if (len < 0) len = 0;
+    *out = (str){buf, (uint64_t)len};
+}
+
+void __nc_rune_to_str_out(str* out, uint32_t r) {
+    uint8_t* buf = (uint8_t*)__nc_gc_alloc(5);
+    uint64_t len = 0;
+    if (r <= 0x7F) {
+        buf[len++] = (uint8_t)r;
+    } else if (r <= 0x7FF) {
+        buf[len++] = (uint8_t)(0xC0 | (r >> 6));
+        buf[len++] = (uint8_t)(0x80 | (r & 0x3F));
+    } else if (r <= 0xFFFF && !(r >= 0xD800 && r <= 0xDFFF)) {
+        buf[len++] = (uint8_t)(0xE0 | (r >> 12));
+        buf[len++] = (uint8_t)(0x80 | ((r >> 6) & 0x3F));
+        buf[len++] = (uint8_t)(0x80 | (r & 0x3F));
+    } else if (r <= 0x10FFFF) {
+        buf[len++] = (uint8_t)(0xF0 | (r >> 18));
+        buf[len++] = (uint8_t)(0x80 | ((r >> 12) & 0x3F));
+        buf[len++] = (uint8_t)(0x80 | ((r >> 6) & 0x3F));
+        buf[len++] = (uint8_t)(0x80 | (r & 0x3F));
+    } else {
+        buf[len++] = 0xEF;
+        buf[len++] = 0xBF;
+        buf[len++] = 0xBD;
+    }
+    buf[len] = 0;
+    *out = (str){buf, len};
 }
 
 int __nc_str_to_i32(str s) {

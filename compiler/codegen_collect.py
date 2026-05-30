@@ -8,6 +8,7 @@ from compiler.ast import (
     IfExpr, ImportDecl, IndexAccess, MatchExpr, MethodCall, Return, SliceExpr,
     SliceLiteral, StructDecl, IfaceDecl, StructLiteral, Throw, TryCatch, UnaryOp,
     VariableDeclaration, ExpressionStatement, ForCondition,
+    InterpolatedString,
 )
 from compiler.type_ref import parse_fn_type
 
@@ -86,6 +87,9 @@ def collect_codegen_inputs(program) -> CodegenInputs:
         elif isinstance(node, FunctionCall):
             for arg in node.args:
                 collect_closure_expr(arg)
+        elif isinstance(node, InterpolatedString):
+            for part in node.parts:
+                collect_closure_expr(part)
         elif isinstance(node, IfExpr):
             collect_closure_expr(node.condition)
             for stmt in node.then_block.statements:
@@ -186,6 +190,9 @@ def collect_codegen_inputs(program) -> CodegenInputs:
         elif isinstance(node, FunctionCall):
             for arg in node.args:
                 collect_expr_types(arg)
+        elif isinstance(node, InterpolatedString):
+            for part in node.parts:
+                collect_expr_types(part)
         elif isinstance(node, IfExpr):
             collect_expr_types(node.condition)
             for stmt in node.then_block.statements:

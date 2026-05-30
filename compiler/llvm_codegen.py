@@ -15,7 +15,7 @@ from compiler.ast import (
     Defer, ExpressionStatement, EnumDecl, EnumRef, FieldAccess, FloatLiteral, FunctionCall,
     FunctionExpr,
     ForIn, FunctionDeclaration, Identifier, IfExpr, IfaceDecl, IndexAccess, IntegerLiteral,
-    MatchExpr, MethodCall, NilLiteral, Return, SliceExpr, SliceLiteral, StringLiteral, StructDecl,
+    MatchExpr, MethodCall, NilLiteral, Return, SliceExpr, SliceLiteral, StringLiteral, InterpolatedString, RuneLiteral, StructDecl,
     StructLiteral, Throw, TryCatch, UnaryOp, VariableDeclaration, ForCondition,
 )
 from compiler.codegen_collect import collect_codegen_inputs
@@ -34,9 +34,10 @@ INT_TYPES = {
     "u32": ir.IntType(32),
     "u64": ir.IntType(64),
     "bool": ir.IntType(1),
+    "rune": ir.IntType(32),
 }
 SIGNED_INT_TYPES = {"i8", "i16", "i32", "i64"}
-UNSIGNED_INT_TYPES = {"u8", "u16", "u32", "u64", "bool"}
+UNSIGNED_INT_TYPES = {"u8", "u16", "u32", "u64", "bool", "rune"}
 FLOAT_TYPES = {"f32": ir.FloatType(), "f64": ir.DoubleType()}
 DEFAULT_TRIPLE = "x86_64-w64-windows-gnu"
 I8PTR = ir.IntType(8).as_pointer()
@@ -121,6 +122,10 @@ class LLVMCodegen:
         self.str_cat_fn = None
         self.str_slice_fn = None
         self.i32_to_str_fn = None
+        self.i64_to_str_fn = None
+        self.u64_to_str_fn = None
+        self.f64_to_str_fn = None
+        self.rune_to_str_fn = None
         self.str_to_i32_fn = None
         self.read_file_fn = None
         self.write_file_fn = None
@@ -774,6 +779,8 @@ class LLVMCodegen:
     def emit_expr(self, node):
         if isinstance(node, IntegerLiteral):
             return ir.Constant(llvm_type(node.type), node.value)
+        if isinstance(node, RuneLiteral):
+            return ir.Constant(ir.IntType(32), node.value)
         if isinstance(node, FloatLiteral):
             return ir.Constant(llvm_type(node.type), float(node.value))
         if isinstance(node, BoolLiteral):
@@ -786,6 +793,8 @@ class LLVMCodegen:
                 ptr,
                 ir.Constant(ir.IntType(64), len(node.value.encode("utf-8"))),
             ])
+        if isinstance(node, InterpolatedString):
+            return self.emit_interpolated_string(node)
         if isinstance(node, EnumRef):
             return ir.Constant(ir.IntType(32), ENUM_VARIANTS[node.enum_name][node.variant])
         if isinstance(node, Identifier):
@@ -865,6 +874,18 @@ class LLVMCodegen:
             self.builder.store(value, ptr)
             return ptr
         return value
+
+    def emit_interpolated_string(self, node: InterpolatedString):
+        if not node.parts:
+            return self.emit_expr(StringLiteral(""))
+        current = None
+        for part in node.parts:
+            if getattr(part, "type", None) == "str":
+                value = self.emit_expr(part)
+            else:
+                value = self.emit_to_str(part)
+            current = value if current is None else self.emit_str_cat(current, value)
+        return current
 
     def malloc_struct(self, struct_name: str):
         self.ensure_gc_runtime()
@@ -1175,11 +1196,7 @@ class LLVMCodegen:
         if node.name == "str":
             if len(node.args) != 1:
                 raise RuntimeError("str expects one argument")
-            if node.args[0].type == "i32":
-                return self.emit_i32_to_str(node.args[0])
-            if node.args[0].type == "str":
-                return self.emit_expr(node.args[0])
-            raise NotImplementedError(f"LLVM backend v1 cannot convert {node.args[0].type} to str")
+            return self.emit_to_str(node.args[0])
         if node.name == "append":
             if len(node.args) != 2:
                 raise RuntimeError("append expects two arguments")
@@ -1204,11 +1221,17 @@ class LLVMCodegen:
             if len(node.args) != 0:
                 raise RuntimeError("runtime.gc_live expects no arguments")
             return self.emit_gc_live()
+        if node.name == "rune":
+            if len(node.args) != 1:
+                raise RuntimeError("rune expects one argument")
+            return self.cast_to(self.emit_expr(node.args[0]), "rune")
         if node.name in INT_TYPES or node.name in FLOAT_TYPES:
             if len(node.args) != 1:
                 raise RuntimeError(f"{node.name} expects one argument")
             if node.name == "i32" and node.args[0].type == "str":
                 return self.emit_str_to_i32(node.args[0])
+            if node.name in ("i32", "u32") and node.args[0].type == "rune":
+                return self.cast_to(self.emit_expr(node.args[0]), node.name)
             return self.cast_numeric(self.emit_expr(node.args[0]), node.args[0].type, node.name)
         if node.name not in self.fn_decls:
             raise NotImplementedError(f"LLVM backend v1 cannot call {node.name}")
@@ -1303,6 +1326,13 @@ class LLVMCodegen:
             length64 = self.builder.extract_value(val, 1)
             length32 = self.builder.trunc(length64, ir.IntType(32))
             return self.builder.call(self.printf, [fmt, length32, ptr])
+        if typ == "rune":
+            s = self.emit_rune_value_to_str(val)
+            fmt = self.global_c_string("%.*s\n", "fmt_rune")
+            ptr = self.builder.extract_value(s, 0)
+            length64 = self.builder.extract_value(s, 1)
+            length32 = self.builder.trunc(length64, ir.IntType(32))
+            return self.builder.call(self.printf, [fmt, length32, ptr])
         if typ == "bool":
             fmt = self.global_c_string("%d\n", "fmt_bool")
             as_i32 = self.builder.zext(self.bool_value(val), ir.IntType(32), name="bool.i32")
@@ -1318,6 +1348,26 @@ class LLVMCodegen:
                 val = self.builder.sext(val, ir.IntType(64)) if typ in SIGNED_INT_TYPES else self.builder.zext(val, ir.IntType(64))
             return self.builder.call(self.printf, [fmt, val])
         raise NotImplementedError(f"LLVM backend v1 cannot print type: {typ}")
+
+    def emit_to_str(self, arg_expr):
+        typ = arg_expr.type
+        if typ == "str":
+            return self.emit_expr(arg_expr)
+        if typ == "rune":
+            return self.emit_rune_value_to_str(self.emit_expr(arg_expr))
+        if typ == "bool":
+            return self.emit_i32_value_to_str(self.builder.zext(self.bool_value(self.emit_expr(arg_expr)), ir.IntType(32), name="bool.str.i32"))
+        if typ in INT_TYPES:
+            value = self.emit_expr(arg_expr)
+            if typ in UNSIGNED_INT_TYPES and typ != "bool":
+                return self.emit_u64_value_to_str(self.cast_to(value, "u64"))
+            return self.emit_i64_value_to_str(self.cast_to(value, "i64"))
+        if typ in FLOAT_TYPES:
+            value = self.emit_expr(arg_expr)
+            if typ == "f32":
+                value = self.builder.fpext(value, ir.DoubleType())
+            return self.emit_f64_value_to_str(value)
+        raise NotImplementedError(f"LLVM backend v1 cannot convert {typ} to str")
 
     def emit_append(self, slice_expr, elem_expr, elem_type: str):
         self.ensure_ncrt_runtime()
@@ -1481,6 +1531,10 @@ class LLVMCodegen:
                 name="__nc_str_slice_copy_out",
             )
             self.i32_to_str_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [str_ptr, ir.IntType(32)]), name="__nc_i32_to_str_out")
+            self.i64_to_str_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [str_ptr, ir.IntType(64)]), name="__nc_i64_to_str_out")
+            self.u64_to_str_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [str_ptr, ir.IntType(64)]), name="__nc_u64_to_str_out")
+            self.f64_to_str_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [str_ptr, ir.DoubleType()]), name="__nc_f64_to_str_out")
+            self.rune_to_str_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [str_ptr, ir.IntType(32)]), name="__nc_rune_to_str_out")
             self.str_to_i32_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [str_ptr]), name="__nc_str_to_i32_ptr")
             self.read_file_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [str_ptr, I8PTR]), name="__nc_read_file_out")
             self.write_file_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [I8PTR, str_ptr]), name="__nc_write_file_ptr")
@@ -1517,11 +1571,38 @@ class LLVMCodegen:
         return self.builder.call(self.gc_alloc, [count], name="malloc.bytes")
 
     def emit_i32_to_str(self, arg_expr):
-        self.ensure_ncrt_runtime()
         value = self.cast_to(self.emit_expr(arg_expr), "i32")
+        return self.emit_i32_value_to_str(value)
+
+    def emit_i32_value_to_str(self, value):
+        self.ensure_ncrt_runtime()
         out = self.alloca_at_entry("__nc_i32_str_out", STR_TYPE)
         self.builder.call(self.i32_to_str_fn, [out, value])
         return self.builder.load(out, name="i32.str")
+
+    def emit_i64_value_to_str(self, value):
+        self.ensure_ncrt_runtime()
+        out = self.alloca_at_entry("__nc_i64_str_out", STR_TYPE)
+        self.builder.call(self.i64_to_str_fn, [out, value])
+        return self.builder.load(out, name="i64.str")
+
+    def emit_u64_value_to_str(self, value):
+        self.ensure_ncrt_runtime()
+        out = self.alloca_at_entry("__nc_u64_str_out", STR_TYPE)
+        self.builder.call(self.u64_to_str_fn, [out, value])
+        return self.builder.load(out, name="u64.str")
+
+    def emit_rune_value_to_str(self, value):
+        self.ensure_ncrt_runtime()
+        out = self.alloca_at_entry("__nc_rune_str_out", STR_TYPE)
+        self.builder.call(self.rune_to_str_fn, [out, self.cast_to(value, "rune")])
+        return self.builder.load(out, name="rune.str")
+
+    def emit_f64_value_to_str(self, value):
+        self.ensure_ncrt_runtime()
+        out = self.alloca_at_entry("__nc_f64_str_out", STR_TYPE)
+        self.builder.call(self.f64_to_str_fn, [out, value])
+        return self.builder.load(out, name="f64.str")
 
     def emit_str_to_i32(self, arg_expr):
         self.ensure_ncrt_runtime()
@@ -1826,5 +1907,5 @@ def build_llvm_ir(llvm_ir: str, out_dir: str, name: str = "main") -> tuple[str, 
 def run_llvm_ir(llvm_ir: str) -> tuple[str, str, int]:
     with tempfile.TemporaryDirectory() as tmpdir:
         _ll, _obj, exe = build_llvm_ir(llvm_ir, tmpdir, "out")
-        result = subprocess.run([exe], capture_output=True, text=True)
+        result = subprocess.run([exe], capture_output=True, text=True, encoding="utf-8")
         return result.stdout, result.stderr, result.returncode

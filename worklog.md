@@ -504,3 +504,10 @@
 - 已清理 import 绕路与类型字符串遗留：parser 基于模块 import 集合直接生成限定 FunctionCall，删除 _rewrite_import_calls；新增 compiler/type_ref.py 作为类型字符串解析/格式化入口，并替换别名展开、模块名限定、泛型替换、函数/slice/array 类型解析；str 不再作为符号表伪 struct 注册；条件循环 AST/LLVM block 命名从 While 收敛为 ForCondition。
 - 验证通过：python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_llvm_cases.py tests/test_type_ref.py -q；python nc.py build test_cases\case_197_iface_basic.nc 并运行 build\main.exe 输出 42。
 
+## 2026-05-30
+
+- 预备实现 rune 与字符串插值 v1：新增独立 rune 字面量/类型/显式转换/输出语义，并将 `"Hello, {expr}"` 在前端表达为插值字符串，类型检查后由 LLVM 后端降为 `str(...)` 与字符串拼接。
+- 已实现 rune 与字符串插值 v1：新增 RuneLiteral/InterpolatedString，字符字面量支持 `\u{...}` 码点转义并拒绝空/多码点/非法码点；`rune` 类型独立于 numeric，仅允许同类型 `==`/`!=`，支持 `str(rune)`、`rune(i32/u32)`、`i32/u32(rune)` 与 `io.println(rune)` UTF-8 输出。
+- 字符串插值支持任意表达式、嵌套括号/字符串/字符扫描、`{{`/`}}` 字面量大括号，并在类型检查阶段限制为可 stringify 类型；LLVM 后端降为 `str(...)` 与 `__nc_str_cat_out` 左结合拼接。`str[index] -> i32` 字节索引语义保持不变。
+- 新增 case_209~215 覆盖 rune 正向、插值正向、rune 类型错误、非法字符字面量、rune 运算错误、空插值和不可 stringify 插值。验证通过：python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_llvm_cases.py tests/test_type_ref.py -q；python nc.py build test_cases\case_210_string_interpolation.nc 并运行 build\main.exe；python nc.py build test_cases\case_209_rune_basic.nc 并确认输出含 UTF-8 bytes e4b8ad。
+

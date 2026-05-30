@@ -721,6 +721,8 @@ class Parser:
 
         if t.kind == TokenKind.STRING:
             start = self.advance()
+            if isinstance(t.value, tuple) and t.value[0] == "interpolated":
+                return self.span(InterpolatedString(self._parse_interpolated_parts(t.value[1])), start)
             return self.span(StringLiteral(t.value), start)
 
         if t.kind == TokenKind.INTEGER:
@@ -746,8 +748,8 @@ class Parser:
             return self._parse_function_expr(start)
 
         if t.kind == TokenKind.CHAR:
-            self.advance()
-            return IntegerLiteral(t.value)
+            start = self.advance()
+            return self.span(RuneLiteral(t.value), start)
 
         if t.kind == TokenKind.NEW:
             self.advance()
@@ -887,6 +889,22 @@ class Parser:
             return expr
 
         raise ParseError(f"Unexpected token: {t}")
+
+    def _parse_interpolated_parts(self, raw_parts):
+        from compiler.lexer import lex
+        parts = []
+        for kind, value in raw_parts:
+            if kind == "literal":
+                parts.append(StringLiteral(value))
+            elif kind == "expr":
+                expr_tokens = list(lex(value))
+                expr_parser = Parser(expr_tokens, self.imported_modules)
+                expr = expr_parser.parse_expression()
+                expr_parser.expect(TokenKind.EOF)
+                parts.append(expr)
+            else:
+                raise ParseError(f"unknown interpolated string part {kind}")
+        return parts
 
 
 def _scan_imports(tokens: list[Token]) -> set[str]:

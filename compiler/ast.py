@@ -374,6 +374,23 @@ class StringLiteral(Node):
         return f'String("{self.value}")'
 
 
+class InterpolatedString(Node):
+    """String with literal/expression parts."""
+    def __init__(self, parts: list):
+        self.parts = parts
+
+    def __repr__(self):
+        return f"InterpolatedString({self.parts})"
+
+
+class RuneLiteral(Node):
+    def __init__(self, value: int):
+        self.value = value
+
+    def __repr__(self):
+        return f"Rune({self.value})"
+
+
 class IntegerLiteral(Node):
     def __init__(self, value: int, suffix_type: str | None = None):
         self.value = value

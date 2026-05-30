@@ -4,7 +4,7 @@
 """
 
 
-from compiler.builtins import NUMERIC_TYPES, infer_builtin_call
+from compiler.builtins import NUMERIC_TYPES, STRINGIFIABLE_TYPES, infer_builtin_call
 from compiler.type_ref import parse_fn_type
 
 
@@ -19,7 +19,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         Assignment, Update, Block, ForCondition, FunctionDeclaration, Return, ImportDecl,
         StructDecl, IfaceDecl, StructLiteral, FieldAccess,
         EnumDecl, EnumRef, ForIn,
-        IfExpr, BlockExpr, MatchExpr, IntegerLiteral, FloatLiteral, StringLiteral, BoolLiteral, NilLiteral, BinaryOp, UnaryOp, FunctionCall, Identifier,
+        IfExpr, BlockExpr, MatchExpr, IntegerLiteral, FloatLiteral, StringLiteral, InterpolatedString, RuneLiteral, BoolLiteral, NilLiteral, BinaryOp, UnaryOp, FunctionCall, Identifier,
         ExternBlock, FunctionExpr,
         ArrayLiteral, SliceLiteral, IndexAccess, SliceExpr, MethodCall, TryCatch, Throw, Defer, Break
     )
@@ -199,6 +199,9 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
     def is_numeric_type(t):
         return t in NUMERIC_TYPES
 
+    def is_rune_type(t):
+        return t == "rune"
+
     def is_iface_type(t):
         return isinstance(t, str) and t in getattr(symtab, "_ifaces", {})
 
@@ -318,6 +321,14 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             node.type = node.suffix_type or "f64"
         elif isinstance(node, StringLiteral):
             node.type = "str"
+        elif isinstance(node, RuneLiteral):
+            node.type = "rune"
+        elif isinstance(node, InterpolatedString):
+            for part in node.parts:
+                walk_expr(part)
+                if part.type not in STRINGIFIABLE_TYPES:
+                    fail(f"string interpolation: cannot convert {part.type} to str", part)
+            node.type = "str"
         elif isinstance(node, BoolLiteral):
             node.type = "bool"
         elif isinstance(node, NilLiteral):
@@ -366,9 +377,13 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                     node.type = "bool"
                     return
                 require_type(node.right.type, node.left.type, "comparison", node)
+                if is_rune_type(node.left.type) and node.op not in ("==", "!="):
+                    fail(f"rune type: operator {node.op} is not allowed", node)
                 node.type = "bool"
                 return
             if node.op in ("<", ">", "<=", ">="):
+                if is_rune_type(node.left.type) or is_rune_type(node.right.type):
+                    fail(f"rune type: operator {node.op} is not allowed", node)
                 if (is_pointer_type(node.left.type) or is_pointer_type(node.right.type)
                         or is_nullable_pointer_type(node.left.type) or is_nullable_pointer_type(node.right.type)):
                     fail(f"pointer type {node.left.type}: operator {node.op} is not allowed", node)
@@ -380,6 +395,8 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             if (is_pointer_type(node.left.type) or is_pointer_type(node.right.type)
                     or is_nullable_pointer_type(node.left.type) or is_nullable_pointer_type(node.right.type)):
                 fail(f"pointer type {node.left.type}: operator {node.op} is not allowed", node)
+            if is_rune_type(node.left.type) or is_rune_type(node.right.type):
+                fail(f"rune type: operator {node.op} is not allowed", node)
             if node.op in ("+", "-", "*", "/"):
                 if not (is_numeric_type(node.left.type) and is_numeric_type(node.right.type)):
                     fail(f"binary operator {node.op}: expected numeric operands, got {node.left.type} and {node.right.type}", node)
@@ -626,6 +643,8 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                     fail(f"cannot assign to narrowed nullable pointer '{stmt.target.name}' inside non-nil block", stmt.target)
                 if isinstance(stmt.target, Identifier) and getattr(stmt.target, "is_capture", False):
                     fail(f"cannot assign to captured variable '{stmt.target.name}'", stmt.target)
+                if is_rune_type(stmt.target.type):
+                    fail(f"{stmt.op}: expected numeric lvalue, got rune", stmt)
                 if not is_numeric_type(stmt.target.type) or is_pointer_type(stmt.target.type) or is_nullable_pointer_type(stmt.target.type):
                     fail(f"{stmt.op}: expected numeric lvalue, got {stmt.target.type}", stmt)
             elif isinstance(stmt, ForCondition):

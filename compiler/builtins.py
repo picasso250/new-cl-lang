@@ -5,6 +5,7 @@ and functions that should eventually move behind std imports.
 """
 
 NUMERIC_TYPES = {"i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64"}
+STRINGIFIABLE_TYPES = NUMERIC_TYPES | {"str", "bool", "rune"}
 
 
 def infer_builtin_call(node, require_arg_count, require_type, fail) -> str | None:
@@ -39,12 +40,21 @@ def infer_builtin_call(node, require_arg_count, require_type, fail) -> str | Non
         return "i32"
     if name == "str":
         require_arg_count(args, 1, "str", node)
+        if args[0].type not in STRINGIFIABLE_TYPES:
+            fail(f"str: cannot convert {args[0].type} to str", node)
         return "str"
+    if name == "rune":
+        require_arg_count(args, 1, "rune", node)
+        if args[0].type not in {"i32", "u32"}:
+            fail(f"rune: expected i32 or u32 value, got {args[0].type}", node)
+        return "rune"
     if name in NUMERIC_TYPES:
         require_arg_count(args, 1, name, node)
         arg_type = args[0].type
         if name == "i32" and arg_type == "str":
             return "i32"
+        if name in {"i32", "u32"} and arg_type == "rune":
+            return name
         if arg_type not in NUMERIC_TYPES:
             fail(f"{name}: expected numeric value, got {arg_type}", node)
         return name

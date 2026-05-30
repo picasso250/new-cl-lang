@@ -60,7 +60,7 @@ import io                # 内置标准模块，不要求存在同级 io/ 目录
 
 - `io.println(value)` 是当前唯一落地的标准输出 API，自动追加换行。
 - `runtime.gc_collect()` 与 `runtime.gc_live()` 是当前唯一公开的运行时调试 API；裸 `gc_collect()` / `gc_live()` 不再是 builtin。
-- `io.println` 支持输出 `str`、`bool`、有符号整数、无符号整数和浮点数。
+- `io.println` 支持输出 `str`、`rune`、`bool`、有符号整数、无符号整数和浮点数；`rune` 按对应 UTF-8 字符输出，不输出数字码点。
 - 裸 `print(...)` 不是语言内建，也不向前兼容。
 - 其他临时内建函数（如 `len`、`append`、数值转换、GC 测试钩子、文件 IO）尚未迁入标准模块。
 
@@ -164,6 +164,9 @@ void                        # 空
 | `3.14` | `f64` | `3.14f32` |
 | `true` / `false` | `bool` | — |
 | `"hello"` | `str` | — |
+| `'A'` | `rune` | — |
+
+字符字面量表示单个 Unicode 码点，类型为 `rune`。支持普通字符与转义：`'\n'`、`'\t'`、`'\r'`、`'\''`、`'\\'`、`'\u{4E2D}'`。空字符字面量、多码点字符字面量、非法或越界 Unicode 码点在编译期报错。
 
 ### 4.5 类型转换
 
@@ -173,7 +176,11 @@ void                        # 空
 let x: i64 = i64(42)
 let y: u8 = u8(255)
 let z: f32 = f32(3.14)
+let r: rune = rune(65)
+let n: i32 = i32(r)
 ```
+
+`rune(i32)` / `rune(u32)` 是整数到码点的显式转换；`i32(rune)` / `u32(rune)` 是码点到整数的显式转换。`str(rune)` 返回该码点的 UTF-8 字符串。`rune` 底层 LLVM 宽度为 `i32`，零值为 `0`，但类型系统不把它当普通 numeric：不参与算术、大小比较、位运算、复合赋值或自增自减，只允许同类型 `==` / `!=`。
 
 ### 4.6 nil 与 nullable pointer
 
@@ -419,7 +426,7 @@ let x = 5   # 行尾注释
 
 | 项 | 决策 |
 |-----|------|
-| 字符串插值 | `"Hello, {name}"` |
+| 字符串插值 | `"Hello, {expr}"` |
 | 数值溢出 | 静默截断（wrapping，如 C） |
 | 空指针 | `*T` 非空；`?*T` 可为 `nil`；nullable deref 由类型系统禁止 |
 | 指针类型 | `*T` / `?*T`，不设 `*const T` |
@@ -428,3 +435,11 @@ let x = 5   # 行尾注释
 | `if` 表达式 | 全部 `if` 都是表达式；无 `else` 时类型为 `void`；有 `else` 时分支类型一致 |
 | 条件循环 | 使用 `for condition { ... }`，无 `while` 关键字 |
 | block 表达式 | `{ statements; tail_expr }`，值来自尾表达式 |
+
+字符串插值 v1：
+
+- 插值段支持任意表达式：`"x={a + 1}"`、`"name={user.name}"`、`"v={f(1)}"`。
+- 编译期降为字符串拼接；非 `str` 插值表达式必须有 `str(...)` 转换规则，目前支持 `str`、`rune`、`bool`、整数和浮点。
+- 字符串里的字面量 `{` / `}` 写作 `{{` / `}}`。
+- 未闭合 `{`、空 `{}`、单个未转义 `}` 报编译错误。
+- `str[index]` 当前仍保持字节索引语义，返回 `i32`，本轮不改为 rune/codepoint 索引。
