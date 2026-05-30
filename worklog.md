@@ -480,3 +480,9 @@
 - 已实现顶层 `extern "c" { fun name(params): Ret }` 解析、extern 函数符号注册、C ABI scalar/pointer 类型限制、LLVM `declare` 与普通调用 lowering；v1 明确不支持其他来源字符串、函数体、varargs、泛型 extern、`str`/聚合/NC runtime 类型。
 - 已更新 design.md 与 c-interop.md，使 `runtime` 公开面、`ncrt` 私有 ABI 和 extern v1 边界与实现一致。新增 case_187~196 与项目级 runtime 内置模块优先级测试。
 - 验证通过：python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py -q；python -m pytest tests/test_llvm_backend.py tests/test_llvm_cases.py -q；python nc.py build test_cases\case_189_extern_c_putchar.nc 并运行 build\main.exe 输出 A。
+
+## 2026-05-30
+
+- 预备统一函数类型标注语法：从旧 `(T) -> R` 改为 `fun(T) R`，内部类型字符串继续使用 `fn(T)->R`；不保留旧语法兼容，并迁移 closure/function type 相关 case 与文档。
+- 已统一函数类型标注语法：parser 类型位置改为解析 `fun(T) R` 并继续生成内部 `fn(T)->R`；旧 `(T) -> R` 语法明确报错。已迁移 closure/function type/type alias 相关 case 与 LLVM 内联测试，并更新 design.md/todo.md。
+- 验证通过：python tests/test_basic.py；python -m pytest tests/test_llvm_backend.py tests/test_llvm_cases.py tests/test_projects.py tests/test_builtin_boundary.py -q。

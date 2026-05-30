@@ -1,6 +1,6 @@
 import io
 
-type IntFun = (i32) -> i32
+type IntFun = fun(i32) i32
 
 fun apply(f: IntFun, x: i32): i32 {
   f(x)

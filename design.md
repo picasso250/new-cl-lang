@@ -254,7 +254,10 @@ let x = if cond { 1 } else { 2 }
 
 # 闭包
 let twice = fun(x: i32): i32 { x * 2 }
+let f: fun(i32) i32 = twice
 ```
+
+函数值类型标注使用 `fun(params) Ret`，例如 `fun(i32) i32`、`fun() str`、`fun(i32, str) bool`。旧 `(i32) -> i32` 函数类型语法不保留。
 
 `if` 是表达式。带 `else` 时，所有最终分支尾表达式类型必须一致；`else if` 是 `else` 分支继续接一个 `if` 表达式。
 不带 `else` 时，隐含空 `else`，整体类型为 `void`，因此 then 分支也必须是 `void`。

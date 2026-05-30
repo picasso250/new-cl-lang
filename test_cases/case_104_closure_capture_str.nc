@@ -1,6 +1,6 @@
 import io
 # STDOUT: hello
-fun make(): () -> str {
+fun make(): fun() str {
     let s = "hello"
     fun(): str { s }
 }

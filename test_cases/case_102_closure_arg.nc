@@ -1,6 +1,6 @@
 import io
 # STDOUT: 8
-fun apply(f: (i32) -> i32, x: i32): i32 {
+fun apply(f: fun(i32) i32, x: i32): i32 {
     f(x)
 }
 

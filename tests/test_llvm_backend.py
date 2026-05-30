@@ -548,8 +548,8 @@ fun main() {
 
 def test_llvm_capturing_closure_values_args_and_return():
     source = """import io
-fun apply(f: (i32) -> i32, x: i32): i32 { f(x) }
-fun make(base: i32): (i32) -> i32 {
+fun apply(f: fun(i32) i32, x: i32): i32 { f(x) }
+fun make(base: i32): fun(i32) i32 {
     let xs = []i32 { 10, 20, 30 }
     fun(x: i32): i32 { x + base + xs[1] }
 }

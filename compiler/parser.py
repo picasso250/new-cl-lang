@@ -173,8 +173,9 @@ class Parser:
             self.advance()
             self.expect(TokenKind.STAR)
             return "?*" + self._parse_type()
-        if self.peek().kind == TokenKind.LPAREN:
+        if self.peek().kind == TokenKind.FUN:
             self.advance()
+            self.expect(TokenKind.LPAREN)
             params = []
             if self.peek().kind != TokenKind.RPAREN:
                 params.append(self._parse_type())
@@ -182,9 +183,10 @@ class Parser:
                     self.advance()
                     params.append(self._parse_type())
             self.expect(TokenKind.RPAREN)
-            self.expect(TokenKind.ARROW)
             ret = self._parse_type()
             return f"fn({','.join(params)})->{ret}"
+        if self.peek().kind == TokenKind.LPAREN:
+            raise ParseError("old function type syntax is not supported; use fun(T) R")
         if self.peek().kind == TokenKind.STAR:
             self.advance()
             return "*" + self._parse_type()
