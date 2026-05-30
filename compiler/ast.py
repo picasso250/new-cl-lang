@@ -74,14 +74,14 @@ class Block(Node):
         return f"Block({self.statements})"
 
 
-class While(Node):
+class ForCondition(Node):
     """for expr { block }"""
     def __init__(self, condition, body: Block):
         self.condition = condition
         self.body = body
 
     def __repr__(self):
-        return f"While({self.condition} {self.body})"
+        return f"ForCondition({self.condition} {self.body})"
 
 
 class Break(Node):

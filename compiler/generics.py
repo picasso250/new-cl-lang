@@ -6,43 +6,11 @@ import copy
 import re
 
 from compiler.ast import FunctionCall, FunctionDeclaration, Program, StructDecl, StructLiteral
+from compiler.type_ref import parse_type_app, rewrite_type as rewrite_type_ref
 
 
 class GenericError(Exception):
     pass
-
-
-def _split_top_level(s: str, sep: str = ",") -> list[str]:
-    parts = []
-    start = 0
-    depth = 0
-    for i, ch in enumerate(s):
-        if ch == "[":
-            depth += 1
-        elif ch == "]":
-            depth -= 1
-        elif ch == sep and depth == 0:
-            parts.append(s[start:i])
-            start = i + 1
-    parts.append(s[start:])
-    return [p.strip() for p in parts if p.strip()]
-
-
-def _parse_type_app(t: str) -> tuple[str, list[str]] | None:
-    if not isinstance(t, str) or not t.endswith("]"):
-        return None
-    lb = t.find("[")
-    if lb < 0:
-        return None
-    depth = 0
-    for i, ch in enumerate(t[lb:], start=lb):
-        if ch == "[":
-            depth += 1
-        elif ch == "]":
-            depth -= 1
-            if depth == 0 and i != len(t) - 1:
-                return None
-    return t[:lb], _split_top_level(t[lb + 1:-1])
 
 
 def _mangle_type(t: str) -> str:
@@ -56,31 +24,13 @@ def _instance_name(name: str, args: list[str]) -> str:
 def _sub_type(t, subst: dict[str, str]):
     if not isinstance(t, str):
         return t
-    if t in subst:
-        return subst[t]
-    for prefix in ("?*", "*", "[]"):
-        if t.startswith(prefix):
-            return prefix + _sub_type(t[len(prefix):], subst)
-    if t.startswith("[") and "]" in t:
-        head, tail = t.split("]", 1)
-        return head + "]" + _sub_type(tail, subst)
-    if t.startswith("fn("):
-        close = t.find(")->")
-        if close >= 0:
-            args = [] if t[3:close] == "" else _split_top_level(t[3:close])
-            ret = t[close + 3:]
-            return f"fn({','.join(_sub_type(a, subst) for a in args)})->{_sub_type(ret, subst)}"
-    app = _parse_type_app(t)
-    if app:
-        base, args = app
-        return f"{base}[{','.join(_sub_type(a, subst) for a in args)}]"
-    return t
+    return rewrite_type_ref(t, lambda name: subst.get(name, name))
 
 
 def _normalize_call_type_args(call: FunctionCall):
     if call.type_args:
         return
-    app = _parse_type_app(call.name)
+    app = parse_type_app(call.name)
     if app:
         call.name, call.type_args = app
 
@@ -188,7 +138,7 @@ def monomorphize(program: Program) -> Program:
         if t.startswith("[") and "]" in t:
             head, tail = t.split("]", 1)
             return head + "]" + rewrite_type(tail)
-        app = _parse_type_app(t)
+        app = parse_type_app(t)
         if app:
             base, args = app
             args = [rewrite_type(a) for a in args]

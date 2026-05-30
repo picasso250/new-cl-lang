@@ -5,6 +5,7 @@
 
 
 from compiler.builtins import NUMERIC_TYPES, infer_builtin_call
+from compiler.type_ref import parse_fn_type
 
 
 class TypeCheckError(Exception):
@@ -15,7 +16,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
     """Pass 2: 标注 Program 中所有表达式和语句的类型。"""
     from compiler.ast import (
         Program, VariableDeclaration, ExpressionStatement,
-        Assignment, Update, Block, While, FunctionDeclaration, Return, ImportDecl,
+        Assignment, Update, Block, ForCondition, FunctionDeclaration, Return, ImportDecl,
         StructDecl, IfaceDecl, StructLiteral, FieldAccess,
         EnumDecl, EnumRef, ForIn,
         IfExpr, BlockExpr, MatchExpr, IntegerLiteral, FloatLiteral, StringLiteral, BoolLiteral, NilLiteral, BinaryOp, UnaryOp, FunctionCall, Identifier,
@@ -61,16 +62,6 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
 
     def fn_type(params, ret_type):
         return f"fn({','.join(params)})->{ret_type}"
-
-    def parse_fn_type(nc_type):
-        if not isinstance(nc_type, str) or not nc_type.startswith("fn("):
-            return None
-        close = nc_type.find(")->")
-        if close < 0:
-            return None
-        args_s = nc_type[3:close]
-        args = [] if args_s == "" else args_s.split(",")
-        return args, nc_type[close + 3:]
 
     def ends_with_return(stmts):
         return bool(stmts) and isinstance(stmts[-1], Return)
@@ -637,7 +628,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                     fail(f"cannot assign to captured variable '{stmt.target.name}'", stmt.target)
                 if not is_numeric_type(stmt.target.type) or is_pointer_type(stmt.target.type) or is_nullable_pointer_type(stmt.target.type):
                     fail(f"{stmt.op}: expected numeric lvalue, got {stmt.target.type}", stmt)
-            elif isinstance(stmt, While):
+            elif isinstance(stmt, ForCondition):
                 walk_expr(stmt.condition)
                 require_type(stmt.condition.type, "bool", "for condition", stmt.condition)
                 symtab.push_scope()

@@ -9,9 +9,10 @@ class ParseError(Exception):
 
 
 class Parser:
-    def __init__(self, tokens: list[Token]):
+    def __init__(self, tokens: list[Token], imported_modules: set[str] | None = None):
         self.tokens = tokens
         self.pos = 0
+        self.imported_modules = imported_modules or set()
 
     def peek(self) -> Token:
         return self.tokens[self.pos]
@@ -378,7 +379,7 @@ class Parser:
             condition = self.parse_expression()
             body = self._parse_block()
             self.match(TokenKind.SEMI)
-            return While(condition, body)
+            return ForCondition(condition, body)
 
         save = self.pos
         idx = self.expect(TokenKind.IDENT).value
@@ -403,7 +404,7 @@ class Parser:
         condition = self.parse_expression()
         body = self._parse_block()
         self.match(TokenKind.SEMI)
-        return While(condition, body)
+        return ForCondition(condition, body)
 
     def _parse_struct(self):
         self.advance()  # 吞 struct
@@ -645,7 +646,6 @@ class Parser:
                     else:
                         raise ParseError("generic type application must be used in a call or struct literal")
                 elif self.peek().kind == TokenKind.LPAREN:
-                    # 方法调用: obj.method(args)
                     self.advance()
                     args = []
                     if self.peek().kind != TokenKind.RPAREN:
@@ -654,7 +654,10 @@ class Parser:
                             self.advance()
                             args.append(self.parse_expression())
                     self.expect(TokenKind.RPAREN)
-                    expr = MethodCall(expr, field, args)
+                    if isinstance(expr, Identifier) and expr.name in self.imported_modules:
+                        expr = FunctionCall(f"{expr.name}.{field}", args)
+                    else:
+                        expr = MethodCall(expr, field, args)
                     expr.span = (start_pos, self.tokens[self.pos - 1].pos)
                 else:
                     expr = FieldAccess(expr, field)
@@ -886,5 +889,13 @@ class Parser:
         raise ParseError(f"Unexpected token: {t}")
 
 
-def parse(tokens: list[Token]) -> Program:
-    return Parser(tokens).parse_program()
+def _scan_imports(tokens: list[Token]) -> set[str]:
+    imports = set()
+    for i, tok in enumerate(tokens[:-1]):
+        if tok.kind == TokenKind.IMPORT and tokens[i + 1].kind == TokenKind.IDENT:
+            imports.add(tokens[i + 1].value)
+    return imports
+
+
+def parse(tokens: list[Token], imported_modules: set[str] | None = None) -> Program:
+    return Parser(tokens, imported_modules or _scan_imports(tokens)).parse_program()

@@ -2,7 +2,7 @@
 import os
 
 from compiler.lexer import lex
-from compiler.parser import parse
+from compiler.parser import parse, _scan_imports
 from compiler.symtab import build_symbol_table
 from compiler.typecheck import infer_types
 from compiler.generics import monomorphize
@@ -10,68 +10,29 @@ from compiler.llvm_codegen import build_llvm_ir, generate_llvm_ir, run_llvm_ir
 from compiler.source import Module, SourceFile, annotate_source_file, module_name_from_sources
 from compiler.ast import (
     Program, ImportDecl, FunctionDeclaration, StructDecl, IfaceDecl, EnumDecl, FunctionCall,
-    Identifier, StructLiteral, EnumRef, MethodCall, TypeAlias, FunctionExpr, VariableDeclaration,
-    ExternBlock,
-    ArrayLiteral, SliceLiteral
+    Identifier, StructLiteral, EnumRef, TypeAlias, FunctionExpr, ExternBlock,
 )
+from compiler.type_ref import rewrite_type
 
 BUILTIN_MODULES = {"io", "runtime"}
-
-
-def _split_top_level_comma(s: str) -> list[str]:
-    """按顶层逗号分割，忽略括号内的逗号。"""
-    parts = []
-    start = 0
-    depth = 0
-    for i, ch in enumerate(s):
-        if ch == "[":
-            depth += 1
-        elif ch == "]":
-            depth -= 1
-        elif ch == "," and depth == 0:
-            parts.append(s[start:i])
-            start = i + 1
-    parts.append(s[start:])
-    return [p.strip() for p in parts if p.strip()]
 
 
 def _expand_type_str(t: str, aliases: dict[str, str], stack: list[str]) -> str:
     """递归展开类型字符串中的别名。"""
     if not isinstance(t, str):
         return t
-    # 指针 / nullable 指针
-    for prefix in ("?*", "*", "[]"):
-        if t.startswith(prefix):
-            return prefix + _expand_type_str(t[len(prefix):], aliases, stack)
-    # 定长数组 [N]T
-    if t.startswith("[") and "]" in t:
-        head, tail = t.split("]", 1)
-        return head + "]" + _expand_type_str(tail, aliases, stack)
-    # 函数类型 fn(args)->ret
-    if t.startswith("fn("):
-        close = t.find(")->")
-        if close >= 0:
-            args_str = t[3:close]
-            args = _split_top_level_comma(args_str) if args_str else []
-            ret = t[close + 3:]
-            return f"fn({','.join(_expand_type_str(a, aliases, stack) for a in args)})->{_expand_type_str(ret, aliases, stack)}"
-    # 泛型类型应用 Foo[T, U]
-    if "[" in t and t.endswith("]"):
-        lb = t.find("[")
-        base = t[:lb]
-        args_s = t[lb + 1:-1]
-        args = _split_top_level_comma(args_s)
-        expanded_args = [_expand_type_str(a.strip(), aliases, stack) for a in args]
-        return f"{_expand_type_str(base, aliases, stack)}[{','.join(expanded_args)}]"
-    # 简单别名名
-    if t in aliases:
-        if t in stack:
-            raise RuntimeError(f"type alias cycle: {' -> '.join(stack + [t])}")
-        stack.append(t)
-        result = _expand_type_str(aliases[t], aliases, stack)
+
+    def expand_name(name: str) -> str:
+        if name not in aliases:
+            return name
+        if name in stack:
+            raise RuntimeError(f"type alias cycle: {' -> '.join(stack + [name])}")
+        stack.append(name)
+        result = _expand_type_str(aliases[name], aliases, stack)
         stack.pop()
         return result
-    return t
+
+    return rewrite_type(t, expand_name)
 
 
 def _expand_type_aliases_in_module(module: Module):
@@ -153,9 +114,14 @@ def parse_module_sources(sources: "list[tuple[str, str]]") -> Module:
     source_files = [SourceFile(filename, source) for filename, source in sources]
     name, root = module_name_from_sources(source_files)
     module = Module(name, root, source_files)
+    token_lists = []
+    imported_modules = set()
     for source_file in module.files:
         tokens = list(lex(source_file.source))
-        source_file.ast = parse(tokens)
+        token_lists.append(tokens)
+        imported_modules.update(_scan_imports(tokens))
+    for source_file, tokens in zip(module.files, token_lists):
+        source_file.ast = parse(tokens, imported_modules)
         annotate_source_file(source_file.ast, source_file)
     _expand_type_aliases_in_module(module)
     return module
@@ -188,34 +154,13 @@ def _top_names(module: Module) -> set[str]:
 def _qual_type(nc_type, module_name: str, local_names: set[str]):
     if not isinstance(nc_type, str):
         return nc_type
-    if "." in nc_type:
-        return nc_type
-    for prefix in ("?*", "*", "[]"):
-        if nc_type.startswith(prefix):
-            return prefix + _qual_type(nc_type[len(prefix):], module_name, local_names)
-    if nc_type.startswith("[") and "]" in nc_type:
-        head, tail = nc_type.split("]", 1)
-        return head + "]" + _qual_type(tail, module_name, local_names)
-    if nc_type.endswith("]") and "[" in nc_type:
-        base, rest = nc_type.split("[", 1)
-        args_s = rest[:-1]
-        args = []
-        start = 0
-        depth = 0
-        for i, ch in enumerate(args_s):
-            if ch == "[":
-                depth += 1
-            elif ch == "]":
-                depth -= 1
-            elif ch == "," and depth == 0:
-                args.append(args_s[start:i])
-                start = i + 1
-        args.append(args_s[start:])
-        qbase = _qual_type(base, module_name, local_names)
-        return f"{qbase}[{','.join(_qual_type(arg.strip(), module_name, local_names) for arg in args if arg.strip())}]"
-    if nc_type in local_names:
-        return f"{module_name}.{nc_type}"
-    return nc_type
+
+    def qualify_name(name: str) -> str:
+        if "." not in name and name in local_names:
+            return f"{module_name}.{name}"
+        return name
+
+    return rewrite_type(nc_type, qualify_name)
 
 
 def _rewrite_module_names(module: Module, entry: bool):
@@ -283,47 +228,10 @@ def _rewrite_module_names(module: Module, entry: bool):
             walk(stmt)
 
 
-def _rewrite_import_calls(module: Module):
-    import_names = {imp.module_name for imp in _module_imports(module)}
-
-    def walk_value(value):
-        if isinstance(value, list):
-            for i, item in enumerate(value):
-                if isinstance(item, tuple):
-                    value[i] = tuple(walk(part) for part in item)
-                else:
-                    value[i] = walk(item)
-            return value
-        if isinstance(value, tuple):
-            return tuple(walk(item) for item in value)
-        return walk(value)
-
-    def walk(node):
-        if not hasattr(node, "__dict__"):
-            return node
-        if isinstance(node, MethodCall) and isinstance(node.obj, Identifier) and node.obj.name in import_names:
-            repl = FunctionCall(f"{node.obj.name}.{node.method}", node.args)
-            if hasattr(node, "source_file"):
-                repl.source_file = node.source_file
-            if hasattr(node, "span"):
-                repl.span = node.span
-            repl.args = [walk(arg) for arg in repl.args]
-            return repl
-        for key, value in list(node.__dict__.items()):
-            if isinstance(value, SourceFile):
-                continue
-            setattr(node, key, walk_value(value))
-        return node
-
-    for source_file in module.files:
-        source_file.ast = walk(source_file.ast)
-
-
 def parse_project_sources(sources: "list[tuple[str, str]]") -> Module:
     """Parse an entry directory and its imported sibling modules."""
     entry = parse_module_sources(sources)
     if not entry.root:
-        _rewrite_import_calls(entry)
         return entry
     project_root = os.path.dirname(entry.root)
     loaded: dict[str, Module] = {}
@@ -353,8 +261,6 @@ def parse_project_sources(sources: "list[tuple[str, str]]") -> Module:
         order.append(module)
 
     load(entry)
-    for module in order:
-        _rewrite_import_calls(module)
     for module in order:
         _rewrite_module_names(module, entry=(module.name == entry.name))
     files = []

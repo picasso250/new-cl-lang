@@ -101,15 +101,13 @@ def build_symbol_table(program: "Program") -> SymbolTable:
     """
     from compiler.ast import (
         Program, VariableDeclaration, ExpressionStatement,
-        Assignment, Update, Block, While, FunctionDeclaration, Return,
+        Assignment, Update, Block, ForCondition, FunctionDeclaration, Return,
         StructDecl, IfaceDecl, EnumDecl, ForIn, ImportDecl, ExternBlock,
         IfExpr, BlockExpr, MatchExpr, BinaryOp, UnaryOp, FunctionCall, FunctionExpr,
         ArrayLiteral, IndexAccess, MethodCall, FieldAccess, StructLiteral, TryCatch, Throw, Defer
     )
     table = SymbolTable()
 
-    table.declare_global("str", "struct")
-    table.declare_struct("str", [("ptr", "i64"), ("len", "i64")])
     table._methods = {}  # {type_name: {method_name: (ret_type, [(param, type)])}}
     table._functions = {}  # {function_name: (ret_type, [(param, type)])}
     table._extern_functions = set()
@@ -163,7 +161,7 @@ def build_symbol_table(program: "Program") -> SymbolTable:
                     table.declare(fn.name, fn.return_type or "void", allow_c_runtime_name=True)
                     table._functions[fn.name] = (fn.return_type or "void", fn.params)
                     table._extern_functions.add(fn.name)
-            elif isinstance(stmt, (While, Block, ForIn, TryCatch)):
+            elif isinstance(stmt, (ForCondition, Block, ForIn, TryCatch)):
                 _descend_stmt(stmt)
             elif isinstance(stmt, ExpressionStatement):
                 _walk_expr(stmt.expr)
@@ -201,7 +199,7 @@ def build_symbol_table(program: "Program") -> SymbolTable:
             table.declare(stmt.error_name, "str")
             walk_stmts(stmt.catch_block.statements)
             table.pop_scope()
-        elif isinstance(stmt, While):
+        elif isinstance(stmt, ForCondition):
             _walk_expr(stmt.condition)
             table.push_scope()
             walk_stmts(stmt.body.statements)

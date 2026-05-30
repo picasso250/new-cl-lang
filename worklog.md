@@ -495,3 +495,12 @@
 - LLVM 后端已支持接口胖指针 { i8* vtable, i8* data }、按 *T -> I 转换生成 vtable 全局常量与 erased receiver thunk、接口动态分派，并将 GC root 限定到 data 字段。新增 case_197~208 和项目级跨模块/private iface 覆盖。
 - v1 边界已写入 design.md：仅支持 un (p *T) method(...) 自动满足；不支持值 receiver、接口到接口重装箱、泛型接口、显式 implements、类型断言或接口 nil。
 - 验证通过：python tests/test_basic.py；python -m pytest tests/test_llvm_backend.py tests/test_llvm_cases.py tests/test_projects.py tests/test_builtin_boundary.py -q；python nc.py build test_cases\case_197_iface_basic.nc 并运行 build\main.exe 输出 42。
+
+## 2026-05-30
+
+- 预备清理 import 绕路与类型字符串遗留：parser 直接识别已导入/内置模块限定函数调用，删除 _rewrite_import_calls；新增集中 TypeRef 解析/格式化入口并替换主要手写解析；将条件循环 AST/后端命名从 While 收敛为 ForCondition。
+
+
+- 已清理 import 绕路与类型字符串遗留：parser 基于模块 import 集合直接生成限定 FunctionCall，删除 _rewrite_import_calls；新增 compiler/type_ref.py 作为类型字符串解析/格式化入口，并替换别名展开、模块名限定、泛型替换、函数/slice/array 类型解析；str 不再作为符号表伪 struct 注册；条件循环 AST/LLVM block 命名从 While 收敛为 ForCondition。
+- 验证通过：python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_llvm_cases.py tests/test_type_ref.py -q；python nc.py build test_cases\case_197_iface_basic.nc 并运行 build\main.exe 输出 42。
+

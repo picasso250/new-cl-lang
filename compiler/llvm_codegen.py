@@ -16,11 +16,12 @@ from compiler.ast import (
     FunctionExpr,
     ForIn, FunctionDeclaration, Identifier, IfExpr, IfaceDecl, IndexAccess, IntegerLiteral,
     MatchExpr, MethodCall, NilLiteral, Return, SliceExpr, SliceLiteral, StringLiteral, StructDecl,
-    StructLiteral, Throw, TryCatch, UnaryOp, VariableDeclaration, While,
+    StructLiteral, Throw, TryCatch, UnaryOp, VariableDeclaration, ForCondition,
 )
-from compiler.codegen_collect import collect_codegen_inputs, parse_fn_type
+from compiler.codegen_collect import collect_codegen_inputs
 from compiler.names import safe_user_ident
 from compiler.ncrt import build_ncrt_obj
+from compiler.type_ref import parse_array_type, parse_fn_type, parse_slice_type
 
 
 INT_TYPES = {
@@ -97,21 +98,6 @@ def llvm_type(nc_type: str | None):
         length, elem_type = array_info
         return ir.ArrayType(llvm_type(elem_type), length)
     raise NotImplementedError(f"LLVM backend does not support type: {nc_type}")
-
-
-def parse_array_type(nc_type: str | None):
-    if not isinstance(nc_type, str) or not nc_type.startswith("[") or nc_type.startswith("[]"):
-        return None
-    end = nc_type.find("]")
-    if end < 0:
-        return None
-    return int(nc_type[1:end]), nc_type[end + 1:]
-
-
-def parse_slice_type(nc_type: str | None):
-    if isinstance(nc_type, str) and nc_type.startswith("[]"):
-        return nc_type[2:]
-    return None
 
 
 class LLVMCodegen:
@@ -520,8 +506,8 @@ class LLVMCodegen:
             self.emit_expr(stmt.expr)
             self.branch_on_exception()
             return
-        if isinstance(stmt, While):
-            self.emit_while(stmt)
+        if isinstance(stmt, ForCondition):
+            self.emit_for_condition(stmt)
             return
         if isinstance(stmt, ForIn):
             self.emit_for_in(stmt)
@@ -700,10 +686,10 @@ class LLVMCodegen:
         length32 = self.builder.trunc(length64, ir.IntType(32))
         self.builder.call(self.fprintf, [stderr, fmt, length32, ptr])
 
-    def emit_while(self, stmt: While):
-        cond_bb = self.func.append_basic_block("while.cond")
-        body_bb = self.func.append_basic_block("while.body")
-        end_bb = self.func.append_basic_block("while.end")
+    def emit_for_condition(self, stmt: ForCondition):
+        cond_bb = self.func.append_basic_block("for.cond")
+        body_bb = self.func.append_basic_block("for.body")
+        end_bb = self.func.append_basic_block("for.end")
         self.builder.branch(cond_bb)
         self.builder.position_at_end(cond_bb)
         self.builder.cbranch(self.bool_value(self.emit_expr(stmt.condition)), body_bb, end_bb)

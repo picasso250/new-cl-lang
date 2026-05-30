@@ -7,8 +7,9 @@ from compiler.ast import (
     ExternBlock, FieldAccess, ForIn, FunctionCall, FunctionDeclaration, FunctionExpr,
     IfExpr, ImportDecl, IndexAccess, MatchExpr, MethodCall, Return, SliceExpr,
     SliceLiteral, StructDecl, IfaceDecl, StructLiteral, Throw, TryCatch, UnaryOp,
-    VariableDeclaration, ExpressionStatement, While,
+    VariableDeclaration, ExpressionStatement, ForCondition,
 )
+from compiler.type_ref import parse_fn_type
 
 
 @dataclass
@@ -21,17 +22,6 @@ class CodegenInputs:
     closures: list = field(default_factory=list)
     slice_types: set[str] = field(default_factory=set)
     fn_types: set[str] = field(default_factory=set)
-
-
-def parse_fn_type(nc_type):
-    if not isinstance(nc_type, str) or not nc_type.startswith("fn("):
-        return None
-    close = nc_type.find(")->")
-    if close < 0:
-        return None
-    args_s = nc_type[3:close]
-    args = [] if args_s == "" else args_s.split(",")
-    return args, nc_type[close + 3:]
 
 
 def collect_codegen_inputs(program) -> CodegenInputs:
@@ -58,7 +48,7 @@ def collect_codegen_inputs(program) -> CodegenInputs:
                 result.other_funcs.extend(stmt.functions)
             elif isinstance(stmt, Block):
                 collect_top_level(stmt.statements)
-            elif isinstance(stmt, While):
+            elif isinstance(stmt, ForCondition):
                 collect_top_level(stmt.body.statements)
             elif isinstance(stmt, ForIn):
                 collect_top_level(stmt.body.statements)
@@ -134,7 +124,7 @@ def collect_codegen_inputs(program) -> CodegenInputs:
             collect_closure_expr(stmt.target)
         elif isinstance(stmt, ExpressionStatement):
             collect_closure_expr(stmt.expr)
-        elif isinstance(stmt, While):
+        elif isinstance(stmt, ForCondition):
             collect_closure_expr(stmt.condition)
             for child in stmt.body.statements:
                 collect_closure_stmt(child)
@@ -247,7 +237,7 @@ def collect_codegen_inputs(program) -> CodegenInputs:
             collect_expr_types(stmt.target)
         elif isinstance(stmt, ExpressionStatement):
             collect_expr_types(stmt.expr)
-        elif isinstance(stmt, While):
+        elif isinstance(stmt, ForCondition):
             collect_expr_types(stmt.condition)
             for child in stmt.body.statements:
                 collect_stmt_types(child)
