@@ -486,3 +486,12 @@
 - 预备统一函数类型标注语法：从旧 `(T) -> R` 改为 `fun(T) R`，内部类型字符串继续使用 `fn(T)->R`；不保留旧语法兼容，并迁移 closure/function type 相关 case 与文档。
 - 已统一函数类型标注语法：parser 类型位置改为解析 `fun(T) R` 并继续生成内部 `fn(T)->R`；旧 `(T) -> R` 语法明确报错。已迁移 closure/function type/type alias 相关 case 与 LLVM 内联测试，并更新 design.md/todo.md。
 - 验证通过：python tests/test_basic.py；python -m pytest tests/test_llvm_backend.py tests/test_llvm_cases.py tests/test_projects.py tests/test_builtin_boundary.py -q。
+
+## 2026-05-30
+
+- 预备实现 iface v1：顶层 iface 声明、接口嵌入、指针 receiver 方法自动满足接口、接口值赋值/传参/返回与动态方法调用；v1 不做值 receiver、接口到接口重装箱、泛型接口或显式 implements。
+
+- 已实现 iface v1：lexer/parser/AST 支持顶层 iface、方法签名和接口嵌入；symtab/typecheck 支持接口全局类型、嵌入 method set 扁平化、未知/循环/冲突检测、指针 receiver 方法自动满足接口、接口值赋值/传参/返回和接口方法调用检查。
+- LLVM 后端已支持接口胖指针 { i8* vtable, i8* data }、按 *T -> I 转换生成 vtable 全局常量与 erased receiver thunk、接口动态分派，并将 GC root 限定到 data 字段。新增 case_197~208 和项目级跨模块/private iface 覆盖。
+- v1 边界已写入 design.md：仅支持 un (p *T) method(...) 自动满足；不支持值 receiver、接口到接口重装箱、泛型接口、显式 implements、类型断言或接口 nil。
+- 验证通过：python tests/test_basic.py；python -m pytest tests/test_llvm_backend.py tests/test_llvm_cases.py tests/test_projects.py tests/test_builtin_boundary.py -q；python nc.py build test_cases\case_197_iface_basic.nc 并运行 build\main.exe 输出 42。

@@ -19,6 +19,7 @@ class TokenKind(Enum):
     FUN = auto()
     RETURN = auto()
     STRUCT = auto()
+    IFACE = auto()
     ENUM = auto()
     MATCH = auto()
     FOR = auto()
@@ -98,6 +99,7 @@ KEYWORDS = {
     "fun": TokenKind.FUN,
     "return": TokenKind.RETURN,
     "struct": TokenKind.STRUCT,
+    "iface": TokenKind.IFACE,
     "enum": TokenKind.ENUM,
     "match": TokenKind.MATCH,
     "for": TokenKind.FOR,

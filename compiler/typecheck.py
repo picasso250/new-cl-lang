@@ -16,7 +16,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
     from compiler.ast import (
         Program, VariableDeclaration, ExpressionStatement,
         Assignment, Update, Block, While, FunctionDeclaration, Return, ImportDecl,
-        StructDecl, StructLiteral, FieldAccess,
+        StructDecl, IfaceDecl, StructLiteral, FieldAccess,
         EnumDecl, EnumRef, ForIn,
         IfExpr, BlockExpr, MatchExpr, IntegerLiteral, FloatLiteral, StringLiteral, BoolLiteral, NilLiteral, BinaryOp, UnaryOp, FunctionCall, Identifier,
         ExternBlock, FunctionExpr,
@@ -208,6 +208,9 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
     def is_numeric_type(t):
         return t in NUMERIC_TYPES
 
+    def is_iface_type(t):
+        return isinstance(t, str) and t in getattr(symtab, "_ifaces", {})
+
     def require_public_qualified(name, node=None):
         if isinstance(name, str) and "." in name and name.rsplit(".", 1)[1].startswith("_"):
             fail(f"symbol '{name}' is private", node)
@@ -239,11 +242,59 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
     def is_assignable_type(actual, expected):
         if actual == expected:
             return True
+        if is_iface_type(expected):
+            return pointer_implements_iface(actual, expected)
         if is_nil_type(actual):
             return is_nullable_pointer_type(expected)
         if is_pointer_type(actual) and is_nullable_pointer_type(expected):
             return actual[1:] == expected[2:]
         return False
+
+    def iface_method_set(iface_name, stack=None):
+        stack = stack or []
+        if iface_name not in getattr(symtab, "_ifaces", {}):
+            fail(f"iface {iface_name}: embedded iface not found")
+        iface = symtab._ifaces[iface_name]
+        if iface.get("method_set") is not None:
+            return iface["method_set"]
+        if iface_name in stack:
+            fail(f"iface {iface_name}: embedded iface cycle")
+        methods = {}
+        order = []
+        def add(name, params, ret):
+            sig = ([ptype for _pname, ptype in params], ret or "void")
+            if name in methods and methods[name] != sig:
+                fail(f"iface {iface_name}: conflicting method {name}")
+            if name not in methods:
+                order.append(name)
+            methods[name] = sig
+        for embed in iface["embeds"]:
+            if embed not in getattr(symtab, "_ifaces", {}):
+                fail(f"iface {iface_name}: embedded iface {embed} not found")
+            for mname, (param_types, ret) in iface_method_set(embed, stack + [iface_name]).items():
+                add(mname, [(f"arg{i}", t) for i, t in enumerate(param_types)], ret)
+        for mname, params, ret in iface["methods"]:
+            add(mname, params, ret)
+        iface["method_order"] = order
+        iface["method_set"] = methods
+        return methods
+
+    def pointer_implements_iface(actual, iface_name):
+        if not is_pointer_type(actual) or is_nullable_pointer_type(actual):
+            return False
+        type_name = actual[1:]
+        methods = getattr(symtab, "_methods", {}).get(type_name, {})
+        for mname, (param_types, ret_type) in iface_method_set(iface_name).items():
+            if mname not in methods:
+                return False
+            actual_ret, actual_params = methods[mname]
+            if actual_ret is None:
+                actual_ret = resolve_method_return(type_name, mname)
+            if (actual_ret or "void") != (ret_type or "void"):
+                return False
+            if [ptype for _pname, ptype in actual_params] != param_types:
+                return False
+        return True
 
     def maybe_narrow_condition(condition):
         if not isinstance(condition, BinaryOp) or condition.op != "!=":
@@ -381,6 +432,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                     require_type(arg.type, ptype, f"argument {i + 1} to {node.name}", arg)
                 node.type = ret_type
                 node.is_closure_call = True
+                node.closure_param_types = param_types
         elif isinstance(node, FunctionExpr):
             nonlocal current_return_type
             prev_return_type = current_return_type
@@ -460,6 +512,16 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             obj_type = node.obj.type
             if is_nullable_pointer_type(obj_type):
                 fail(f"nullable pointer type {obj_type}: method call requires if p != nil narrowing", node)
+            if is_iface_type(obj_type):
+                methods = iface_method_set(obj_type)
+                if node.method not in methods:
+                    fail(f"{obj_type}: method {node.method} not found", node)
+                param_types, ret_type = methods[node.method]
+                require_arg_count(node.args, len(param_types), f"method {node.method}", node)
+                for i, (arg, ptype) in enumerate(zip(node.args, param_types)):
+                    require_type(arg.type, ptype, f"argument {i + 1} to method {node.method}", arg)
+                node.type = ret_type
+                return
             if obj_type.startswith("*"):
                 obj_type = obj_type[1:]
             methods = getattr(symtab, "_methods", {})
@@ -584,6 +646,12 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 break_depth -= 1
                 symtab.pop_scope()
             elif isinstance(stmt, FunctionDeclaration):
+                if stmt.return_type:
+                    require_public_qualified(stmt.return_type, stmt)
+                if stmt.receiver_type:
+                    require_public_qualified(stmt.receiver_type, stmt)
+                for _pname, _ptype in stmt.params:
+                    require_public_qualified(_ptype, stmt)
                 symtab.push_scope()
                 prev_return_type = current_return_type
                 if not stmt.return_type_explicit:
@@ -618,6 +686,8 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                         fail(f"return: expected {current_return_type}, got void", stmt)
             elif isinstance(stmt, StructDecl):
                 pass  # 已在 Pass 1 注册
+            elif isinstance(stmt, IfaceDecl):
+                iface_method_set(stmt.name)
             elif isinstance(stmt, EnumDecl):
                 pass  # 已在 Pass 1 注册
             elif isinstance(stmt, ImportDecl):

@@ -141,6 +141,47 @@ struct Box[T] { value: T }
         assert result.stdout.strip() == "7\nok"
 
 
+def test_import_iface_and_concrete_satisfaction_run():
+    with tempfile.TemporaryDirectory() as tmp:
+        main = os.path.join(tmp, "main")
+        api = os.path.join(tmp, "api")
+        impl = os.path.join(tmp, "impl")
+        os.mkdir(main)
+        os.mkdir(api)
+        os.mkdir(impl)
+        write_file(os.path.join(api, "api.nc"), "iface Writer { fun write(data: []u8): i32 }\n")
+        write_file(os.path.join(impl, "impl.nc"), """struct File { value: i32 }
+fun (f *File) write(data: []u8): i32 { f.value + i32(data[0]) }
+fun make(): *File { new File { value: 40 } }
+""")
+        write_file(os.path.join(main, "main.nc"), """import io
+import api
+import impl
+fun use(w: api.Writer): i32 { w.write([]u8 { 2u8 }) }
+fun main() { io.println(use(impl.make())) }
+""")
+
+        result = run_nc("run", main)
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "42"
+
+
+def test_import_private_iface_error():
+    with tempfile.TemporaryDirectory() as tmp:
+        main = os.path.join(tmp, "main")
+        api = os.path.join(tmp, "api")
+        os.mkdir(main)
+        os.mkdir(api)
+        write_file(os.path.join(api, "api.nc"), "iface _Private { fun value(): i32 }\n")
+        write_file(os.path.join(main, "main.nc"), "import api\nfun use(x: api._Private) {}\nfun main() {}\n")
+
+        result = run_nc("compile", main)
+
+        assert result.returncode != 0
+        assert "symbol 'api._Private' is private" in result.stderr
+
+
 def test_import_same_public_names_do_not_conflict():
     with tempfile.TemporaryDirectory() as tmp:
         main = os.path.join(tmp, "main")

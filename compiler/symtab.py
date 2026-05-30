@@ -38,6 +38,7 @@ class SymbolTable:
         self._level = 0
         self._structs: dict[str, dict[str, str]] = {}  # struct名 → {字段: 类型}
         self._enums: dict[str, set[str]] = {}  # enum名 → variants
+        self._ifaces: dict[str, dict] = {}
 
     def push_scope(self):
         self._scopes.append({})
@@ -82,6 +83,14 @@ class SymbolTable:
             raise NameError(f"Enum '{name}' not found")
         return self._enums[name]
 
+    def declare_iface(self, name: str, methods: list, embeds: list[str]):
+        self._ifaces[name] = {"methods": methods, "embeds": embeds, "method_set": None}
+
+    def lookup_iface(self, name: str) -> dict:
+        if name not in self._ifaces:
+            raise NameError(f"Iface '{name}' not found")
+        return self._ifaces[name]
+
     def __repr__(self):
         return f"SymbolTable({self._scopes})"
 
@@ -93,7 +102,7 @@ def build_symbol_table(program: "Program") -> SymbolTable:
     from compiler.ast import (
         Program, VariableDeclaration, ExpressionStatement,
         Assignment, Update, Block, While, FunctionDeclaration, Return,
-        StructDecl, EnumDecl, ForIn, ImportDecl, ExternBlock,
+        StructDecl, IfaceDecl, EnumDecl, ForIn, ImportDecl, ExternBlock,
         IfExpr, BlockExpr, MatchExpr, BinaryOp, UnaryOp, FunctionCall, FunctionExpr,
         ArrayLiteral, IndexAccess, MethodCall, FieldAccess, StructLiteral, TryCatch, Throw, Defer
     )
@@ -139,6 +148,9 @@ def build_symbol_table(program: "Program") -> SymbolTable:
             elif isinstance(stmt, StructDecl):
                 table.declare_global(stmt.name, "struct")
                 table.declare_struct(stmt.name, stmt.fields)
+            elif isinstance(stmt, IfaceDecl):
+                table.declare_global(stmt.name, "iface")
+                table.declare_iface(stmt.name, stmt.methods, stmt.embeds)
             elif isinstance(stmt, EnumDecl):
                 table.declare_global(stmt.name, "enum")
                 table.declare_enum(stmt.name, stmt.variants)

@@ -9,7 +9,7 @@ from compiler.generics import monomorphize
 from compiler.llvm_codegen import build_llvm_ir, generate_llvm_ir, run_llvm_ir
 from compiler.source import Module, SourceFile, annotate_source_file, module_name_from_sources
 from compiler.ast import (
-    Program, ImportDecl, FunctionDeclaration, StructDecl, EnumDecl, FunctionCall,
+    Program, ImportDecl, FunctionDeclaration, StructDecl, IfaceDecl, EnumDecl, FunctionCall,
     Identifier, StructLiteral, EnumRef, MethodCall, TypeAlias, FunctionExpr, VariableDeclaration,
     ExternBlock,
     ArrayLiteral, SliceLiteral
@@ -110,6 +110,9 @@ def _expand_type_aliases_in_module(module: Module):
             node.receiver_type = expand_type(node.receiver_type)
         elif isinstance(node, StructDecl):
             node.fields = [(n, expand_type(t)) for n, t in node.fields]
+        elif isinstance(node, IfaceDecl):
+            node.methods = [(n, [(pn, expand_type(pt)) for pn, pt in params], expand_type(rt)) for n, params, rt in node.methods]
+            node.embeds = [expand_type(t) for t in node.embeds]
         elif isinstance(node, FunctionExpr):
             node.params = [(n, expand_type(t)) for n, t in node.params]
             node.return_type = expand_type(node.return_type)
@@ -171,7 +174,10 @@ def _top_names(module: Module) -> set[str]:
     names = set()
     for source_file in module.files:
         for stmt in source_file.ast.statements:
-            if isinstance(stmt, (FunctionDeclaration, StructDecl, EnumDecl)):
+            if isinstance(stmt, FunctionDeclaration):
+                if not stmt.receiver_name:
+                    names.add(stmt.name)
+            elif isinstance(stmt, (StructDecl, IfaceDecl, EnumDecl)):
                 names.add(stmt.name)
             elif isinstance(stmt, ExternBlock):
                 for fn in stmt.functions:
@@ -226,13 +232,22 @@ def _rewrite_module_names(module: Module, entry: bool):
         if not hasattr(node, "__dict__"):
             return
         if isinstance(node, FunctionDeclaration):
-            node.name = q(node.name)
+            if not node.receiver_name:
+                node.name = q(node.name)
             node.return_type = _qual_type(node.return_type, module.name, local_names)
             node.params = [(n, _qual_type(t, module.name, local_names)) for n, t in node.params]
             node.receiver_type = _qual_type(node.receiver_type, module.name, local_names)
         elif isinstance(node, StructDecl):
             node.name = q(node.name)
             node.fields = [(n, _qual_type(t, module.name, local_names)) for n, t in node.fields]
+        elif isinstance(node, IfaceDecl):
+            node.name = q(node.name)
+            node.methods = [
+                (n, [(pn, _qual_type(pt, module.name, local_names)) for pn, pt in params],
+                 _qual_type(rt, module.name, local_names))
+                for n, params, rt in node.methods
+            ]
+            node.embeds = [_qual_type(t, module.name, local_names) for t in node.embeds]
         elif isinstance(node, EnumDecl):
             node.name = q(node.name)
         elif isinstance(node, ExternBlock):

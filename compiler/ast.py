@@ -120,6 +120,19 @@ class StructDecl(Node):
         return f"Struct({self.name} {{ {fs} }})"
 
 
+class IfaceDecl(Node):
+    """iface Name { fun method(params): ret; EmbeddedIface; ... }"""
+    def __init__(self, name: str, methods: list, embeds: list[str] | None = None):
+        self.name = name
+        self.methods = methods  # [(name, [(param, type), ...], return_type), ...]
+        self.embeds = embeds or []
+
+    def __repr__(self):
+        ms = ', '.join(f'{n}({ps}): {rt}' for n, ps, rt in self.methods)
+        es = ', '.join(self.embeds)
+        return f"Iface({self.name} embeds [{es}] {{ {ms} }})"
+
+
 class TypeAlias(Node):
     """type Name = Type"""
     def __init__(self, name: str, target_type: str):

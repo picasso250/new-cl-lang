@@ -75,6 +75,7 @@ import io                # 内置标准模块，不要求存在同级 io/ 目录
 - LLVM 后端负责为持有 GC 指针的栈槽注册 root：`str.ptr`、`[]T.ptr`、`nc_map.entries`、`*T/?*T`、function value `env`、struct 字段和定长数组元素。LLVM 函数/closure 会为参数、receiver、closure env、局部变量、返回槽、catch/throw 值注册 root，并在所有出口 rewind 到函数入口 mark。
 - LLVM `throw`/`try`/`catch` 当前使用轻量异常模型：全局异常 flag + `str` value，函数边界返回默认值传播异常，`try` 块在语句边界检查 flag 并跳转 `catch`；uncaught throw 在 `main` 输出到 stderr 并返回 1。`defer` 使用函数内动态 site 栈，按 LIFO 在函数 fallthrough、显式 `return`、`throw` 传播前执行。该模型不依赖 `setjmp`/`longjmp`。
 - LLVM function value 当前支持 `{ call, env }` 胖指针：`call` 首参为 `i8* env`，无捕获时 `env == null`；捕获 closure 生成 env struct 并按值拷贝捕获字段，env 通过 `__nc_gc_alloc` 分配并由 function value 的 `env` root 与保守 heap 扫描保活。
+- LLVM 接口值当前支持 `{ vtable, data }` 胖指针，LLVM 表示为 `{ i8*, i8* }`。每个实际使用的 `*T -> I` 转换生成接口专属 vtable 全局常量与 erased receiver thunk；接口方法调用从 vtable 取函数指针并以 `data` 作为 receiver 动态分派。GC root 只登记接口值的 `data` 字段，`vtable` 是全局常量。
 - LLVM 后端当前使用 MinGW GNU triple `x86_64-w64-windows-gnu` 生成 Windows COFF object，并用 `gcc` 链接。
 - LLVM 后端是语言全集和回归权威；不向前兼容未声明支持的节点，遇到未支持语义应明确报错。
 
@@ -334,8 +335,17 @@ iface Reader { fun read(buf: []u8): i32 }
 iface ReadWriter { Reader; Writer }
 
 # struct 自动满足接口（不显式声明）
-fun (f: File) write(data: []u8): i32 { ... }
+fun (f *File) write(data: []u8): i32 { ... }
 ```
+
+接口 v1 边界：
+
+- `iface Name { ... }` 只能出现在顶层，进入全局类型命名空间，参与 import 模块名前缀改写和 `_` 私有规则。
+- 接口方法项只允许签名，不允许函数体；嵌入项只允许接口名。嵌入会扁平化为 method set，并检测未知嵌入、循环嵌入和同名方法签名冲突。
+- struct 自动满足接口，不写 `implements`。v1 只采纳现有指针 receiver 方法：`fun (p *T) method(...)`。值 receiver、`T` 值类型、`?*T`、slice、函数值等都不会隐式装箱为接口。
+- 接口值支持作为局部变量、函数参数和函数返回值；接口方法调用按接口 method set 校验参数和返回类型，并通过 vtable 动态分派。
+- v1 不支持接口到接口隐式转换或重装箱；`ReadWriter` 值不会自动降为 `Reader`。若源表达式本身是 concrete `*T`，可在目标接口处重新装箱。
+- v1 不支持泛型接口、接口约束、显式 implements、类型断言、接口 nil 零值或从接口取回 concrete 类型。
 
 ---
 

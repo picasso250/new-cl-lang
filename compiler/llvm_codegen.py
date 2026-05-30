@@ -14,7 +14,7 @@ from compiler.ast import (
     ArrayLiteral, Assignment, Update, BinaryOp, Block, BlockExpr, BoolLiteral, Break,
     Defer, ExpressionStatement, EnumDecl, EnumRef, FieldAccess, FloatLiteral, FunctionCall,
     FunctionExpr,
-    ForIn, FunctionDeclaration, Identifier, IfExpr, IndexAccess, IntegerLiteral,
+    ForIn, FunctionDeclaration, Identifier, IfExpr, IfaceDecl, IndexAccess, IntegerLiteral,
     MatchExpr, MethodCall, NilLiteral, Return, SliceExpr, SliceLiteral, StringLiteral, StructDecl,
     StructLiteral, Throw, TryCatch, UnaryOp, VariableDeclaration, While,
 )
@@ -46,6 +46,8 @@ STRUCT_TYPES: dict[str, ir.LiteralStructType] = {}
 STRUCT_FIELDS: dict[str, list[tuple[str, str]]] = {}
 STRUCT_FIELD_INDEX: dict[str, dict[str, int]] = {}
 ENUM_VARIANTS: dict[str, dict[str, int]] = {}
+IFACE_METHODS: dict[str, list[tuple[str, list[str], str]]] = {}
+IFACE_TYPES: dict[str, ir.LiteralStructType] = {}
 
 
 def llvm_type(nc_type: str | None):
@@ -60,6 +62,10 @@ def llvm_type(nc_type: str | None):
         return STR_TYPE
     if nc_type == "nc_map":
         return MAP_TYPE
+    if nc_type in IFACE_METHODS:
+        if nc_type not in IFACE_TYPES:
+            IFACE_TYPES[nc_type] = ir.LiteralStructType([I8PTR, I8PTR])
+        return IFACE_TYPES[nc_type]
     if nc_type in ("*void", "?*void"):
         return I8PTR
     fn_info = parse_fn_type(nc_type)
@@ -163,6 +169,8 @@ class LLVMCodegen:
         self.emitting_defer = False
         self.current_gc_mark = None
         self.current_return_slot = None
+        self.iface_vtables: dict[tuple[str, str], ir.GlobalVariable] = {}
+        self.iface_thunks: dict[tuple[str, str, str], ir.Function] = {}
 
     def generate(self, program) -> str:
         collected = collect_codegen_inputs(program)
@@ -170,6 +178,7 @@ class LLVMCodegen:
             raise NotImplementedError("LLVM backend v1 does not support top-level statements")
         self.register_enums(collected.enums)
         self.register_structs(collected.structs)
+        self.register_ifaces(program)
         self.register_closure_envs(collected.closures)
 
         funcs = collected.other_funcs + ([collected.main_func] if collected.main_func else [])
@@ -204,6 +213,40 @@ class LLVMCodegen:
             STRUCT_TYPES[struct.name] = ir.LiteralStructType([
                 llvm_type(field_type) for _field_name, field_type in struct.fields
             ])
+
+    def register_ifaces(self, program):
+        IFACE_METHODS.clear()
+        IFACE_TYPES.clear()
+        raw = {}
+        for stmt in program.statements:
+            if isinstance(stmt, IfaceDecl):
+                raw[stmt.name] = stmt
+
+        def resolve(name, stack=None):
+            stack = stack or []
+            if name in IFACE_METHODS:
+                return IFACE_METHODS[name]
+            if name in stack:
+                raise RuntimeError(f"iface {name}: embedded iface cycle")
+            stmt = raw[name]
+            methods = {}
+            order = []
+            def add(mname, params, ret):
+                sig = ([ptype for _pname, ptype in params], ret or "void")
+                if mname not in methods:
+                    order.append(mname)
+                methods[mname] = sig
+            for embed in stmt.embeds:
+                for mname, param_types, ret in resolve(embed, stack + [name]):
+                    add(mname, [(f"arg{i}", t) for i, t in enumerate(param_types)], ret)
+            for mname, params, ret in stmt.methods:
+                add(mname, params, ret)
+            IFACE_METHODS[name] = [(mname, methods[mname][0], methods[mname][1]) for mname in order]
+            IFACE_TYPES[name] = ir.LiteralStructType([I8PTR, I8PTR])
+            return IFACE_METHODS[name]
+
+        for name in list(raw):
+            resolve(name)
 
     def register_closure_envs(self, closures: list[FunctionExpr]):
         self.closure_env_types.clear()
@@ -315,7 +358,7 @@ class LLVMCodegen:
             for stmt in stmts[:-1]:
                 self.emit_stmt(stmt)
             if not self.builder.block.is_terminated:
-                value = self.cast_to(self.emit_expr(stmts[-1].expr), return_type)
+                value = self.emit_coerced_expr(stmts[-1].expr, return_type)
                 if self.current_return_slot is not None:
                     self.builder.store(value, self.current_return_slot)
                 self.emit_deferred()
@@ -385,6 +428,15 @@ class LLVMCodegen:
             )
             self.root_pointer_slot(field)
             return
+        if nc_type in IFACE_METHODS:
+            field = self.builder.gep(
+                ptr,
+                [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 1)],
+                inbounds=True,
+                name="gc.root.iface.data",
+            )
+            self.root_pointer_slot(field)
+            return
         if isinstance(nc_type, str) and nc_type in STRUCT_FIELDS:
             for i, (_field_name, field_type) in enumerate(STRUCT_FIELDS[nc_type]):
                 field = self.builder.gep(
@@ -440,7 +492,7 @@ class LLVMCodegen:
             slot = self.alloca_at_entry(safe_user_ident(stmt.name), typ)
             self.vars[stmt.name] = (slot, stmt.type)
             self.root_slots_for_type(slot, stmt.type)
-            self.builder.store(self.cast_to(self.emit_expr(stmt.initializer), stmt.type), slot)
+            self.builder.store(self.emit_coerced_expr(stmt.initializer, stmt.type), slot)
             self.branch_on_exception()
             return
         if isinstance(stmt, Assignment):
@@ -449,7 +501,7 @@ class LLVMCodegen:
                 self.branch_on_exception()
                 return
             ptr, target_type = self.emit_lvalue(stmt.target)
-            rhs = self.cast_to(self.emit_expr(stmt.expr), target_type)
+            rhs = self.emit_coerced_expr(stmt.expr, target_type)
             if stmt.op != "=":
                 old = self.builder.load(ptr, name="assign.old")
                 rhs = self.emit_binary_values(old, stmt.op[:-1], rhs, target_type)
@@ -483,7 +535,7 @@ class LLVMCodegen:
                 else:
                     self.builder.ret(ir.Constant(self.func.function_type.return_type, 0))
             else:
-                value = self.cast_to(self.emit_expr(stmt.expr), stmt.expr.type)
+                value = self.emit_coerced_expr(stmt.expr, self.current_return_type)
                 if self.current_return_slot is not None:
                     self.builder.store(value, self.current_return_slot)
                 self.emit_deferred()
@@ -761,7 +813,7 @@ class LLVMCodegen:
         if isinstance(node, ArrayLiteral):
             value = ir.Constant(llvm_type(node.type), ir.Undefined)
             for i, elem in enumerate(node.elements):
-                elem_value = self.cast_to(self.emit_expr(elem), node.elem_type)
+                elem_value = self.emit_coerced_expr(elem, node.elem_type)
                 value = self.builder.insert_value(value, elem_value, [i], name="arr.ins")
             return value
         if isinstance(node, SliceLiteral):
@@ -820,7 +872,7 @@ class LLVMCodegen:
         struct_type = llvm_type(node.name)
         value = ir.Constant(struct_type, ir.Undefined)
         for i, (field_name, field_type) in enumerate(fields):
-            field_value = self.cast_to(self.emit_expr(given[field_name]), field_type)
+            field_value = self.emit_coerced_expr(given[field_name], field_type)
             value = self.builder.insert_value(value, field_value, [i], name="struct.ins")
         if node.heap:
             ptr = self.malloc_struct(node.name)
@@ -1103,7 +1155,8 @@ class LLVMCodegen:
             closure = self.emit_expr(Identifier(node.name))
             call_ptr = self.builder.extract_value(closure, 0)
             env = self.builder.extract_value(closure, 1)
-            args = [env] + [self.emit_expr(arg) for arg in node.args]
+            param_types = getattr(node, "closure_param_types", [arg.type for arg in node.args])
+            args = [env] + [self.emit_coerced_expr(arg, ptype) for arg, ptype in zip(node.args, param_types)]
             return self.builder.call(call_ptr, args)
         if node.name == "len":
             if len(node.args) != 1:
@@ -1175,7 +1228,11 @@ class LLVMCodegen:
             raise NotImplementedError(f"LLVM backend v1 cannot call {node.name}")
         fn_decl = self.fn_decls[node.name]
         fn = self.module.globals[self.function_symbol(fn_decl)]
-        return self.builder.call(fn, [self.emit_expr(arg) for arg in node.args])
+        coerced_args = [
+            self.emit_coerced_expr(arg, ptype)
+            for arg, (_pname, ptype) in zip(node.args, fn_decl.params)
+        ]
+        return self.builder.call(fn, coerced_args)
 
     def emit_function_expr(self, node: FunctionExpr):
         closure_type = llvm_type(node.type)
@@ -1208,6 +1265,25 @@ class LLVMCodegen:
 
     def emit_method_call(self, node: MethodCall):
         obj_type = node.obj.type
+        if obj_type in IFACE_METHODS:
+            iface_value = self.emit_expr(node.obj)
+            method_index = next(i for i, (name, _params, _ret) in enumerate(IFACE_METHODS[obj_type]) if name == node.method)
+            _mname, param_types, ret_type = IFACE_METHODS[obj_type][method_index]
+            vt_i8 = self.builder.extract_value(iface_value, 0, name="iface.vtable")
+            data = self.builder.extract_value(iface_value, 1, name="iface.data")
+            fn_type = ir.FunctionType(llvm_type(ret_type), [I8PTR] + [llvm_type(t) for t in param_types]).as_pointer()
+            vt_type = ir.LiteralStructType(self.iface_vtable_function_ptr_types(obj_type)).as_pointer()
+            vt_ptr = self.builder.bitcast(vt_i8, vt_type, name="iface.vtable.ptr")
+            fn_ptr_ptr = self.builder.gep(
+                vt_ptr,
+                [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), method_index)],
+                inbounds=True,
+                name="iface.method.ptr.ptr",
+            )
+            fn_ptr = self.builder.load(fn_ptr_ptr, name="iface.method.ptr")
+            fn_ptr = self.builder.bitcast(fn_ptr, fn_type, name="iface.method.cast")
+            args = [data] + [self.emit_coerced_expr(arg, ptype) for arg, ptype in zip(node.args, param_types)]
+            return self.builder.call(fn_ptr, args)
         if obj_type.startswith("?*"):
             receiver_base = obj_type[2:]
         elif obj_type.startswith("*"):
@@ -1218,8 +1294,18 @@ class LLVMCodegen:
         if name not in self.module.globals:
             raise NotImplementedError(f"LLVM backend v1 cannot call method {receiver_base}.{node.method}")
         fn = self.module.globals[name]
-        args = [self.emit_expr(node.obj)] + [self.emit_expr(arg) for arg in node.args]
+        fn_decl = self.fn_decls[name]
+        args = [self.emit_expr(node.obj)] + [
+            self.emit_coerced_expr(arg, ptype)
+            for arg, (_pname, ptype) in zip(node.args, fn_decl.params)
+        ]
         return self.builder.call(fn, args)
+
+    def iface_vtable_function_ptr_types(self, iface_name):
+        return [
+            ir.FunctionType(llvm_type(ret), [I8PTR] + [llvm_type(t) for t in params]).as_pointer()
+            for _name, params, ret in IFACE_METHODS[iface_name]
+        ]
 
     def emit_println(self, arg):
         self.ensure_printf()
@@ -1508,6 +1594,8 @@ class LLVMCodegen:
             return 8
         if parse_fn_type(nc_type) is not None:
             return 16
+        if nc_type in IFACE_METHODS:
+            return 16
         if parse_slice_type(nc_type) is not None:
             return 24
         array_info = parse_array_type(nc_type)
@@ -1639,6 +1727,63 @@ class LLVMCodegen:
                 return ir.Constant(target, None)
             return self.builder.bitcast(value, target)
         return value
+
+    def emit_coerced_expr(self, expr, target_type):
+        value = self.emit_expr(expr)
+        if target_type in IFACE_METHODS and getattr(expr, "type", None) != target_type:
+            return self.box_iface(value, expr.type, target_type)
+        return self.cast_to(value, target_type)
+
+    def box_iface(self, value, source_type, iface_name):
+        if not isinstance(source_type, str) or not source_type.startswith("*") or source_type.startswith("?*"):
+            raise RuntimeError(f"cannot box {source_type} as iface {iface_name}")
+        concrete = source_type[1:]
+        vtable = self.get_iface_vtable(iface_name, concrete)
+        iface_type = llvm_type(iface_name)
+        boxed = ir.Constant(iface_type, ir.Undefined)
+        boxed = self.builder.insert_value(boxed, self.builder.bitcast(vtable, I8PTR), [0], name="iface.vtable.ins")
+        boxed = self.builder.insert_value(boxed, self.builder.bitcast(value, I8PTR), [1], name="iface.data.ins")
+        return boxed
+
+    def get_iface_vtable(self, iface_name, concrete):
+        key = (iface_name, concrete)
+        if key in self.iface_vtables:
+            return self.iface_vtables[key]
+        field_types = self.iface_vtable_function_ptr_types(iface_name)
+        vt_type = ir.LiteralStructType(field_types)
+        values = []
+        for mname, param_types, ret_type in IFACE_METHODS[iface_name]:
+            thunk = self.get_iface_thunk(iface_name, concrete, mname, param_types, ret_type)
+            values.append(thunk.bitcast(field_types[len(values)]))
+        glob = ir.GlobalVariable(self.module, vt_type, name=safe_user_ident(f"__nc_iface_{iface_name}_{concrete}_vtable"))
+        glob.linkage = "internal"
+        glob.global_constant = True
+        glob.initializer = ir.Constant.literal_struct(values)
+        self.iface_vtables[key] = glob
+        return glob
+
+    def get_iface_thunk(self, iface_name, concrete, method_name, param_types, ret_type):
+        key = (iface_name, concrete, method_name)
+        if key in self.iface_thunks:
+            return self.iface_thunks[key]
+        fn_type = ir.FunctionType(llvm_type(ret_type), [I8PTR] + [llvm_type(t) for t in param_types])
+        name = safe_user_ident(f"__nc_iface_{iface_name}_{concrete}_{method_name}_thunk")
+        thunk = ir.Function(self.module, fn_type, name=name)
+        self.iface_thunks[key] = thunk
+        block = thunk.append_basic_block("entry")
+        saved_builder, saved_func = self.builder, self.func
+        self.builder, self.func = ir.IRBuilder(block), thunk
+        method_sym = safe_user_ident(f"{concrete}_{method_name}")
+        method_fn = self.module.globals[method_sym]
+        receiver = self.builder.bitcast(thunk.args[0], llvm_type(f"*{concrete}"), name="iface.receiver")
+        args = [receiver] + list(thunk.args[1:])
+        result = self.builder.call(method_fn, args)
+        if ret_type == "void":
+            self.builder.ret_void()
+        else:
+            self.builder.ret(result)
+        self.builder, self.func = saved_builder, saved_func
+        return thunk
 
     def cast_numeric(self, value, from_type, to_type):
         target = llvm_type(to_type)

@@ -51,6 +51,9 @@ class Parser:
             if self.peek().kind == TokenKind.EXTERN:
                 stmts.append(self._parse_extern_block())
                 continue
+            if self.peek().kind == TokenKind.IFACE:
+                stmts.append(self._parse_iface())
+                continue
             stmts.append(self.parse_statement())
         return Program(stmts)
 
@@ -78,6 +81,8 @@ class Parser:
             return self._parse_struct()
         if t.kind == TokenKind.ENUM:
             return self._parse_enum()
+        if t.kind == TokenKind.IFACE:
+            raise ParseError("iface is only allowed at top level")
         if t.kind == TokenKind.FOR:
             return self._parse_for()
         if t.kind == TokenKind.TRY:
@@ -419,6 +424,50 @@ class Parser:
                 fields.append((fname, ftype))
         self.expect(TokenKind.RBRACE)
         stmt = StructDecl(name, fields, type_params)
+        self.match(TokenKind.SEMI)
+        return stmt
+
+    def _parse_iface(self):
+        self.advance()
+        name = self.expect(TokenKind.IDENT).value
+        self.expect(TokenKind.LBRACE)
+        methods = []
+        embeds = []
+        while self.peek().kind != TokenKind.RBRACE:
+            if self.peek().kind == TokenKind.EOF:
+                raise ParseError("unterminated iface declaration")
+            if self.peek().kind == TokenKind.FUN:
+                self.advance()
+                if self.peek().kind == TokenKind.LPAREN:
+                    raise ParseError("iface methods cannot have receivers")
+                mname = self.expect(TokenKind.IDENT).value
+                self.expect(TokenKind.LPAREN)
+                params = []
+                if self.peek().kind != TokenKind.RPAREN:
+                    pname = self.expect(TokenKind.IDENT).value
+                    self.expect(TokenKind.COLON)
+                    ptype = self._parse_type()
+                    params.append((pname, ptype))
+                    while self.peek().kind == TokenKind.COMMA:
+                        self.advance()
+                        pname = self.expect(TokenKind.IDENT).value
+                        self.expect(TokenKind.COLON)
+                        ptype = self._parse_type()
+                        params.append((pname, ptype))
+                self.expect(TokenKind.RPAREN)
+                ret = "void"
+                if self.peek().kind == TokenKind.COLON:
+                    self.advance()
+                    ret = self._parse_type()
+                if self.peek().kind == TokenKind.LBRACE:
+                    raise ParseError("iface method declarations cannot have bodies")
+                methods.append((mname, params, ret))
+                self.match(TokenKind.SEMI)
+                continue
+            embeds.append(self._parse_type())
+            self.match(TokenKind.SEMI)
+        self.expect(TokenKind.RBRACE)
+        stmt = IfaceDecl(name, methods, embeds)
         self.match(TokenKind.SEMI)
         return stmt
 

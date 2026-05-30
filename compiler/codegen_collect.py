@@ -6,7 +6,7 @@ from compiler.ast import (
     Assignment, Update, ArrayLiteral, BinaryOp, Block, BlockExpr, Defer, EnumDecl,
     ExternBlock, FieldAccess, ForIn, FunctionCall, FunctionDeclaration, FunctionExpr,
     IfExpr, ImportDecl, IndexAccess, MatchExpr, MethodCall, Return, SliceExpr,
-    SliceLiteral, StructDecl, StructLiteral, Throw, TryCatch, UnaryOp,
+    SliceLiteral, StructDecl, IfaceDecl, StructLiteral, Throw, TryCatch, UnaryOp,
     VariableDeclaration, ExpressionStatement, While,
 )
 
@@ -41,6 +41,8 @@ def collect_codegen_inputs(program) -> CodegenInputs:
         for stmt in stmts:
             if isinstance(stmt, StructDecl):
                 result.structs.append(stmt)
+            elif isinstance(stmt, IfaceDecl):
+                pass
             elif isinstance(stmt, EnumDecl):
                 result.enums.append(stmt)
             elif isinstance(stmt, FunctionDeclaration):
@@ -286,6 +288,6 @@ def collect_codegen_inputs(program) -> CodegenInputs:
 
     result.top_stmts = [
         stmt for stmt in program.statements
-        if not isinstance(stmt, (FunctionDeclaration, StructDecl, EnumDecl, ImportDecl, ExternBlock))
+        if not isinstance(stmt, (FunctionDeclaration, StructDecl, IfaceDecl, EnumDecl, ImportDecl, ExternBlock))
     ]
     return result
