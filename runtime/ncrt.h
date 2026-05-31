@@ -77,6 +77,8 @@ void __nc_rune_to_str_out(str* out, uint32_t r);
 int __nc_str_to_i32_ptr(const str* s);
 void __nc_read_file_out(str* out, const char* path);
 void __nc_write_file_ptr(const char* path, const str* content);
+int __nc_read_file_status(str* out, const char* path);
+int __nc_write_file_status(const char* path, const str* content);
 int __nc_str_eq_ptr(const str* a, const str* b);
 
 void __nc_slice_copy_raw(nc_slice_raw* out, const void* src, uint64_t len, uint64_t elem_size);

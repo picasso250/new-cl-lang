@@ -1,5 +1,13 @@
 # worklog
 
+## 2026-05-31
+
+- 预备质疑并收敛 comptime 设计：删除通用 `comptime fun` / `comptime if` 的 v1 承诺，改为冻结该能力；后续只在具体 case 推动下考虑窄化的常量表达式、`static_assert` 或 `cfg`。
+- 已收敛 design.md 的 comptime 章节：v1 明确不引入通用 `comptime`，并记录后续只按具体 case 考虑常量表达式、`static_assert`、`cfg`、`size_of(T)` 等窄化能力。
+- 预备实现标准库 v1 第一刀：新增内置一级模块 `fs`，把裸 `read_file` / `write_file` 迁移为 `fs.read_file` / `fs.write_file`，不保留向前兼容；`len` / `append` / 类型转换继续作为语言内建。
+- 已实现标准库 v1 第一刀：`fs` 加入内置模块集合，`fs.read_file` / `fs.write_file` 替代裸文件 IO；ncrt 增加带状态返回的私有文件 IO helper，LLVM 层读写失败设置现有异常 flag 并可被 `try/catch` 捕获。
+- 已迁移文件 IO case 和 LLVM 测试，补裸 `read_file` / `write_file` 删除、未 import `fs`、内置 `fs` 抢占同级目录、读失败 throw 覆盖；验证通过 `python tests/test_basic.py` 与 pytest 组合回归。
+
 ## 当前状态快照 (2026-05-25)
 
 - import/module namespace 已落地为 import v1：同级目录一级模块、命名空间限定访问、导入图递归加载、重复加载去重、cycle 报错、跨模块 `_` 顶层私有。

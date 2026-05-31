@@ -176,6 +176,49 @@ void __nc_write_file(const char* path, str content) {
     fclose(fp);
 }
 
+int __nc_read_file_status(str* out, const char* path) {
+    FILE* fp = fopen(path, "rb");
+    if (!fp) {
+        *out = (str){0, 0};
+        return 1;
+    }
+    if (fseek(fp, 0, SEEK_END) != 0) {
+        fclose(fp);
+        *out = (str){0, 0};
+        return 1;
+    }
+    long sz = ftell(fp);
+    if (sz < 0) {
+        fclose(fp);
+        *out = (str){0, 0};
+        return 1;
+    }
+    if (fseek(fp, 0, SEEK_SET) != 0) {
+        fclose(fp);
+        *out = (str){0, 0};
+        return 1;
+    }
+    uint8_t* buf = (uint8_t*)__nc_gc_alloc((size_t)sz + 1);
+    size_t n = fread(buf, 1, (size_t)sz, fp);
+    int failed = ferror(fp) != 0;
+    fclose(fp);
+    if (failed) {
+        *out = (str){0, 0};
+        return 1;
+    }
+    buf[n] = 0;
+    *out = (str){buf, (uint64_t)n};
+    return 0;
+}
+
+int __nc_write_file_status(const char* path, const str* content) {
+    FILE* fp = fopen(path, "wb");
+    if (!fp) return 1;
+    size_t n = fwrite(content->ptr, 1, (size_t)content->len, fp);
+    int failed = n != (size_t)content->len || fclose(fp) != 0;
+    return failed ? 1 : 0;
+}
+
 int __nc_str_eq(str a, str b) {
     if (a.len != b.len) return 0;
     if (a.len == 0) return 1;

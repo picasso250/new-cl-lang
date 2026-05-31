@@ -15,14 +15,14 @@ def infer_builtin_call(node, require_arg_count, require_type, fail) -> str | Non
     if name == "io.println":
         require_arg_count(args, 1, "io.println", node)
         return "void"
-    if name == "read_file":
-        require_arg_count(args, 1, "read_file", node)
-        require_type(args[0].type, "str", "read_file path", node)
+    if name == "fs.read_file":
+        require_arg_count(args, 1, "fs.read_file", node)
+        require_type(args[0].type, "str", "fs.read_file path", node)
         return "str"
-    if name == "write_file":
-        require_arg_count(args, 2, "write_file", node)
-        require_type(args[0].type, "str", "write_file path", node)
-        require_type(args[1].type, "str", "write_file content", node)
+    if name == "fs.write_file":
+        require_arg_count(args, 2, "fs.write_file", node)
+        require_type(args[0].type, "str", "fs.write_file path", node)
+        require_type(args[1].type, "str", "fs.write_file content", node)
         return "void"
     if name == "append":
         require_arg_count(args, 2, "append", node)

@@ -1205,13 +1205,13 @@ class LLVMCodegen:
             if elem_type is None:
                 raise NotImplementedError(f"LLVM backend v1 cannot append to {slice_type}")
             return self.emit_append(node.args[0], node.args[1], elem_type)
-        if node.name == "read_file":
+        if node.name == "fs.read_file":
             if len(node.args) != 1:
-                raise RuntimeError("read_file expects one argument")
+                raise RuntimeError("fs.read_file expects one argument")
             return self.emit_read_file(node.args[0])
-        if node.name == "write_file":
+        if node.name == "fs.write_file":
             if len(node.args) != 2:
-                raise RuntimeError("write_file expects two arguments")
+                raise RuntimeError("fs.write_file expects two arguments")
             return self.emit_write_file(node.args[0], node.args[1])
         if node.name == "runtime.gc_collect":
             if len(node.args) != 0:
@@ -1536,8 +1536,8 @@ class LLVMCodegen:
             self.f64_to_str_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [str_ptr, ir.DoubleType()]), name="__nc_f64_to_str_out")
             self.rune_to_str_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [str_ptr, ir.IntType(32)]), name="__nc_rune_to_str_out")
             self.str_to_i32_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [str_ptr]), name="__nc_str_to_i32_ptr")
-            self.read_file_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [str_ptr, I8PTR]), name="__nc_read_file_out")
-            self.write_file_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [I8PTR, str_ptr]), name="__nc_write_file_ptr")
+            self.read_file_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [str_ptr, I8PTR]), name="__nc_read_file_status")
+            self.write_file_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [I8PTR, str_ptr]), name="__nc_write_file_status")
             self.map_init_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [MAP_TYPE.as_pointer()]), name="__nc_map_init")
             self.map_get_str_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [str_ptr, MAP_TYPE.as_pointer(), str_ptr]), name="__nc_map_get_str_out")
             self.map_set_str_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [MAP_TYPE.as_pointer(), str_ptr, str_ptr]), name="__nc_map_set_str_ptr")
@@ -1720,7 +1720,8 @@ class LLVMCodegen:
         path = self.emit_expr(path_expr)
         path_ptr = self.builder.extract_value(path, 0)
         out = self.alloca_at_entry("__nc_read_file_out", STR_TYPE)
-        self.builder.call(self.read_file_fn, [out, path_ptr])
+        status = self.builder.call(self.read_file_fn, [out, path_ptr], name="fs.read.status")
+        self.raise_fs_error_if_failed(status, "fs.read_file failed")
         return self.builder.load(out, name="read.result")
 
     def emit_write_file(self, path_expr, content_expr):
@@ -1729,8 +1730,25 @@ class LLVMCodegen:
         content = self.emit_expr(content_expr)
         path_ptr = self.builder.extract_value(path, 0)
         content_ptr = self.value_to_stack_ptr(content, STR_TYPE, "__nc_write_file_content")
-        self.builder.call(self.write_file_fn, [path_ptr, content_ptr])
+        status = self.builder.call(self.write_file_fn, [path_ptr, content_ptr], name="fs.write.status")
+        self.raise_fs_error_if_failed(status, "fs.write_file failed")
         return ir.Constant(ir.IntType(1), 0)
+
+    def raise_fs_error_if_failed(self, status, message: str):
+        self.ensure_exception_runtime()
+        failed = self.builder.icmp_signed("!=", status, ir.Constant(ir.IntType(32), 0), name="fs.failed")
+        fail_bb = self.func.append_basic_block("fs.fail")
+        ok_bb = self.func.append_basic_block("fs.ok")
+        self.builder.cbranch(failed, fail_bb, ok_bb)
+        self.builder.position_at_end(fail_bb)
+        value = ir.Constant.literal_struct([
+            self.global_c_string(message, "fs_error"),
+            ir.Constant(ir.IntType(64), len(message.encode("utf-8"))),
+        ])
+        self.builder.store(value, self.ex_value)
+        self.builder.store(ir.Constant(ir.IntType(1), 1), self.ex_active)
+        self.builder.branch(ok_bb)
+        self.builder.position_at_end(ok_bb)
 
     def emit_str_eq(self, left, right):
         self.ensure_ncrt_runtime()

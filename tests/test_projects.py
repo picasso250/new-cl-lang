@@ -383,6 +383,28 @@ def test_builtin_runtime_module_preempts_sibling_directory():
         assert result.stdout.strip() == ""
 
 
+def test_builtin_fs_module_preempts_sibling_directory():
+    with tempfile.TemporaryDirectory() as tmp:
+        main = os.path.join(tmp, "main")
+        fs_dir = os.path.join(tmp, "fs")
+        os.mkdir(main)
+        os.mkdir(fs_dir)
+        data_path = os.path.join(tmp, "data.txt").replace("\\", "/")
+        write_file(os.path.join(main, "main.nc"), f"""import fs
+import io
+fun main() {{
+    fs.write_file("{data_path}", "ok")
+    io.println(fs.read_file("{data_path}"))
+}}
+""")
+        write_file(os.path.join(fs_dir, "fs.nc"), "fun read_file(path: str): str { bad() }\n")
+
+        result = run_nc("run", main)
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "ok"
+
+
 def test_bare_print_and_unimported_io_println_errors():
     with tempfile.TemporaryDirectory() as tmp:
         main = os.path.join(tmp, "main")
@@ -397,3 +419,24 @@ def test_bare_print_and_unimported_io_println_errors():
         result = run_nc("compile", main)
         assert result.returncode != 0
         assert "Variable 'io' not found" in result.stderr
+
+
+def test_bare_file_io_and_unimported_fs_errors():
+    with tempfile.TemporaryDirectory() as tmp:
+        main = os.path.join(tmp, "main")
+        os.mkdir(main)
+
+        write_file(os.path.join(main, "main.nc"), 'fun main() { read_file("x") }\n')
+        result = run_nc("compile", main)
+        assert result.returncode != 0
+        assert "Function 'read_file' not found" in result.stderr
+
+        write_file(os.path.join(main, "main.nc"), 'fun main() { write_file("x", "y") }\n')
+        result = run_nc("compile", main)
+        assert result.returncode != 0
+        assert "Function 'write_file' not found" in result.stderr
+
+        write_file(os.path.join(main, "main.nc"), 'fun main() { fs.read_file("x") }\n')
+        result = run_nc("compile", main)
+        assert result.returncode != 0
+        assert "Variable 'fs' not found" in result.stderr

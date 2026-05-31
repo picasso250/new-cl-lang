@@ -24,9 +24,13 @@ def test_io_println_is_the_only_output_builtin():
     source = _read("compiler/builtins.py")
 
     assert 'name == "io.println"' in source
+    assert 'name == "fs.read_file"' in source
+    assert 'name == "fs.write_file"' in source
     assert 'name == "runtime.gc_collect"' in source
     assert 'name == "runtime.gc_live"' in source
     assert 'name == "print"' not in source
+    assert 'name == "read_file"' not in source
+    assert 'name == "write_file"' not in source
     assert 'name == "gc_collect"' not in source
     assert 'name == "gc_live"' not in source
 

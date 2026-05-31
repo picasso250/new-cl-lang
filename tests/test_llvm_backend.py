@@ -380,16 +380,34 @@ fun main() {
 
 def test_llvm_file_io(tmp_path):
     path = str(tmp_path / "llvm_file_io.txt").replace("\\", "/")
-    source = f"""import io
+    source = f"""import fs
+import io
 fun main() {{
-    write_file("{path}", "hello")
-    let content = read_file("{path}")
+    fs.write_file("{path}", "hello")
+    let content = fs.read_file("{path}")
     io.println(content)
 }}
 """
     llvm_ir = compile_nc_to_llvm_ir(source)
     stdout, stderr, rc = run_llvm_ir(llvm_ir)
     assert (stdout.strip(), stderr.strip(), rc) == ("hello", "", 0)
+
+
+def test_llvm_fs_read_failure_throws(tmp_path):
+    path = str(tmp_path / "missing.txt").replace("\\", "/")
+    source = f"""import fs
+import io
+fun main() {{
+    try {{
+        io.println(fs.read_file("{path}"))
+    }} catch e {{
+        io.println(e)
+    }}
+}}
+"""
+    llvm_ir = compile_nc_to_llvm_ir(source)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    assert (stdout.strip(), stderr.strip(), rc) == ("fs.read_file failed", "", 0)
 
 
 def test_llvm_map_basic_and_growth():
