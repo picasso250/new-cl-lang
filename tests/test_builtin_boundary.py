@@ -27,6 +27,10 @@ def test_io_output_builtins_are_std_module_qualified():
     assert 'name in {"io.print", "io.println"}' in source
     assert 'name == "fs.read_file"' in source
     assert 'name == "fs.write_file"' in source
+    assert 'name == "fs.exists"' in source
+    assert 'name == "fs.remove"' in source
+    assert 'name == "fs.rename"' in source
+    assert 'name == "fs.mkdir"' in source
     assert 'name == "runtime.gc_collect"' in source
     assert 'name == "runtime.gc_live"' in source
     assert 'name == "cap"' in source
@@ -47,4 +51,5 @@ def test_llvm_declares_external_ncrt_symbols():
 
     assert "__nc_gc_alloc" in source
     assert "__nc_read_file" in source
+    assert "__nc_fs_exists" in source
     assert "__nc_map_init" in source

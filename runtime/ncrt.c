@@ -4,9 +4,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <sys/stat.h>
 #ifdef _WIN32
+#include <direct.h>
 #include <fcntl.h>
 #include <io.h>
+#else
+#include <unistd.h>
 #endif
 
 struct nc_entry {
@@ -217,6 +221,33 @@ int __nc_write_file_status(const char* path, const str* content) {
     size_t n = fwrite(content->ptr, 1, (size_t)content->len, fp);
     int failed = n != (size_t)content->len || fclose(fp) != 0;
     return failed ? 1 : 0;
+}
+
+int __nc_fs_exists(const char* path) {
+    struct stat st;
+    return stat(path, &st) == 0 ? 1 : 0;
+}
+
+int __nc_fs_remove(const char* path) {
+    if (remove(path) == 0) return 0;
+#ifdef _WIN32
+    return _rmdir(path) == 0 ? 0 : 1;
+#else
+    return rmdir(path) == 0 ? 0 : 1;
+#endif
+}
+
+int __nc_fs_rename(const char* old_path, const char* new_path) {
+    if (__nc_fs_exists(new_path)) return 1;
+    return rename(old_path, new_path) == 0 ? 0 : 1;
+}
+
+int __nc_fs_mkdir(const char* path) {
+#ifdef _WIN32
+    return _mkdir(path) == 0 ? 0 : 1;
+#else
+    return mkdir(path, 0777) == 0 ? 0 : 1;
+#endif
 }
 
 int __nc_str_eq(str a, str b) {

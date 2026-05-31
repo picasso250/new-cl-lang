@@ -553,3 +553,6 @@
 - 预备实现第一批基础内建：新增 cap/copy/delete/clear/min/max/abs，覆盖 slice 容量与复制、map 删除/清空以及数值常用函数；同步补 case、design 和 builtin 边界测试。
 
 - 已实现第一批基础内建：cap(s)、copy(dst, src)、clear(slice/map)、delete(map, key)、min/max 与 bs；ncrt 增加 slice copy/clear 与 map delete/clear helper，LLVM lowering 和类型检查已接入。新增 case_231~236 覆盖正向和错误路径，design.md 与 builtin 边界测试已同步。验证通过：python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_type_ref.py -q。
+
+- 预备扩展标准库 fs 基础路径操作：新增 `fs.exists`、`fs.remove`、`fs.rename`、`fs.mkdir`，延续当前内置标准模块边界与 throw 失败语义；`exists` 对不存在返回 false。
+- 已扩展标准库 fs 基础路径操作：新增 `fs.exists`、`fs.remove`、`fs.rename`、`fs.mkdir`，ncrt 提供平台封装；`remove` 支持文件与空目录，`rename` 在目标已存在时失败，其他失败通过现有异常路径 throw。新增 case_237~241 覆盖路径操作、类型错误和 throw 捕获；更新 design.md 与 builtin/project 边界测试。验证通过：python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_type_ref.py -q。

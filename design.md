@@ -59,7 +59,7 @@ import io                # 内置标准模块，不要求存在同级 io/ 目录
 当前内置标准模块边界：
 
 - `io.print(value)` / `io.println(value)` 是当前落地的标准输出 API；`println` 自动追加换行，`print` 不追加换行。
-- `fs.read_file(path)` / `fs.write_file(path, content)` 是当前唯一落地的文件 IO API；读写失败会 `throw` 字符串错误。
+- `fs.read_file(path)` / `fs.write_file(path, content)` / `fs.exists(path)` / `fs.remove(path)` / `fs.rename(old_path, new_path)` / `fs.mkdir(path)` 是当前落地的文件系统 API；除 `exists` 对不存在返回 `false` 外，操作失败会 `throw` 字符串错误。`mkdir` 只创建单级目录，`rename` 在目标已存在时失败。
 - `runtime.gc_collect()` 与 `runtime.gc_live()` 是当前唯一公开的运行时调试 API；裸 `gc_collect()` / `gc_live()` 不再是 builtin。
 - `io.print` / `io.println` 支持输出 `str`、`rune`、`bool`、有符号整数、无符号整数和浮点数；`rune` 按对应 UTF-8 字符输出，不输出数字码点。
 - 裸 `print(...)` 不是语言内建，也不向前兼容。
@@ -69,7 +69,7 @@ import io                # 内置标准模块，不要求存在同级 io/ 目录
 
 - LLVM 是唯一后端：`compile` 输出 LLVM IR，`build` 输出 `build/main.ll`、`build/main.obj`、`build/ncrt.obj` 与 `build/main.exe`。
 - `--backend` 入口已删除；显式传入 `--backend` 会报错。旧 C 后端和旧 `compile_nc_to_c` / `run_c_code` / `build_c_code` API 不保留向前兼容。
-- LLVM 后端 v1 当前承诺基础闭环：基础数值/bool 类型、`str` 字面量/索引/切片/拼接、数值转换、`str(i32)`、`i32(str)`、`len(str)`、`str ==/!=`、定长数组字面量/索引/索引赋值、slice layout/literal/index/`len`/`cap`/`append`/`copy`/`clear`、定长数组与 slice 切片复制、slice `for i, item in s`、struct 值类型声明/字面量/字段读写/参数与返回、heap struct `new`、指针 receiver 方法声明/调用、nullable pointer `nil`/`!= nil` 窄化后字段与方法访问、enum tag/variant/比较、整数/字符串/bool/enum `match` 表达式、block 表达式、算术/比较、`let`、重赋值、函数、显式 `return` 与尾表达式返回、`if`、条件 `for`、range `for i in start..end`、`break`、`fs.read_file`/`fs.write_file`、`map[K,V]` 的构造/读写/`map_has`/`delete`/`clear`/`len(map)`、函数调用与 `io.println`。
+- LLVM 后端 v1 当前承诺基础闭环：基础数值/bool 类型、`str` 字面量/索引/切片/拼接、数值转换、`str(i32)`、`i32(str)`、`len(str)`、`str ==/!=`、定长数组字面量/索引/索引赋值、slice layout/literal/index/`len`/`cap`/`append`/`copy`/`clear`、定长数组与 slice 切片复制、slice `for i, item in s`、struct 值类型声明/字面量/字段读写/参数与返回、heap struct `new`、指针 receiver 方法声明/调用、nullable pointer `nil`/`!= nil` 窄化后字段与方法访问、enum tag/variant/比较、整数/字符串/bool/enum `match` 表达式、block 表达式、算术/比较、`let`、重赋值、函数、显式 `return` 与尾表达式返回、`if`、条件 `for`、range `for i in start..end`、`break`、`fs.read_file`/`fs.write_file`/`fs.exists`/`fs.remove`/`fs.rename`/`fs.mkdir`、`map[K,V]` 的构造/读写/`map_has`/`delete`/`clear`/`len(map)`、函数调用与 `io.println`。
 - LLVM 后端链接 `runtime/ncrt.h` + `runtime/ncrt.c` 编译出的 `ncrt.obj`。`ncrt` 固定基础 ABI：`str`、`nc_map`、`nc_slice_raw`、`__nc_gc_alloc`/`__nc_gc_collect`/`__nc_gc_live`、root slot、字符串/file/cast/map helper、字节级 slice append/copy helper 与 C 异常入口。除 `runtime.gc_collect()` / `runtime.gc_live()` 外，其他 `ncrt` helper 都是编译器私有 ABI。`[]T` 语言布局仍为 `{ T* ptr; u64 len; u64 cap }`，`elem_size` 仅作为 runtime helper 调用参数传入，不进入 slice header。
 - LLVM `map[K,V]` 当前运行时布局匹配 `ncrt.h` 的私有 `nc_map`：`{ entries, cap, len, tombstones }`，entries 在 LLVM 侧为 opaque pointer；get/set/has 统一调用 `ncrt` tagged scalar 哈希表实现，`len(map)` 读取 len 字段。
 - LLVM slice、map、closure env、heap struct 与运行时构造字符串的动态存储统一通过外部 `__nc_gc_alloc` 分配；该入口由 `ncrt.obj` 提供。共享 `ncrt` 当前实现显式 mark-sweep GC：`gc_collect()` 从已注册 root slot 出发标记可达块，保守扫描已标记 heap payload 内的 machine word，释放不可达块；`gc_live()` 返回当前存活 GC block 数。

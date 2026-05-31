@@ -29,6 +29,23 @@ def infer_builtin_call(node, require_arg_count, require_type, fail) -> str | Non
         require_type(args[0].type, "str", "fs.write_file path", node)
         require_type(args[1].type, "str", "fs.write_file content", node)
         return "void"
+    if name == "fs.exists":
+        require_arg_count(args, 1, "fs.exists", node)
+        require_type(args[0].type, "str", "fs.exists path", node)
+        return "bool"
+    if name == "fs.remove":
+        require_arg_count(args, 1, "fs.remove", node)
+        require_type(args[0].type, "str", "fs.remove path", node)
+        return "void"
+    if name == "fs.rename":
+        require_arg_count(args, 2, "fs.rename", node)
+        require_type(args[0].type, "str", "fs.rename old_path", node)
+        require_type(args[1].type, "str", "fs.rename new_path", node)
+        return "void"
+    if name == "fs.mkdir":
+        require_arg_count(args, 1, "fs.mkdir", node)
+        require_type(args[0].type, "str", "fs.mkdir path", node)
+        return "void"
     if name == "append":
         require_arg_count(args, 2, "append", node)
         if not args[0].type.startswith("[]"):

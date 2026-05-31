@@ -287,6 +287,10 @@ class LLVMCodegen:
         self.str_to_i32_fn = None
         self.read_file_fn = None
         self.write_file_fn = None
+        self.fs_exists_fn = None
+        self.fs_remove_fn = None
+        self.fs_rename_fn = None
+        self.fs_mkdir_fn = None
         self.map_init_fn = None
         self.map_get_fn = None
         self.map_set_fn = None
@@ -1397,6 +1401,22 @@ class LLVMCodegen:
             if len(node.args) != 2:
                 raise RuntimeError("fs.write_file expects two arguments")
             return self.emit_write_file(node.args[0], node.args[1])
+        if node.name == "fs.exists":
+            if len(node.args) != 1:
+                raise RuntimeError("fs.exists expects one argument")
+            return self.emit_fs_exists(node.args[0])
+        if node.name == "fs.remove":
+            if len(node.args) != 1:
+                raise RuntimeError("fs.remove expects one argument")
+            return self.emit_fs_remove(node.args[0])
+        if node.name == "fs.rename":
+            if len(node.args) != 2:
+                raise RuntimeError("fs.rename expects two arguments")
+            return self.emit_fs_rename(node.args[0], node.args[1])
+        if node.name == "fs.mkdir":
+            if len(node.args) != 1:
+                raise RuntimeError("fs.mkdir expects one argument")
+            return self.emit_fs_mkdir(node.args[0])
         if node.name == "runtime.gc_collect":
             if len(node.args) != 0:
                 raise RuntimeError("runtime.gc_collect expects no arguments")
@@ -1848,6 +1868,10 @@ class LLVMCodegen:
             self.str_to_i32_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [str_ptr]), name="__nc_str_to_i32_ptr")
             self.read_file_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [str_ptr, I8PTR]), name="__nc_read_file_status")
             self.write_file_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [I8PTR, str_ptr]), name="__nc_write_file_status")
+            self.fs_exists_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [I8PTR]), name="__nc_fs_exists")
+            self.fs_remove_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [I8PTR]), name="__nc_fs_remove")
+            self.fs_rename_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [I8PTR, I8PTR]), name="__nc_fs_rename")
+            self.fs_mkdir_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [I8PTR]), name="__nc_fs_mkdir")
             self.map_init_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [MAP_TYPE.as_pointer()]), name="__nc_map_init")
             nc_val_ptr = NC_VAL_TYPE.as_pointer()
             self.map_get_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [nc_val_ptr, MAP_TYPE.as_pointer(), nc_val_ptr, ir.IntType(32)]), name="__nc_map_get")
@@ -2099,6 +2123,39 @@ class LLVMCodegen:
         content_ptr = self.value_to_stack_ptr(content, STR_TYPE, "__nc_write_file_content")
         status = self.builder.call(self.write_file_fn, [path_ptr, content_ptr], name="fs.write.status")
         self.raise_fs_error_if_failed(status, "fs.write_file failed")
+        return ir.Constant(ir.IntType(1), 0)
+
+    def emit_fs_exists(self, path_expr):
+        self.ensure_ncrt_runtime()
+        path = self.emit_expr(path_expr)
+        path_ptr = self.builder.extract_value(path, 0)
+        result = self.builder.call(self.fs_exists_fn, [path_ptr], name="fs.exists.i32")
+        return self.builder.icmp_signed("!=", result, ir.Constant(ir.IntType(32), 0), name="fs.exists")
+
+    def emit_fs_remove(self, path_expr):
+        self.ensure_ncrt_runtime()
+        path = self.emit_expr(path_expr)
+        path_ptr = self.builder.extract_value(path, 0)
+        status = self.builder.call(self.fs_remove_fn, [path_ptr], name="fs.remove.status")
+        self.raise_fs_error_if_failed(status, "fs.remove failed")
+        return ir.Constant(ir.IntType(1), 0)
+
+    def emit_fs_rename(self, old_path_expr, new_path_expr):
+        self.ensure_ncrt_runtime()
+        old_path = self.emit_expr(old_path_expr)
+        new_path = self.emit_expr(new_path_expr)
+        old_path_ptr = self.builder.extract_value(old_path, 0)
+        new_path_ptr = self.builder.extract_value(new_path, 0)
+        status = self.builder.call(self.fs_rename_fn, [old_path_ptr, new_path_ptr], name="fs.rename.status")
+        self.raise_fs_error_if_failed(status, "fs.rename failed")
+        return ir.Constant(ir.IntType(1), 0)
+
+    def emit_fs_mkdir(self, path_expr):
+        self.ensure_ncrt_runtime()
+        path = self.emit_expr(path_expr)
+        path_ptr = self.builder.extract_value(path, 0)
+        status = self.builder.call(self.fs_mkdir_fn, [path_ptr], name="fs.mkdir.status")
+        self.raise_fs_error_if_failed(status, "fs.mkdir failed")
         return ir.Constant(ir.IntType(1), 0)
 
     def raise_fs_error_if_failed(self, status, message: str):

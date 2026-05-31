@@ -455,3 +455,8 @@ def test_bare_file_io_and_unimported_fs_errors():
         result = run_nc("compile", main)
         assert result.returncode != 0
         assert "Variable 'fs' not found" in result.stderr
+
+        write_file(os.path.join(main, "main.nc"), 'fun main() { fs.exists("x") }\n')
+        result = run_nc("compile", main)
+        assert result.returncode != 0
+        assert "Variable 'fs' not found" in result.stderr
