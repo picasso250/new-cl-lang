@@ -91,6 +91,11 @@ int __nc_fs_remove(const char* path);
 int __nc_fs_rename(const char* old_path, const char* new_path);
 int __nc_fs_mkdir(const char* path);
 int __nc_str_eq_ptr(const str* a, const str* b);
+void __nc_os_args(nc_slice_raw* out, int argc, char** argv);
+void __nc_os_getenv_out(str* out, const str* name);
+int __nc_os_has_env(const str* name);
+int __nc_os_cwd_out(str* out);
+void __nc_os_exit(int32_t code);
 
 void __nc_slice_copy_raw(nc_slice_raw* out, const void* src, uint64_t len, uint64_t elem_size);
 void __nc_slice_append_raw(nc_slice_raw* out, const nc_slice_raw* in, const void* elem, uint64_t elem_size);

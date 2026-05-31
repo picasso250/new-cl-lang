@@ -14,7 +14,7 @@ from compiler.ast import (
 )
 from compiler.type_ref import rewrite_type
 
-BUILTIN_MODULES = {"io", "runtime", "fs"}
+BUILTIN_MODULES = {"io", "runtime", "fs", "os"}
 
 
 def _expand_type_str(t: str, aliases: dict[str, str], stack: list[str]) -> str:

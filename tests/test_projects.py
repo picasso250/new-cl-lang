@@ -420,6 +420,21 @@ fun main() {{
         assert result.stdout.strip() == "ok"
 
 
+def test_builtin_os_module_preempts_sibling_directory():
+    with tempfile.TemporaryDirectory() as tmp:
+        main = os.path.join(tmp, "main")
+        os_dir = os.path.join(tmp, "os")
+        os.mkdir(main)
+        os.mkdir(os_dir)
+        write_file(os.path.join(main, "main.nc"), "import io\nimport os\nfun main() { io.println(len(os.args()) > 0) }\n")
+        write_file(os.path.join(os_dir, "os.nc"), "fun args(): []str { bad() }\n")
+
+        result = run_nc("run", main)
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "1"
+
+
 def test_bare_print_and_unimported_io_println_errors():
     with tempfile.TemporaryDirectory() as tmp:
         main = os.path.join(tmp, "main")
@@ -460,3 +475,8 @@ def test_bare_file_io_and_unimported_fs_errors():
         result = run_nc("compile", main)
         assert result.returncode != 0
         assert "Variable 'fs' not found" in result.stderr
+
+        write_file(os.path.join(main, "main.nc"), 'fun main() { os.args() }\n')
+        result = run_nc("compile", main)
+        assert result.returncode != 0
+        assert "Variable 'os' not found" in result.stderr

@@ -556,3 +556,6 @@
 
 - 预备扩展标准库 fs 基础路径操作：新增 `fs.exists`、`fs.remove`、`fs.rename`、`fs.mkdir`，延续当前内置标准模块边界与 throw 失败语义；`exists` 对不存在返回 false。
 - 已扩展标准库 fs 基础路径操作：新增 `fs.exists`、`fs.remove`、`fs.rename`、`fs.mkdir`，ncrt 提供平台封装；`remove` 支持文件与空目录，`rename` 在目标已存在时失败，其他失败通过现有异常路径 throw。新增 case_237~241 覆盖路径操作、类型错误和 throw 捕获；更新 design.md 与 builtin/project 边界测试。验证通过：python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_type_ref.py -q。
+
+- 预备实现标准库 `os` 模块 v1：新增内置一级模块 `os`，提供 args/getenv/has_env/cwd/exit；LLVM main 改为接收 argc/argv 并保存供 `os.args()` 使用，runtime/ncrt 增加私有 OS helper；同步补 case、设计文档与边界测试。
+- 已实现标准库 `os` 模块 v1：`os` 加入内置模块集合并优先于同级目录；新增 `os.args`/`os.getenv`/`os.has_env`/`os.cwd`/`os.exit` 类型检查、LLVM lowering 和 ncrt 私有 helper；LLVM `main` 改为 C ABI `main(i32 argc, i8** argv)` 并保存 argc/argv。新增 case_242~244 与项目/LLVM 边界测试，`run_llvm_ir` 支持传入 args/env。验证通过：`python tests/test_basic.py`；`python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_type_ref.py -q`。

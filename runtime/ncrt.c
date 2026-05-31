@@ -9,6 +9,7 @@
 #include <direct.h>
 #include <fcntl.h>
 #include <io.h>
+#define getcwd _getcwd
 #else
 #include <unistd.h>
 #endif
@@ -248,6 +249,62 @@ int __nc_fs_mkdir(const char* path) {
 #else
     return mkdir(path, 0777) == 0 ? 0 : 1;
 #endif
+}
+
+void __nc_os_args(nc_slice_raw* out, int argc, char** argv) {
+    out->ptr = NULL;
+    out->len = argc > 0 ? (uint64_t)argc : 0;
+    out->cap = out->len;
+    if (out->len == 0) return;
+    str* items = (str*)__nc_gc_alloc((size_t)out->len * sizeof(str));
+    for (uint64_t i = 0; i < out->len; i++) {
+        char* arg = argv[i] ? argv[i] : "";
+        items[i].ptr = (uint8_t*)arg;
+        items[i].len = (uint64_t)strlen(arg);
+    }
+    out->ptr = items;
+}
+
+static char* __nc_str_to_cstr(const str* s) {
+    char* buf = (char*)__nc_gc_alloc((size_t)s->len + 1);
+    if (s->len) memcpy(buf, s->ptr, (size_t)s->len);
+    buf[s->len] = 0;
+    return buf;
+}
+
+void __nc_os_getenv_out(str* out, const str* name) {
+    char* key = __nc_str_to_cstr(name);
+    char* value = getenv(key);
+    if (!value) {
+        *out = (str){0, 0};
+        return;
+    }
+    *out = (str){(uint8_t*)value, (uint64_t)strlen(value)};
+}
+
+int __nc_os_has_env(const str* name) {
+    char* key = __nc_str_to_cstr(name);
+    return getenv(key) != NULL ? 1 : 0;
+}
+
+int __nc_os_cwd_out(str* out) {
+    size_t cap = 256;
+    for (;;) {
+        char* buf = (char*)__nc_gc_alloc(cap);
+        if (getcwd(buf, (int)cap)) {
+            *out = (str){(uint8_t*)buf, (uint64_t)strlen(buf)};
+            return 0;
+        }
+        if (cap >= 65536) {
+            *out = (str){0, 0};
+            return 1;
+        }
+        cap *= 2;
+    }
+}
+
+void __nc_os_exit(int32_t code) {
+    exit((int)code);
 }
 
 int __nc_str_eq(str a, str b) {

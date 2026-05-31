@@ -24,6 +24,28 @@ fun main() {
     assert (stdout.strip(), stderr.strip(), rc) == ("3", "", 0)
 
 
+def test_llvm_os_args_and_env():
+    source = """import io
+import os
+fun main() {
+    let args = os.args()
+    io.println(len(args))
+    io.println(args[1])
+    io.println(os.getenv("NC_OS_TEST_SET"))
+    io.println(os.has_env("NC_OS_TEST_EMPTY"))
+    io.println(os.getenv("NC_OS_TEST_EMPTY") == "")
+    io.println(os.has_env("NC_OS_TEST_MISSING"))
+}
+"""
+    llvm_ir = compile_nc_to_llvm_ir(source)
+    stdout, stderr, rc = run_llvm_ir(
+        llvm_ir,
+        args=["alpha"],
+        env={"NC_OS_TEST_SET": "value", "NC_OS_TEST_EMPTY": ""},
+    )
+    assert (stdout.strip(), stderr.strip(), rc) == ("2\nalpha\nvalue\n1\n1\n0", "", 0)
+
+
 def test_llvm_println_and_control_flow():
     source = """import io
 fun add(x: i32, y: i32): i32 { return x + y }

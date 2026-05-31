@@ -31,6 +31,11 @@ def test_io_output_builtins_are_std_module_qualified():
     assert 'name == "fs.remove"' in source
     assert 'name == "fs.rename"' in source
     assert 'name == "fs.mkdir"' in source
+    assert 'name == "os.args"' in source
+    assert 'name == "os.getenv"' in source
+    assert 'name == "os.has_env"' in source
+    assert 'name == "os.cwd"' in source
+    assert 'name == "os.exit"' in source
     assert 'name == "runtime.gc_collect"' in source
     assert 'name == "runtime.gc_live"' in source
     assert 'name == "cap"' in source

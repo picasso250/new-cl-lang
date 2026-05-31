@@ -291,6 +291,13 @@ class LLVMCodegen:
         self.fs_remove_fn = None
         self.fs_rename_fn = None
         self.fs_mkdir_fn = None
+        self.os_argc_global = None
+        self.os_argv_global = None
+        self.os_args_fn = None
+        self.os_getenv_fn = None
+        self.os_has_env_fn = None
+        self.os_cwd_fn = None
+        self.os_exit_fn = None
         self.map_init_fn = None
         self.map_get_fn = None
         self.map_set_fn = None
@@ -417,7 +424,7 @@ class LLVMCodegen:
         name = self.function_symbol(fn)
         ret = ir.IntType(32) if fn.name == "main" and (fn.return_type or "void") == "void" else llvm_type(fn.return_type)
         all_params = ([(fn.receiver_name, fn.receiver_type)] if fn.receiver_name else []) + fn.params
-        args = [llvm_type(t) for _n, t in all_params]
+        args = [ir.IntType(32), I8PTR.as_pointer()] if fn.name == "main" else [llvm_type(t) for _n, t in all_params]
         self.module.globals[name] = ir.Function(self.module, ir.FunctionType(ret, args), name=name)
         self.fn_decls[name] = fn
         if not fn.receiver_name:
@@ -489,7 +496,13 @@ class LLVMCodegen:
         self.init_defer_state()
         self.init_gc_frame(is_main=fn.name == "main")
         all_params = ([(fn.receiver_name, fn.receiver_type)] if fn.receiver_name else []) + fn.params
-        for arg, (param_name, param_type) in zip(llvm_fn.args, all_params):
+        llvm_args = list(llvm_fn.args)
+        if fn.name == "main":
+            llvm_args[0].name = "__nc_argc"
+            llvm_args[1].name = "__nc_argv"
+            self.init_os_args(llvm_args[0], llvm_args[1])
+            llvm_args = llvm_args[2:]
+        for arg, (param_name, param_type) in zip(llvm_args, all_params):
             arg.name = safe_user_ident(param_name)
             slot = self.alloca_at_entry(safe_user_ident(param_name), llvm_type(param_type))
             self.builder.store(arg, slot)
@@ -629,6 +642,11 @@ class LLVMCodegen:
             self.builder.call(self.gc_init, [])
         self.current_gc_mark = self.builder.call(self.gc_root_mark, [], name="__nc_gc_mark")
         self.current_return_slot = None
+
+    def init_os_args(self, argc, argv):
+        self.ensure_ncrt_runtime()
+        self.builder.store(argc, self.os_argc_global)
+        self.builder.store(argv, self.os_argv_global)
 
     def emit_gc_rewind(self):
         if self.current_gc_mark is not None:
@@ -1417,6 +1435,26 @@ class LLVMCodegen:
             if len(node.args) != 1:
                 raise RuntimeError("fs.mkdir expects one argument")
             return self.emit_fs_mkdir(node.args[0])
+        if node.name == "os.args":
+            if len(node.args) != 0:
+                raise RuntimeError("os.args expects no arguments")
+            return self.emit_os_args()
+        if node.name == "os.getenv":
+            if len(node.args) != 1:
+                raise RuntimeError("os.getenv expects one argument")
+            return self.emit_os_getenv(node.args[0])
+        if node.name == "os.has_env":
+            if len(node.args) != 1:
+                raise RuntimeError("os.has_env expects one argument")
+            return self.emit_os_has_env(node.args[0])
+        if node.name == "os.cwd":
+            if len(node.args) != 0:
+                raise RuntimeError("os.cwd expects no arguments")
+            return self.emit_os_cwd()
+        if node.name == "os.exit":
+            if len(node.args) != 1:
+                raise RuntimeError("os.exit expects one argument")
+            return self.emit_os_exit(node.args[0])
         if node.name == "runtime.gc_collect":
             if len(node.args) != 0:
                 raise RuntimeError("runtime.gc_collect expects no arguments")
@@ -1872,6 +1910,18 @@ class LLVMCodegen:
             self.fs_remove_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [I8PTR]), name="__nc_fs_remove")
             self.fs_rename_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [I8PTR, I8PTR]), name="__nc_fs_rename")
             self.fs_mkdir_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [I8PTR]), name="__nc_fs_mkdir")
+            self.os_argc_global = ir.GlobalVariable(self.module, ir.IntType(32), name="__nc_os_argc")
+            self.os_argc_global.linkage = "internal"
+            self.os_argc_global.initializer = ir.Constant(ir.IntType(32), 0)
+            self.os_argv_global = ir.GlobalVariable(self.module, I8PTR.as_pointer(), name="__nc_os_argv")
+            self.os_argv_global.linkage = "internal"
+            self.os_argv_global.initializer = ir.Constant(I8PTR.as_pointer(), None)
+            raw_slice_ptr = RAW_SLICE_TYPE.as_pointer()
+            self.os_args_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [raw_slice_ptr, ir.IntType(32), I8PTR.as_pointer()]), name="__nc_os_args")
+            self.os_getenv_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [str_ptr, str_ptr]), name="__nc_os_getenv_out")
+            self.os_has_env_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [str_ptr]), name="__nc_os_has_env")
+            self.os_cwd_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [str_ptr]), name="__nc_os_cwd_out")
+            self.os_exit_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [ir.IntType(32)]), name="__nc_os_exit")
             self.map_init_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [MAP_TYPE.as_pointer()]), name="__nc_map_init")
             nc_val_ptr = NC_VAL_TYPE.as_pointer()
             self.map_get_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [nc_val_ptr, MAP_TYPE.as_pointer(), nc_val_ptr, ir.IntType(32)]), name="__nc_map_get")
@@ -1879,7 +1929,6 @@ class LLVMCodegen:
             self.map_has_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [MAP_TYPE.as_pointer(), nc_val_ptr]), name="__nc_map_has")
             self.map_delete_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [MAP_TYPE.as_pointer(), nc_val_ptr]), name="__nc_map_delete")
             self.map_clear_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [MAP_TYPE.as_pointer()]), name="__nc_map_clear")
-            raw_slice_ptr = RAW_SLICE_TYPE.as_pointer()
             self.slice_copy_fn = ir.Function(
                 self.module,
                 ir.FunctionType(ir.VoidType(), [raw_slice_ptr, I8PTR, ir.IntType(64), ir.IntType(64)]),
@@ -2158,6 +2207,44 @@ class LLVMCodegen:
         self.raise_fs_error_if_failed(status, "fs.mkdir failed")
         return ir.Constant(ir.IntType(1), 0)
 
+    def emit_os_args(self):
+        self.ensure_ncrt_runtime()
+        out = self.alloca_at_entry("__nc_os_args_out", llvm_type("[]str"))
+        argc = self.builder.load(self.os_argc_global, name="os.argc")
+        argv = self.builder.load(self.os_argv_global, name="os.argv")
+        raw_out = self.builder.bitcast(out, RAW_SLICE_TYPE.as_pointer(), name="os.args.raw")
+        self.builder.call(self.os_args_fn, [raw_out, argc, argv])
+        return self.builder.load(out, name="os.args")
+
+    def emit_os_getenv(self, name_expr):
+        self.ensure_ncrt_runtime()
+        name = self.emit_expr(name_expr)
+        name_ptr = self.value_to_stack_ptr(name, STR_TYPE, "__nc_os_getenv_name")
+        out = self.alloca_at_entry("__nc_os_getenv_out", STR_TYPE)
+        self.builder.call(self.os_getenv_fn, [out, name_ptr])
+        return self.builder.load(out, name="os.getenv")
+
+    def emit_os_has_env(self, name_expr):
+        self.ensure_ncrt_runtime()
+        name = self.emit_expr(name_expr)
+        name_ptr = self.value_to_stack_ptr(name, STR_TYPE, "__nc_os_has_env_name")
+        result = self.builder.call(self.os_has_env_fn, [name_ptr], name="os.has_env.i32")
+        return self.builder.icmp_signed("!=", result, ir.Constant(ir.IntType(32), 0), name="os.has_env")
+
+    def emit_os_cwd(self):
+        self.ensure_ncrt_runtime()
+        out = self.alloca_at_entry("__nc_os_cwd_out", STR_TYPE)
+        status = self.builder.call(self.os_cwd_fn, [out], name="os.cwd.status")
+        self.raise_fs_error_if_failed(status, "os.cwd failed")
+        return self.builder.load(out, name="os.cwd")
+
+    def emit_os_exit(self, code_expr):
+        self.ensure_ncrt_runtime()
+        code = self.cast_to(self.emit_expr(code_expr), "i32")
+        self.builder.call(self.os_exit_fn, [code])
+        self.builder.unreachable()
+        return ir.Constant(ir.IntType(1), 0)
+
     def raise_fs_error_if_failed(self, status, message: str):
         self.ensure_exception_runtime()
         failed = self.builder.icmp_signed("!=", status, ir.Constant(ir.IntType(32), 0), name="fs.failed")
@@ -2347,8 +2434,16 @@ def build_llvm_ir(llvm_ir: str, out_dir: str, name: str = "main", link_libs: lis
     return ll_path, obj_path, exe_path
 
 
-def run_llvm_ir(llvm_ir: str, link_libs: list[str] | None = None) -> tuple[str, str, int]:
+def run_llvm_ir(
+    llvm_ir: str,
+    link_libs: list[str] | None = None,
+    args: list[str] | None = None,
+    env: dict[str, str] | None = None,
+) -> tuple[str, str, int]:
     with tempfile.TemporaryDirectory() as tmpdir:
         _ll, _obj, exe = build_llvm_ir(llvm_ir, tmpdir, "out", link_libs)
-        result = subprocess.run([exe], capture_output=True, text=True, encoding="utf-8")
+        run_env = os.environ.copy()
+        if env is not None:
+            run_env.update(env)
+        result = subprocess.run([exe] + list(args or []), capture_output=True, text=True, encoding="utf-8", env=run_env)
         return result.stdout, result.stderr, result.returncode

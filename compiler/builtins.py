@@ -46,6 +46,24 @@ def infer_builtin_call(node, require_arg_count, require_type, fail) -> str | Non
         require_arg_count(args, 1, "fs.mkdir", node)
         require_type(args[0].type, "str", "fs.mkdir path", node)
         return "void"
+    if name == "os.args":
+        require_arg_count(args, 0, "os.args", node)
+        return "[]str"
+    if name == "os.getenv":
+        require_arg_count(args, 1, "os.getenv", node)
+        require_type(args[0].type, "str", "os.getenv name", node)
+        return "str"
+    if name == "os.has_env":
+        require_arg_count(args, 1, "os.has_env", node)
+        require_type(args[0].type, "str", "os.has_env name", node)
+        return "bool"
+    if name == "os.cwd":
+        require_arg_count(args, 0, "os.cwd", node)
+        return "str"
+    if name == "os.exit":
+        require_arg_count(args, 1, "os.exit", node)
+        require_type(args[0].type, "i32", "os.exit code", node)
+        return "void"
     if name == "append":
         require_arg_count(args, 2, "append", node)
         if not args[0].type.startswith("[]"):
