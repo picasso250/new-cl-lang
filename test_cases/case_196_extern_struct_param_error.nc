@@ -2,7 +2,7 @@
 
 struct Point { x: i32 }
 
-extern "c" {
+extern {
     fun take_point(p: Point): i32
 }
 

@@ -2,6 +2,9 @@
 
 ## 2026-05-31
 
+- 预备重做 extern lib 路径功能：从 `a92070c` 干净基线重新实现 `extern { ... }` 默认链接与 `extern "path.lib" { ... }` 链接输入收集；不保留 `extern "c"` 语义。
+- 已重做 extern lib 路径功能：`ExternBlock.source` 改为 `lib`，parser 支持无字符串 extern 与可选链接输入字符串，typecheck 仅校验 extern 函数 ABI；新增 `compile_nc_sources_with_libs()` 供 run/build 传递链接库，`compile` 仍只输出 LLVM IR。迁移 case_189/191/193~196 到 `extern { ... }`，删除旧 source 错误 case，并补真实 `.lib` 链接测试与 compile-only link libs 收集断言。验证通过：`python tests/test_basic.py`、`python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_llvm_cases.py tests/test_type_ref.py -q`、`python nc.py build test_cases\case_189_extern_c_putchar.nc` 后运行 `build\main.exe` 输出 `A`、`python nc.py compile -c "extern { fun putchar(c: i32): i32 } fun main() {}"`。
+
 - 预备实验 `test_basic` 并发化：按 CPU 数量决定 worker，先以当前串行约 26s 为基线，若并发中位数至少减少 30% 则保留并提交，否则回退实现改动。
 - 已保留 `test_basic` 并发化：默认 worker 为 `min(32, os.cpu_count() or 1)`，可通过 `NC_TEST_BASIC_WORKERS=1` 强制串行；修复 ncrt 缓存 miss 时多进程写同一临时 obj 的竞态。串行基线 25.85s，并发实测 11.98s/41.81s/12.05s，中位数约 12.05s，减少约 53%；验证通过 `python tests/test_basic.py`、设置 `NC_TEST_BASIC_WORKERS=1` 后的 `python tests/test_basic.py`、`python -m pytest tests/test_basic.py -q` 与核心 pytest 组合回归。
 - 预备质疑并收敛 comptime 设计：删除通用 `comptime fun` / `comptime if` 的 v1 承诺，改为冻结该能力；后续只在具体 case 推动下考虑窄化的常量表达式、`static_assert` 或 `cfg`。

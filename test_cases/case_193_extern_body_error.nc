@@ -1,6 +1,6 @@
 # ERROR: extern function bodies are not supported
 
-extern "c" {
+extern {
     fun bad() { }
 }
 

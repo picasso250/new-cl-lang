@@ -12,7 +12,7 @@ from concurrent.futures import ProcessPoolExecutor
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from compiler import compile_nc_to_llvm_ir, run_llvm_ir
+from compiler import compile_nc_sources_with_libs, run_llvm_ir
 
 CASE_DIR = os.path.join(os.path.dirname(__file__), "..", "test_cases")
 
@@ -43,10 +43,10 @@ def _parse_expected(source: str) -> tuple[str, str, int]:
 
 def _compile_and_run(source: str) -> tuple[str, str, int]:
     try:
-        llvm_ir = compile_nc_to_llvm_ir(source)
+        llvm_ir, link_libs = compile_nc_sources_with_libs([("<memory>", source)])
     except Exception as e:
         return "__ERROR__", str(e), 0
-    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir, link_libs)
     return stdout.strip(), stderr.strip(), rc
 
 

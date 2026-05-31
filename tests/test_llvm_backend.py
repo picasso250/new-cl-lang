@@ -1,7 +1,7 @@
 import os
 import subprocess
 
-from compiler import build_llvm_ir, compile_nc_to_llvm_ir, run_llvm_ir
+from compiler import build_llvm_ir, compile_nc_sources_with_libs, compile_nc_to_llvm_ir, run_llvm_ir
 
 
 def test_llvm_smoke_empty_main():
@@ -607,6 +607,39 @@ fun main() {
     llvm_ir = compile_nc_to_llvm_ir(source)
     stdout, stderr, rc = run_llvm_ir(llvm_ir)
     assert (stdout.strip(), stderr.strip(), rc) == ("7", "", 0)
+
+
+def test_extern_lib_path_is_collected_compile_only():
+    llvm_ir, link_libs = compile_nc_sources_with_libs([("<memory>", """
+extern "some.lib" {
+    fun helper(): i32
+}
+fun main() {}
+""")])
+    assert 'declare i32 @"helper"()' in llvm_ir
+    assert link_libs == ["some.lib"]
+
+
+def test_llvm_links_external_lib_path(tmp_path):
+    helper_c = tmp_path / "helper.c"
+    helper_obj = tmp_path / "helper.o"
+    helper_lib = tmp_path / "helper.lib"
+    helper_c.write_text("int nc_helper_add(int x) { return x + 35; }\n", encoding="utf-8")
+    subprocess.run(["gcc", "-c", str(helper_c), "-o", str(helper_obj)], check=True)
+    subprocess.run(["ar", "rcs", str(helper_lib), str(helper_obj)], check=True)
+    lib_path = str(helper_lib).replace("\\", "/")
+    source = f"""import io
+extern "{lib_path}" {{
+    fun nc_helper_add(x: i32): i32
+}}
+fun main() {{
+    io.println(nc_helper_add(7))
+}}
+"""
+    llvm_ir, link_libs = compile_nc_sources_with_libs([("<memory>", source)])
+    stdout, stderr, rc = run_llvm_ir(llvm_ir, link_libs)
+    assert link_libs == [lib_path]
+    assert (stdout.strip(), stderr.strip(), rc) == ("42", "", 0)
 
 
 def test_llvm_build_writes_ir_obj_and_exe(tmp_path):

@@ -423,13 +423,19 @@ try {
 ## 十二、FFI
 
 ```nc
-extern "c" {
+extern {
     fun putchar(c: i32): i32
     fun strlen(p: *u8): u64
 }
+
+extern "msvcrt.lib" {
+    fun _sopen(path: *u8, oflag: i32, pmode: i32): i32
+}
 ```
 
-extern v1 只支持块头 `"c"`，块内只允许无函数体的 `fun name(params): Ret` 声明；省略返回类型表示 `void`。允许类型限于 C ABI scalar/pointer：`i8/i16/i32/i64/u8/u16/u32/u64/f32/f64/bool/*T/?*T/void`。不支持 `.c`、`.dll`、`.lib`、varargs、回调、头文件解析、extern struct、泛型 extern、`str`/slice/map/array/struct/enum/function value、聚合类型按值传递。
+extern v1 只支持纯声明，不允许函数体。关键字 `extern` 后可跟一个可选的 lib 或 dll 路径字符串（如 `"msvcrt.lib"`、`"kernel32.lib"`、`"user32.dll"`），构建系统会在链接时追加该文件作为输入。不含路径时，符号由链接器从默认路径解析。
+
+省略返回类型表示 `void`。允许类型限于 C ABI scalar/pointer：`i8/i16/i32/i64/u8/u16/u32/u64/f32/f64/bool/*T/?*T/void`。不支持 varargs、回调、头文件解析、extern struct、泛型 extern、`str`/slice/map/array/struct/enum/function value、聚合类型按值传递。
 
 ---
 

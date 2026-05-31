@@ -1,6 +1,6 @@
 # ERROR: generic extern functions are not supported
 
-extern "c" {
+extern {
     fun id[T](x: i32): i32
 }
 

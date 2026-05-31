@@ -1,6 +1,6 @@
 # ERROR: extern function puts_nc: unsupported parameter s: str
 
-extern "c" {
+extern {
     fun puts_nc(s: str): i32
 }
 

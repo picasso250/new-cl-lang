@@ -144,13 +144,14 @@ class TypeAlias(Node):
 
 
 class ExternBlock(Node):
-    """extern "c" { fun name(params): ret }"""
-    def __init__(self, source: str, functions: list):
-        self.source = source
+    """extern { fun name(params): ret } or extern "lib" { ... }"""
+    def __init__(self, lib: str | None, functions: list):
+        self.lib = lib
         self.functions = functions
 
     def __repr__(self):
-        return f'Extern("{self.source}", {self.functions})'
+        lib = f'"{self.lib}"' if self.lib is not None else "<default>"
+        return f"Extern({lib}, {self.functions})"
 
 
 class EnumDecl(Node):

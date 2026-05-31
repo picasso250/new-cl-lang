@@ -155,9 +155,9 @@ class Parser:
 
     def _parse_extern_block(self):
         start = self.advance()
-        source = self.expect(TokenKind.STRING).value
-        if source != "c":
-            raise ParseError('extern v1 only supports "c"')
+        lib = None
+        if self.peek().kind == TokenKind.STRING:
+            lib = self.advance().value
         self.expect(TokenKind.LBRACE)
         funcs = []
         while self.peek().kind != TokenKind.RBRACE:
@@ -167,12 +167,12 @@ class Parser:
                 raise ParseError("extern block only allows function declarations")
             fn = self._parse_function_signature_only()
             fn.is_extern = True
-            fn.extern_source = source
+            fn.extern_lib = lib
             funcs.append(fn)
             self.match(TokenKind.SEMI)
         self.expect(TokenKind.RBRACE)
         self.match(TokenKind.SEMI)
-        return self.span(ExternBlock(source, funcs), start)
+        return self.span(ExternBlock(lib, funcs), start)
 
     def _parse_type(self) -> str:
         if self.peek().kind == TokenKind.QUESTION:

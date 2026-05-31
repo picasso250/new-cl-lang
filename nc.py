@@ -13,7 +13,7 @@ import sys
 import os
 
 from compiler import (
-    build_llvm_ir, compile_nc_sources_to_llvm_ir, run_llvm_ir,
+    build_llvm_ir, compile_nc_sources_to_llvm_ir, compile_nc_sources_with_libs, run_llvm_ir,
 )
 
 
@@ -65,8 +65,8 @@ def cmd_run(args: list[str]):
     """编译并运行。"""
     args = _reject_backend(args)
     sources = _read_sources(args)
-    llvm_ir = compile_nc_sources_to_llvm_ir(sources)
-    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    llvm_ir, link_libs = compile_nc_sources_with_libs(sources)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir, link_libs)
     if stdout:
         sys.stdout.write(stdout)
     if stderr:
@@ -85,8 +85,8 @@ def cmd_build(args: list[str]):
     """生成 build/main.* 和 build/main.exe。"""
     args = _reject_backend(args)
     sources = _read_sources(args)
-    llvm_ir = compile_nc_sources_to_llvm_ir(sources)
-    ll_path, obj_path, exe_path = build_llvm_ir(llvm_ir, "build", "main")
+    llvm_ir, link_libs = compile_nc_sources_with_libs(sources)
+    ll_path, obj_path, exe_path = build_llvm_ir(llvm_ir, "build", "main", link_libs)
     print(ll_path)
     print(obj_path)
     print(exe_path)

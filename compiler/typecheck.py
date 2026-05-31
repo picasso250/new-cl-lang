@@ -726,8 +726,6 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             elif isinstance(stmt, ImportDecl):
                 pass
             elif isinstance(stmt, ExternBlock):
-                if stmt.source != "c":
-                    fail('extern v1 only supports "c"', stmt)
                 for fn in stmt.functions:
                     validate_extern_function(fn)
             elif isinstance(stmt, ForIn):

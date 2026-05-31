@@ -1956,7 +1956,7 @@ def object_from_llvm_ir(llvm_ir: str) -> bytes:
     return tm.emit_object(backing)
 
 
-def build_llvm_ir(llvm_ir: str, out_dir: str, name: str = "main") -> tuple[str, str, str]:
+def build_llvm_ir(llvm_ir: str, out_dir: str, name: str = "main", link_libs: list[str] | None = None) -> tuple[str, str, str]:
     os.makedirs(out_dir, exist_ok=True)
     ll_path = os.path.join(out_dir, f"{name}.ll")
     obj_path = os.path.join(out_dir, f"{name}.obj")
@@ -1966,14 +1966,15 @@ def build_llvm_ir(llvm_ir: str, out_dir: str, name: str = "main") -> tuple[str, 
         f.write(llvm_ir)
     with open(obj_path, "wb") as f:
         f.write(object_from_llvm_ir(llvm_ir))
-    result = subprocess.run(["gcc", obj_path, ncrt_obj, "-o", exe_path], capture_output=True, text=True)
+    link_cmd = ["gcc", obj_path, ncrt_obj, "-o", exe_path] + list(link_libs or [])
+    result = subprocess.run(link_cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"LLVM object link failed:\n{result.stderr}")
     return ll_path, obj_path, exe_path
 
 
-def run_llvm_ir(llvm_ir: str) -> tuple[str, str, int]:
+def run_llvm_ir(llvm_ir: str, link_libs: list[str] | None = None) -> tuple[str, str, int]:
     with tempfile.TemporaryDirectory() as tmpdir:
-        _ll, _obj, exe = build_llvm_ir(llvm_ir, tmpdir, "out")
+        _ll, _obj, exe = build_llvm_ir(llvm_ir, tmpdir, "out", link_libs)
         result = subprocess.run([exe], capture_output=True, text=True, encoding="utf-8")
         return result.stdout, result.stderr, result.returncode

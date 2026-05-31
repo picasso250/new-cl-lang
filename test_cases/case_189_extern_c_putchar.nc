@@ -1,4 +1,4 @@
-extern "c" {
+extern {
     fun putchar(c: i32): i32
 }
 

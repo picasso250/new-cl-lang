@@ -23,6 +23,7 @@ class CodegenInputs:
     closures: list = field(default_factory=list)
     slice_types: set[str] = field(default_factory=set)
     fn_types: set[str] = field(default_factory=set)
+    link_libs: list[str] = field(default_factory=list)
 
 
 def collect_codegen_inputs(program) -> CodegenInputs:
@@ -46,6 +47,8 @@ def collect_codegen_inputs(program) -> CodegenInputs:
                     result.other_funcs.append(stmt)
                 collect_top_level(stmt.body.statements)
             elif isinstance(stmt, ExternBlock):
+                if stmt.lib is not None:
+                    result.link_libs.append(stmt.lib)
                 result.other_funcs.extend(stmt.functions)
             elif isinstance(stmt, Block):
                 collect_top_level(stmt.statements)

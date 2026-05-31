@@ -1,6 +1,6 @@
 # ERROR: extern v1 does not support varargs
 
-extern "c" {
+extern {
     fun printf(fmt: *u8, ...)
 }
 

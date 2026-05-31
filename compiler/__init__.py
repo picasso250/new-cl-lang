@@ -287,9 +287,24 @@ def compile_module_to_llvm_ir(module: Module) -> str:
     return generate_llvm_ir(program)
 
 
+def compile_module_to_llvm_ir_with_libs(module: Module) -> tuple[str, list[str]]:
+    """Module → (LLVM IR, link libs)."""
+    program = _typecheck_module(module)
+    link_libs = [
+        stmt.lib for stmt in program.statements
+        if isinstance(stmt, ExternBlock) and stmt.lib is not None
+    ]
+    return generate_llvm_ir(program), link_libs
+
+
 def compile_nc_sources_to_llvm_ir(sources: "list[tuple[str, str]]") -> str:
     """多个 NC 源码片段 → 单个 LLVM IR。"""
     return compile_module_to_llvm_ir(parse_project_sources(sources))
+
+
+def compile_nc_sources_with_libs(sources: "list[tuple[str, str]]") -> tuple[str, list[str]]:
+    """多个 NC 源码片段 → (LLVM IR, link libs)."""
+    return compile_module_to_llvm_ir_with_libs(parse_project_sources(sources))
 
 
 def compile_nc_to_llvm_ir(nc_source: str) -> str:
