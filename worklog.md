@@ -2,6 +2,11 @@
 
 ## 2026-05-31
 
+- 预备清理 C 后端遗留的 `codegen_collect.py`：删除未使用收集，把 LLVM 所需的顶层分类和 closure 发现内移到 `llvm_codegen.py`。
+- 已清理 C 后端遗留的 `codegen_collect.py`：删除独立收集器，LLVM 后端内部完成顶层分类与 closure 发现；移除未使用的 slice/function type/link lib 收集，link libs 继续由 compiler API 从顶层 extern block 收集。验证通过：`python tests/test_basic.py`；`python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_type_ref.py -q`。
+- 预备清理 `names.py` 的 C 保留字遗留：LLVM-only 后端不再避让 C keyword，只保留用户名与 `__nc_` runtime/internal 前缀冲突的防线；同步把符号表中的 C runtime 命名改为 NC/runtime 命名。
+- 已清理 `names.py` 的 C 保留字遗留：删除 `RESERVED_NAMES`，`safe_user_ident()` 仅处理 `__nc_` 前缀冲突；`symtab.py` 中的 C runtime 命名改为 runtime 命名，extern 仍可声明 runtime/libc 符号。新增 LLVM 测试覆盖 `auto`/`register`/`restrict` 可作为普通变量名。验证通过：`python -m pytest tests/test_llvm_backend.py -q`；`python tests/test_basic.py`；`python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_type_ref.py -q`。
+
 - 预备实现 `size_of(T)` 语言级编译期内建：只接受类型实参，类型检查验证可见且可确定 ABI size，LLVM 降为 `u64` 常量，并把后端现有大小计算统一改为 ABI 对齐布局。
 - 已实现 `size_of(T)`：新增 AST 节点和类型语法解析，类型检查递归验证 sized/可见类型并返回 `u64`，LLVM 降为常量；后端大小计算改为 ABI 对齐，复用于 struct/slice/array/closure env 分配与复制。新增 case_227~230 和跨模块私有类型测试。验证通过：`python tests/test_basic.py`；`python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_type_ref.py -q`。
 

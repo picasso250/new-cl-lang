@@ -14,7 +14,7 @@ class Symbol:
         return f"Symbol({self.name}: {self.nc_type} @{self.scope_level})"
 
 
-C_RUNTIME_NAMES = {
+RESERVED_RUNTIME_NAMES = {
     "div",
     "exit",
     "malloc",
@@ -27,9 +27,9 @@ C_RUNTIME_NAMES = {
 }
 
 
-def _check_c_runtime_name(name: str):
-    if name in C_RUNTIME_NAMES or name.startswith("__nc_"):
-        raise NameError(f"'{name}' conflicts with NC/C runtime name")
+def _check_runtime_name(name: str):
+    if name in RESERVED_RUNTIME_NAMES or name.startswith("__nc_"):
+        raise NameError(f"'{name}' conflicts with NC runtime name")
 
 
 class SymbolTable:
@@ -48,9 +48,9 @@ class SymbolTable:
         self._scopes.pop()
         self._level -= 1
 
-    def declare(self, name: str, nc_type: str, *, allow_c_runtime_name: bool = False):
-        if not allow_c_runtime_name:
-            _check_c_runtime_name(name)
+    def declare(self, name: str, nc_type: str, *, allow_runtime_name: bool = False):
+        if not allow_runtime_name:
+            _check_runtime_name(name)
         if name in self._scopes[-1]:
             raise NameError(f"Variable '{name}' already declared in this scope")
         self._scopes[-1][name] = Symbol(name, nc_type, self._level)
@@ -116,7 +116,7 @@ def build_symbol_table(program: "Program") -> SymbolTable:
         for stmt in stmts:
             if isinstance(stmt, FunctionDeclaration):
                 if getattr(stmt, "is_extern", False):
-                    table.declare(stmt.name, stmt.return_type or "void", allow_c_runtime_name=True)
+                    table.declare(stmt.name, stmt.return_type or "void", allow_runtime_name=True)
                     table._functions[stmt.name] = (stmt.return_type or "void", stmt.params)
                     table._extern_functions.add(stmt.name)
                     continue
@@ -158,7 +158,7 @@ def build_symbol_table(program: "Program") -> SymbolTable:
                 for fn in stmt.functions:
                     if fn.name in table._functions:
                         raise NameError(f"Function '{fn.name}' already declared")
-                    table.declare(fn.name, fn.return_type or "void", allow_c_runtime_name=True)
+                    table.declare(fn.name, fn.return_type or "void", allow_runtime_name=True)
                     table._functions[fn.name] = (fn.return_type or "void", fn.params)
                     table._extern_functions.add(fn.name)
             elif isinstance(stmt, (ForCondition, Block, ForIn, TryCatch)):

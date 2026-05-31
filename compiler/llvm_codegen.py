@@ -7,18 +7,18 @@ Unsupported language nodes fail explicitly.
 import os
 import subprocess
 import tempfile
+from dataclasses import dataclass, field
 
 from llvmlite import binding, ir
 
 from compiler.ast import (
     ArrayLiteral, Assignment, Update, BinaryOp, Block, BlockExpr, BoolLiteral, Break,
-    Defer, ExpressionStatement, EnumDecl, EnumRef, FieldAccess, FloatLiteral, FunctionCall,
+    Defer, ExternBlock, ExpressionStatement, EnumDecl, EnumRef, FieldAccess, FloatLiteral, FunctionCall,
     FunctionExpr,
-    ForIn, FunctionDeclaration, Identifier, IfExpr, IfaceDecl, IndexAccess, IntegerLiteral,
+    ForIn, FunctionDeclaration, Identifier, IfExpr, IfaceDecl, ImportDecl, IndexAccess, IntegerLiteral,
     MatchExpr, MethodCall, NilLiteral, Return, SizeOfType, SliceExpr, SliceLiteral, StringLiteral, InterpolatedString, RuneLiteral, StructDecl,
     StructLiteral, Throw, TryCatch, UnaryOp, VariableDeclaration, ForCondition,
 )
-from compiler.codegen_collect import collect_codegen_inputs
 from compiler.names import safe_user_ident
 from compiler.ncrt import build_ncrt_obj
 from compiler.type_ref import parse_array_type, parse_fn_type, parse_map_type, parse_slice_type
@@ -56,6 +56,158 @@ STRUCT_FIELD_INDEX: dict[str, dict[str, int]] = {}
 ENUM_VARIANTS: dict[str, dict[str, int]] = {}
 IFACE_METHODS: dict[str, list[tuple[str, list[str], str]]] = {}
 IFACE_TYPES: dict[str, ir.LiteralStructType] = {}
+
+
+@dataclass
+class _LLVMInputs:
+    structs: list[StructDecl] = field(default_factory=list)
+    enums: list[EnumDecl] = field(default_factory=list)
+    other_funcs: list[FunctionDeclaration] = field(default_factory=list)
+    main_func: FunctionDeclaration | None = None
+    top_stmts: list = field(default_factory=list)
+    closures: list[FunctionExpr] = field(default_factory=list)
+
+
+def _collect_llvm_inputs(program) -> _LLVMInputs:
+    result = _LLVMInputs()
+
+    def collect_top_level(stmts):
+        for stmt in stmts:
+            if isinstance(stmt, StructDecl):
+                result.structs.append(stmt)
+            elif isinstance(stmt, IfaceDecl):
+                pass
+            elif isinstance(stmt, EnumDecl):
+                result.enums.append(stmt)
+            elif isinstance(stmt, FunctionDeclaration):
+                if getattr(stmt, "is_extern", False):
+                    result.other_funcs.append(stmt)
+                    continue
+                if stmt.name == "main":
+                    result.main_func = stmt
+                else:
+                    result.other_funcs.append(stmt)
+                collect_top_level(stmt.body.statements)
+            elif isinstance(stmt, ExternBlock):
+                result.other_funcs.extend(stmt.functions)
+            elif isinstance(stmt, Block):
+                collect_top_level(stmt.statements)
+            elif isinstance(stmt, ForCondition):
+                collect_top_level(stmt.body.statements)
+            elif isinstance(stmt, ForIn):
+                collect_top_level(stmt.body.statements)
+            elif isinstance(stmt, TryCatch):
+                collect_top_level(stmt.try_block.statements)
+                collect_top_level(stmt.catch_block.statements)
+            elif isinstance(stmt, Defer):
+                collect_top_level(stmt.body.statements)
+
+    def collect_closure_expr(node):
+        if isinstance(node, FunctionExpr):
+            if not hasattr(node, "closure_id"):
+                node.closure_id = len(result.closures)
+                result.closures.append(node)
+            collect_top_level(node.body.statements)
+            for stmt in node.body.statements:
+                collect_closure_stmt(stmt)
+        elif isinstance(node, (ArrayLiteral, SliceLiteral)):
+            for elem in node.elements:
+                collect_closure_expr(elem)
+        elif isinstance(node, SliceExpr):
+            collect_closure_expr(node.array)
+            if node.start:
+                collect_closure_expr(node.start)
+            if node.end:
+                collect_closure_expr(node.end)
+        elif isinstance(node, IndexAccess):
+            collect_closure_expr(node.obj)
+            collect_closure_expr(node.index)
+        elif isinstance(node, BinaryOp):
+            collect_closure_expr(node.left)
+            collect_closure_expr(node.right)
+        elif isinstance(node, UnaryOp):
+            collect_closure_expr(node.operand)
+        elif isinstance(node, FunctionCall):
+            for arg in node.args:
+                collect_closure_expr(arg)
+        elif isinstance(node, InterpolatedString):
+            for part in node.parts:
+                collect_closure_expr(part)
+        elif isinstance(node, IfExpr):
+            collect_closure_expr(node.condition)
+            for stmt in node.then_block.statements:
+                collect_closure_stmt(stmt)
+            if node.else_block:
+                for stmt in node.else_block.statements:
+                    collect_closure_stmt(stmt)
+        elif isinstance(node, MatchExpr):
+            collect_closure_expr(node.scrutinee)
+            for pattern, body in node.arms:
+                if pattern is not None:
+                    collect_closure_expr(pattern)
+                collect_closure_expr(body)
+        elif isinstance(node, BlockExpr):
+            for stmt in node.block.statements:
+                collect_closure_stmt(stmt)
+        elif isinstance(node, StructLiteral):
+            for _name, value in node.fields:
+                collect_closure_expr(value)
+        elif isinstance(node, FieldAccess):
+            collect_closure_expr(node.obj)
+        elif isinstance(node, MethodCall):
+            collect_closure_expr(node.obj)
+            for arg in node.args:
+                collect_closure_expr(arg)
+
+    def collect_closure_stmt(stmt):
+        if isinstance(stmt, ExternBlock):
+            return
+        if isinstance(stmt, VariableDeclaration):
+            collect_closure_expr(stmt.initializer)
+        elif isinstance(stmt, Assignment):
+            collect_closure_expr(stmt.target)
+            collect_closure_expr(stmt.expr)
+        elif isinstance(stmt, Update):
+            collect_closure_expr(stmt.target)
+        elif isinstance(stmt, ExpressionStatement):
+            collect_closure_expr(stmt.expr)
+        elif isinstance(stmt, ForCondition):
+            collect_closure_expr(stmt.condition)
+            for child in stmt.body.statements:
+                collect_closure_stmt(child)
+        elif isinstance(stmt, ForIn):
+            if stmt.start is not None:
+                collect_closure_expr(stmt.start)
+                collect_closure_expr(stmt.end)
+            else:
+                collect_closure_expr(stmt.iterable)
+            for child in stmt.body.statements:
+                collect_closure_stmt(child)
+        elif isinstance(stmt, FunctionDeclaration):
+            for child in stmt.body.statements:
+                collect_closure_stmt(child)
+        elif isinstance(stmt, Return) and stmt.expr:
+            collect_closure_expr(stmt.expr)
+        elif isinstance(stmt, TryCatch):
+            for child in stmt.try_block.statements + stmt.catch_block.statements:
+                collect_closure_stmt(child)
+        elif isinstance(stmt, Throw):
+            collect_closure_expr(stmt.expr)
+        elif isinstance(stmt, Defer):
+            for child in stmt.body.statements:
+                collect_closure_stmt(child)
+        elif isinstance(stmt, Block):
+            for child in stmt.statements:
+                collect_closure_stmt(child)
+
+    collect_top_level(program.statements)
+    for stmt in program.statements:
+        collect_closure_stmt(stmt)
+    result.top_stmts = [
+        stmt for stmt in program.statements
+        if not isinstance(stmt, (FunctionDeclaration, StructDecl, IfaceDecl, EnumDecl, ImportDecl, ExternBlock))
+    ]
+    return result
 
 
 def llvm_type(nc_type: str | None):
@@ -170,7 +322,7 @@ class LLVMCodegen:
         self.iface_thunks: dict[tuple[str, str, str], ir.Function] = {}
 
     def generate(self, program) -> str:
-        collected = collect_codegen_inputs(program)
+        collected = _collect_llvm_inputs(program)
         if collected.top_stmts:
             raise NotImplementedError("LLVM backend v1 does not support top-level statements")
         self.register_enums(collected.enums)

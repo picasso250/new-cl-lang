@@ -10,6 +10,20 @@ def test_llvm_smoke_empty_main():
     assert (stdout, stderr, rc) == ("", "", 0)
 
 
+def test_llvm_allows_c_keyword_identifiers():
+    source = """import io
+fun main() {
+    let auto: i32 = 1
+    let register: i32 = 2
+    let restrict: i32 = auto + register
+    io.println(restrict)
+}
+"""
+    llvm_ir = compile_nc_to_llvm_ir(source)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    assert (stdout.strip(), stderr.strip(), rc) == ("3", "", 0)
+
+
 def test_llvm_println_and_control_flow():
     source = """import io
 fun add(x: i32, y: i32): i32 { return x + y }
