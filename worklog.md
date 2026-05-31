@@ -549,3 +549,7 @@
 - 预备删除重复的 LLVM 单文件 case 回归：`tests/test_llvm_cases.py` 已被 LLVM-only 的 `tests/test_basic.py` 覆盖，保留 `test_basic` 作为 `test_cases` 权威门槛。
 
 - 已删除重复的 `tests/test_llvm_cases.py`：LLVM-only 后 `tests/test_basic.py` 已覆盖同一批 `test_cases` 正向/错误回归且支持 extern 链接库。验证通过：`python tests/test_basic.py`；`python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_type_ref.py -q`。
+
+- 预备实现第一批基础内建：新增 cap/copy/delete/clear/min/max/abs，覆盖 slice 容量与复制、map 删除/清空以及数值常用函数；同步补 case、design 和 builtin 边界测试。
+
+- 已实现第一批基础内建：cap(s)、copy(dst, src)、clear(slice/map)、delete(map, key)、min/max 与 bs；ncrt 增加 slice copy/clear 与 map delete/clear helper，LLVM lowering 和类型检查已接入。新增 case_231~236 覆盖正向和错误路径，design.md 与 builtin 边界测试已同步。验证通过：python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_type_ref.py -q。

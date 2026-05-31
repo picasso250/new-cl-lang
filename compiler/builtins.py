@@ -8,6 +8,7 @@ from compiler.type_ref import parse_map_type
 
 
 NUMERIC_TYPES = {"i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64"}
+SIGNED_NUMERIC_TYPES = {"i8", "i16", "i32", "i64", "f32", "f64"}
 SCALAR_TYPES = NUMERIC_TYPES | {"str", "bool", "rune"}
 STRINGIFIABLE_TYPES = SCALAR_TYPES
 
@@ -34,6 +35,24 @@ def infer_builtin_call(node, require_arg_count, require_type, fail) -> str | Non
             fail(f"append: expected slice, got {args[0].type}", node)
         require_type(args[1].type, args[0].type[2:], "append element", node)
         return args[0].type
+    if name == "cap":
+        require_arg_count(args, 1, "cap", node)
+        if not args[0].type.startswith("[]"):
+            fail(f"cap: expected slice, got {args[0].type}", node)
+        return "i32"
+    if name == "copy":
+        require_arg_count(args, 2, "copy", node)
+        if not args[0].type.startswith("[]"):
+            fail(f"copy dst: expected slice, got {args[0].type}", node)
+        if not args[1].type.startswith("[]"):
+            fail(f"copy src: expected slice, got {args[1].type}", node)
+        require_type(args[1].type, args[0].type, "copy src", args[1])
+        return "i32"
+    if name == "clear":
+        require_arg_count(args, 1, "clear", node)
+        if not (args[0].type.startswith("[]") or parse_map_type(args[0].type) is not None):
+            fail(f"clear: expected slice or map, got {args[0].type}", node)
+        return "void"
     if name == "map_has":
         require_arg_count(args, 2, "map_has", node)
         map_args = parse_map_type(args[0].type)
@@ -42,6 +61,14 @@ def infer_builtin_call(node, require_arg_count, require_type, fail) -> str | Non
         key_type, _value_type = map_args
         require_type(args[1].type, key_type, "map_has key", args[1])
         return "i32"
+    if name == "delete":
+        require_arg_count(args, 2, "delete", node)
+        map_args = parse_map_type(args[0].type)
+        if map_args is None:
+            fail(f"delete: expected map, got {args[0].type}", node)
+        key_type, _value_type = map_args
+        require_type(args[1].type, key_type, "delete key", args[1])
+        return "void"
     map_args = parse_map_type(name)
     if map_args is not None:
         require_arg_count(args, 0, name, node)
@@ -58,6 +85,17 @@ def infer_builtin_call(node, require_arg_count, require_type, fail) -> str | Non
         if args[0].type not in STRINGIFIABLE_TYPES:
             fail(f"str: cannot convert {args[0].type} to str", node)
         return "str"
+    if name in {"min", "max"}:
+        require_arg_count(args, 2, name, node)
+        if args[0].type not in NUMERIC_TYPES:
+            fail(f"{name}: expected numeric value, got {args[0].type}", node)
+        require_type(args[1].type, args[0].type, f"{name} rhs", args[1])
+        return args[0].type
+    if name == "abs":
+        require_arg_count(args, 1, "abs", node)
+        if args[0].type not in SIGNED_NUMERIC_TYPES:
+            fail(f"abs: expected signed numeric value, got {args[0].type}", node)
+        return args[0].type
     if name == "rune":
         require_arg_count(args, 1, "rune", node)
         if args[0].type not in {"i32", "u32"}:

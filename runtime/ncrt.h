@@ -90,12 +90,16 @@ int __nc_str_eq_ptr(const str* a, const str* b);
 
 void __nc_slice_copy_raw(nc_slice_raw* out, const void* src, uint64_t len, uint64_t elem_size);
 void __nc_slice_append_raw(nc_slice_raw* out, const nc_slice_raw* in, const void* elem, uint64_t elem_size);
+int32_t __nc_slice_copy_into_raw(nc_slice_raw* dst, const nc_slice_raw* src, uint64_t elem_size);
+void __nc_slice_clear_raw(nc_slice_raw* s, uint64_t elem_size);
 
 void __nc_map_init(nc_map* m);
 void __nc_map_free(nc_map* m);
 void __nc_map_set(nc_map* m, const nc_val* key, const nc_val* value);
 void __nc_map_get(nc_val* out, nc_map* m, const nc_val* key, int32_t value_tag);
 int __nc_map_has(nc_map* m, const nc_val* key);
+void __nc_map_delete(nc_map* m, const nc_val* key);
+void __nc_map_clear(nc_map* m);
 
 void __nc_throw(str ex);
 

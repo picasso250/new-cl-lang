@@ -253,6 +253,20 @@ void __nc_slice_append_raw(nc_slice_raw* out, const nc_slice_raw* in, const void
     out->len++;
 }
 
+int32_t __nc_slice_copy_into_raw(nc_slice_raw* dst, const nc_slice_raw* src, uint64_t elem_size) {
+    uint64_t n = dst->len < src->len ? dst->len : src->len;
+    if (n && dst->ptr && src->ptr) {
+        memmove(dst->ptr, src->ptr, (size_t)n * (size_t)elem_size);
+    }
+    return (int32_t)n;
+}
+
+void __nc_slice_clear_raw(nc_slice_raw* s, uint64_t elem_size) {
+    if (s->ptr && s->len) {
+        memset(s->ptr, 0, (size_t)s->len * (size_t)elem_size);
+    }
+}
+
 str __nc_str_cat(str a, str b) {
     uint8_t* buf = (uint8_t*)__nc_gc_alloc((size_t)(a.len + b.len + 1));
     if (a.len) memcpy(buf, a.ptr, (size_t)a.len);
@@ -476,6 +490,30 @@ void __nc_map_get(nc_val* out, nc_map* m, const nc_val* key, int32_t value_tag) 
 int __nc_map_has(nc_map* m, const nc_val* key) {
     nc_val v;
     return __nc_map_lookup(m, key, &v);
+}
+
+void __nc_map_delete(nc_map* m, const nc_val* key) {
+    if (!m->cap) return;
+    int64_t idx = __nc_map_hash(key, m->cap);
+    for (int64_t i = 0; i < m->cap; i++) {
+        if (m->entries[idx].state == 0) return;
+        if (m->entries[idx].state == 1 && __nc_val_eq(key, &m->entries[idx].key)) {
+            memset(&m->entries[idx].key, 0, sizeof(nc_val));
+            memset(&m->entries[idx].value, 0, sizeof(nc_val));
+            m->entries[idx].state = 2;
+            m->len--;
+            m->tombstones++;
+            return;
+        }
+        idx = (idx + 1) % m->cap;
+    }
+}
+
+void __nc_map_clear(nc_map* m) {
+    if (!m->cap) return;
+    memset(m->entries, 0, (size_t)m->cap * sizeof(nc_entry));
+    m->len = 0;
+    m->tombstones = 0;
 }
 
 void __nc_throw(str ex) {

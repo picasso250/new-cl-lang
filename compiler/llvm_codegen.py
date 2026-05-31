@@ -291,8 +291,12 @@ class LLVMCodegen:
         self.map_get_fn = None
         self.map_set_fn = None
         self.map_has_fn = None
+        self.map_delete_fn = None
+        self.map_clear_fn = None
         self.slice_copy_fn = None
         self.slice_append_fn = None
+        self.slice_copy_into_fn = None
+        self.slice_clear_fn = None
         self.gc_live_count = None
         self.ex_active = None
         self.ex_value = None
@@ -1339,12 +1343,40 @@ class LLVMCodegen:
                 length64 = self.builder.extract_value(arg, 2)
                 return self.builder.trunc(length64, ir.IntType(32))
             raise NotImplementedError(f"LLVM backend v1 cannot take len of {node.args[0].type}")
+        if node.name == "cap":
+            if len(node.args) != 1:
+                raise RuntimeError("cap expects one argument")
+            if parse_slice_type(node.args[0].type) is None:
+                raise NotImplementedError(f"LLVM backend v1 cannot take cap of {node.args[0].type}")
+            arg = self.emit_expr(node.args[0])
+            cap64 = self.builder.extract_value(arg, 2)
+            return self.builder.trunc(cap64, ir.IntType(32))
         if parse_map_type(node.name) is not None:
             return self.emit_map_new()
         if node.name == "map_has":
             if len(node.args) != 2:
                 raise RuntimeError("map_has expects two arguments")
             return self.emit_map_has(node.args[0], node.args[1])
+        if node.name == "delete":
+            if len(node.args) != 2:
+                raise RuntimeError("delete expects two arguments")
+            return self.emit_map_delete(node.args[0], node.args[1])
+        if node.name == "clear":
+            if len(node.args) != 1:
+                raise RuntimeError("clear expects one argument")
+            return self.emit_clear(node.args[0])
+        if node.name == "copy":
+            if len(node.args) != 2:
+                raise RuntimeError("copy expects two arguments")
+            return self.emit_slice_copy_into(node.args[0], node.args[1])
+        if node.name in ("min", "max"):
+            if len(node.args) != 2:
+                raise RuntimeError(f"{node.name} expects two arguments")
+            return self.emit_min_max(node.name, node.args[0], node.args[1])
+        if node.name == "abs":
+            if len(node.args) != 1:
+                raise RuntimeError("abs expects one argument")
+            return self.emit_abs(node.args[0])
         if node.name == "str":
             if len(node.args) != 1:
                 raise RuntimeError("str expects one argument")
@@ -1541,6 +1573,73 @@ class LLVMCodegen:
         )
         return self.builder.load(out, name="slice.append")
 
+    def emit_slice_copy_into(self, dst_expr, src_expr):
+        self.ensure_ncrt_runtime()
+        elem_type = parse_slice_type(dst_expr.type)
+        if elem_type is None:
+            raise NotImplementedError(f"LLVM backend v1 cannot copy into {dst_expr.type}")
+        slice_type = llvm_type(dst_expr.type)
+        dst = self.emit_expr(dst_expr)
+        src = self.emit_expr(src_expr)
+        dst_slot = self.value_to_stack_ptr(dst, slice_type, "__nc_copy_dst")
+        src_slot = self.value_to_stack_ptr(src, slice_type, "__nc_copy_src")
+        return self.builder.call(
+            self.slice_copy_into_fn,
+            [
+                self.builder.bitcast(dst_slot, RAW_SLICE_TYPE.as_pointer()),
+                self.builder.bitcast(src_slot, RAW_SLICE_TYPE.as_pointer()),
+                ir.Constant(ir.IntType(64), self.aligned_sizeof_type(elem_type)),
+            ],
+            name="slice.copy.into",
+        )
+
+    def emit_clear(self, expr):
+        self.ensure_ncrt_runtime()
+        elem_type = parse_slice_type(expr.type)
+        if elem_type is not None:
+            value = self.emit_expr(expr)
+            slot = self.value_to_stack_ptr(value, llvm_type(expr.type), "__nc_clear_slice")
+            self.builder.call(
+                self.slice_clear_fn,
+                [
+                    self.builder.bitcast(slot, RAW_SLICE_TYPE.as_pointer()),
+                    ir.Constant(ir.IntType(64), self.aligned_sizeof_type(elem_type)),
+                ],
+            )
+            return ir.Constant(ir.IntType(1), 0)
+        if parse_map_type(expr.type) is not None:
+            self.builder.call(self.map_clear_fn, [self.map_pointer_for_expr(expr)])
+            return ir.Constant(ir.IntType(1), 0)
+        raise NotImplementedError(f"LLVM backend v1 cannot clear {expr.type}")
+
+    def emit_min_max(self, name: str, left_expr, right_expr):
+        typ = left_expr.type
+        left = self.emit_expr(left_expr)
+        right = self.emit_coerced_expr(right_expr, typ)
+        if typ in FLOAT_TYPES:
+            pred = "<=" if name == "min" else ">="
+            cond = self.builder.fcmp_ordered(pred, left, right, name=f"{name}.cmp")
+        elif typ in UNSIGNED_INT_TYPES:
+            pred = "<=" if name == "min" else ">="
+            cond = self.builder.icmp_unsigned(pred, left, right, name=f"{name}.cmp")
+        else:
+            pred = "<=" if name == "min" else ">="
+            cond = self.builder.icmp_signed(pred, left, right, name=f"{name}.cmp")
+        return self.builder.select(cond, left, right, name=name)
+
+    def emit_abs(self, arg_expr):
+        typ = arg_expr.type
+        value = self.emit_expr(arg_expr)
+        if typ in FLOAT_TYPES:
+            zero = ir.Constant(value.type, 0.0)
+            neg = self.builder.fsub(zero, value, name="abs.neg")
+            cond = self.builder.fcmp_ordered("<", value, zero, name="abs.cmp")
+            return self.builder.select(cond, neg, value, name="abs")
+        zero = ir.Constant(value.type, 0)
+        neg = self.builder.sub(zero, value, name="abs.neg")
+        cond = self.builder.icmp_signed("<", value, zero, name="abs.cmp")
+        return self.builder.select(cond, neg, value, name="abs")
+
     def emit_str_cat(self, left, right):
         self.ensure_ncrt_runtime()
         out = self.alloca_at_entry("__nc_str_cat_out", STR_TYPE)
@@ -1596,6 +1695,14 @@ class LLVMCodegen:
         key = self.scalar_to_nc_val(self.emit_expr(key_expr), key_expr.type)
         key_ptr = self.value_to_stack_ptr(key, NC_VAL_TYPE, "__nc_map_has_key")
         return self.builder.call(self.map_has_fn, [map_ptr, key_ptr], name="map.has")
+
+    def emit_map_delete(self, map_expr, key_expr):
+        self.ensure_ncrt_runtime()
+        map_ptr = self.map_pointer_for_expr(map_expr)
+        key = self.scalar_to_nc_val(self.emit_expr(key_expr), key_expr.type)
+        key_ptr = self.value_to_stack_ptr(key, NC_VAL_TYPE, "__nc_map_delete_key")
+        self.builder.call(self.map_delete_fn, [map_ptr, key_ptr])
+        return ir.Constant(ir.IntType(1), 0)
 
     def emit_map_set(self, map_expr, key_expr, value_expr, assign_op="="):
         self.ensure_ncrt_runtime()
@@ -1746,6 +1853,8 @@ class LLVMCodegen:
             self.map_get_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [nc_val_ptr, MAP_TYPE.as_pointer(), nc_val_ptr, ir.IntType(32)]), name="__nc_map_get")
             self.map_set_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [MAP_TYPE.as_pointer(), nc_val_ptr, nc_val_ptr]), name="__nc_map_set")
             self.map_has_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [MAP_TYPE.as_pointer(), nc_val_ptr]), name="__nc_map_has")
+            self.map_delete_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [MAP_TYPE.as_pointer(), nc_val_ptr]), name="__nc_map_delete")
+            self.map_clear_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [MAP_TYPE.as_pointer()]), name="__nc_map_clear")
             raw_slice_ptr = RAW_SLICE_TYPE.as_pointer()
             self.slice_copy_fn = ir.Function(
                 self.module,
@@ -1756,6 +1865,16 @@ class LLVMCodegen:
                 self.module,
                 ir.FunctionType(ir.VoidType(), [raw_slice_ptr, raw_slice_ptr, I8PTR, ir.IntType(64)]),
                 name="__nc_slice_append_raw",
+            )
+            self.slice_copy_into_fn = ir.Function(
+                self.module,
+                ir.FunctionType(ir.IntType(32), [raw_slice_ptr, raw_slice_ptr, ir.IntType(64)]),
+                name="__nc_slice_copy_into_raw",
+            )
+            self.slice_clear_fn = ir.Function(
+                self.module,
+                ir.FunctionType(ir.VoidType(), [raw_slice_ptr, ir.IntType(64)]),
+                name="__nc_slice_clear_raw",
             )
 
     def value_to_stack_ptr(self, value, typ, name):

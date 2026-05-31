@@ -18,6 +18,7 @@ def test_typecheck_uses_builtin_boundary():
     assert 'node.name == "io.println"' not in source
     assert 'node.name == "read_file"' not in source
     assert 'node.name == "append"' not in source
+    assert 'node.name == "delete"' not in source
 
 
 def test_io_output_builtins_are_std_module_qualified():
@@ -28,6 +29,12 @@ def test_io_output_builtins_are_std_module_qualified():
     assert 'name == "fs.write_file"' in source
     assert 'name == "runtime.gc_collect"' in source
     assert 'name == "runtime.gc_live"' in source
+    assert 'name == "cap"' in source
+    assert 'name == "copy"' in source
+    assert 'name == "clear"' in source
+    assert 'name == "delete"' in source
+    assert 'name in {"min", "max"}' in source
+    assert 'name == "abs"' in source
     assert 'name == "print"' not in source
     assert 'name == "read_file"' not in source
     assert 'name == "write_file"' not in source
