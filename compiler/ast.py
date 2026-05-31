@@ -455,6 +455,15 @@ class FunctionCall(Node):
         return f"Call({self.name}, {self.args})"
 
 
+class SizeOfType(Node):
+    """size_of(T) compile-time builtin expression."""
+    def __init__(self, type_name: str):
+        self.type_name = type_name
+
+    def __repr__(self):
+        return f"SizeOf({self.type_name})"
+
+
 class MethodCall(Node):
     """obj.method(args...)"""
     def __init__(self, obj, method: str, args: list):

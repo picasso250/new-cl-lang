@@ -576,6 +576,13 @@ class Parser:
             if self.peek().kind == TokenKind.LPAREN:
                 start_expr = expr
                 self.advance()
+                if isinstance(start_expr, Identifier) and start_expr.name == "size_of":
+                    type_name = self._parse_type()
+                    self.expect(TokenKind.RPAREN)
+                    expr = SizeOfType(type_name)
+                    if hasattr(start_expr, "span"):
+                        expr.span = (start_expr.span[0], self.tokens[self.pos - 1].pos)
+                    continue
                 args = []
                 if self.peek().kind != TokenKind.RPAREN:
                     args.append(self.parse_expression())

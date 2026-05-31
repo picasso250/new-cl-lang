@@ -2,6 +2,9 @@
 
 ## 2026-05-31
 
+- 预备实现 `size_of(T)` 语言级编译期内建：只接受类型实参，类型检查验证可见且可确定 ABI size，LLVM 降为 `u64` 常量，并把后端现有大小计算统一改为 ABI 对齐布局。
+- 已实现 `size_of(T)`：新增 AST 节点和类型语法解析，类型检查递归验证 sized/可见类型并返回 `u64`，LLVM 降为常量；后端大小计算改为 ABI 对齐，复用于 struct/slice/array/closure env 分配与复制。新增 case_227~230 和跨模块私有类型测试。验证通过：`python tests/test_basic.py`；`python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_type_ref.py -q`。
+
 - 预备重做 extern lib 路径功能：从 `a92070c` 干净基线重新实现 `extern { ... }` 默认链接与 `extern "path.lib" { ... }` 链接输入收集；不保留 `extern "c"` 语义。
 - 已重做 extern lib 路径功能：`ExternBlock.source` 改为 `lib`，parser 支持无字符串 extern 与可选链接输入字符串，typecheck 仅校验 extern 函数 ABI；新增 `compile_nc_sources_with_libs()` 供 run/build 传递链接库，`compile` 仍只输出 LLVM IR。迁移 case_189/191/193~196 到 `extern { ... }`，删除旧 source 错误 case，并补真实 `.lib` 链接测试与 compile-only link libs 收集断言。验证通过：`python tests/test_basic.py`、`python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_llvm_cases.py tests/test_type_ref.py -q`、`python nc.py build test_cases\case_189_extern_c_putchar.nc` 后运行 `build\main.exe` 输出 `A`、`python nc.py compile -c "extern { fun putchar(c: i32): i32 } fun main() {}"`。
 

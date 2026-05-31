@@ -182,6 +182,21 @@ def test_import_private_iface_error():
         assert "symbol 'api._Private' is private" in result.stderr
 
 
+def test_size_of_import_private_type_error():
+    with tempfile.TemporaryDirectory() as tmp:
+        main = os.path.join(tmp, "main")
+        foo = os.path.join(tmp, "foo")
+        os.mkdir(main)
+        os.mkdir(foo)
+        write_file(os.path.join(foo, "foo.nc"), "struct _T { value: i32 }\n")
+        write_file(os.path.join(main, "main.nc"), "import foo\nfun main() { let x = size_of(foo._T) }\n")
+
+        result = run_nc("compile", main)
+
+        assert result.returncode != 0
+        assert "symbol 'foo._T' is private" in result.stderr
+
+
 def test_import_same_public_names_do_not_conflict():
     with tempfile.TemporaryDirectory() as tmp:
         main = os.path.join(tmp, "main")

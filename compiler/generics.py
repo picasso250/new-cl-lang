@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import re
 
-from compiler.ast import FunctionCall, FunctionDeclaration, Program, StructDecl, StructLiteral
+from compiler.ast import FunctionCall, FunctionDeclaration, Program, SizeOfType, StructDecl, StructLiteral
 from compiler.type_ref import parse_type_app, rewrite_type as rewrite_type_ref
 
 
@@ -70,6 +70,8 @@ def _substitute_node(node, subst: dict[str, str]):
         elif isinstance(n, FunctionCall):
             _normalize_call_type_args(n)
             n.type_args = [_sub_type(t, subst) for t in n.type_args]
+        elif isinstance(n, SizeOfType):
+            n.type_name = _sub_type(n.type_name, subst)
         for key in ("annotation", "elem_type"):
             if hasattr(n, key):
                 setattr(n, key, _sub_type(getattr(n, key), subst))
@@ -172,6 +174,8 @@ def monomorphize(program: Program) -> Program:
                 request_func(n.name, args)
                 n.name = _instance_name(n.name, args)
                 n.type_args = []
+        elif isinstance(n, SizeOfType):
+            n.type_name = rewrite_type(n.type_name)
         for key in ("annotation", "elem_type"):
             if hasattr(n, key):
                 setattr(n, key, rewrite_type(getattr(n, key)))

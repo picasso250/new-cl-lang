@@ -9,7 +9,7 @@ from compiler.generics import monomorphize
 from compiler.llvm_codegen import build_llvm_ir, generate_llvm_ir, run_llvm_ir
 from compiler.source import Module, SourceFile, annotate_source_file, module_name_from_sources
 from compiler.ast import (
-    Program, ImportDecl, FunctionDeclaration, StructDecl, IfaceDecl, EnumDecl, FunctionCall,
+    Program, ImportDecl, FunctionDeclaration, StructDecl, IfaceDecl, EnumDecl, FunctionCall, SizeOfType,
     Identifier, StructLiteral, EnumRef, TypeAlias, FunctionExpr, ExternBlock,
 )
 from compiler.type_ref import rewrite_type
@@ -81,6 +81,8 @@ def _expand_type_aliases_in_module(module: Module):
             node.name = expand_type(node.name)
         elif isinstance(node, FunctionCall):
             node.type_args = [expand_type(a) for a in node.type_args]
+        elif isinstance(node, SizeOfType):
+            node.type_name = expand_type(node.type_name)
         for key in ("annotation", "elem_type"):
             if hasattr(node, key):
                 setattr(node, key, expand_type(getattr(node, key)))
@@ -201,6 +203,8 @@ def _rewrite_module_names(module: Module, entry: bool):
                 fn.params = [(n, _qual_type(t, module.name, local_names)) for n, t in fn.params]
         elif isinstance(node, FunctionCall):
             node.name = q(node.name)
+        elif isinstance(node, SizeOfType):
+            node.type_name = _qual_type(node.type_name, module.name, local_names)
         elif isinstance(node, Identifier):
             node.name = q(node.name)
         elif isinstance(node, StructLiteral):

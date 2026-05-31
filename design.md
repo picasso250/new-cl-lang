@@ -154,6 +154,8 @@ map 语义：
 - `len(m)` 返回 map 当前条目数，类型为 `i32`。
 - `map_new()`、裸 `nc_map` 和旧字符串专用 map helper 不是语言边界，不保留向前兼容。
 
+`size_of(T)` 是语言级编译期内建表达式，只接受类型实参，不调用用户函数，返回类型为 `u64`。它返回当前 LLVM/ncrt ABI 下类型 `T` 的运行时布局大小：基础标量按实际宽度，`str` 为 16，`[]T` 为 24，`map[K,V]` 为 32，函数值与接口值为 16，指针与 nullable pointer 为 8，enum/rune 为 4，数组按元素 ABI stride 乘长度，struct 按字段偏移、padding 和最终对齐计算。`size_of(void)` 非法；命名/限定类型必须存在且遵守跨模块 `_` 私有可见性；嵌套类型组件会递归校验。
+
 ### 4.3 零值（Go 式）
 
 | 类型 | 零值 |
@@ -416,7 +418,7 @@ try {
 - 常量表达式求值。
 - `static_assert(expr)`，且只接受编译期常量表达式。
 - `cfg` / build config，用于平台或 feature 分支。
-- `size_of(T)` 这类有限内建常量表达式。
+- 其他有限内建常量表达式。
 
 ---
 

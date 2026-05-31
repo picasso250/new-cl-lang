@@ -5,7 +5,10 @@
 
 
 from compiler.builtins import NUMERIC_TYPES, SCALAR_TYPES, STRINGIFIABLE_TYPES, infer_builtin_call
-from compiler.type_ref import parse_fn_type, parse_map_type
+from compiler.type_ref import (
+    ArrayTypeRef, FunctionType, GenericType, NamedType, PointerType, SliceType,
+    parse_fn_type, parse_map_type, parse_type_ref,
+)
 
 
 class TypeCheckError(Exception):
@@ -19,7 +22,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         Assignment, Update, Block, ForCondition, FunctionDeclaration, Return, ImportDecl,
         StructDecl, IfaceDecl, StructLiteral, FieldAccess,
         EnumDecl, EnumRef, ForIn,
-        IfExpr, BlockExpr, MatchExpr, IntegerLiteral, FloatLiteral, StringLiteral, InterpolatedString, RuneLiteral, BoolLiteral, NilLiteral, BinaryOp, UnaryOp, FunctionCall, Identifier,
+        IfExpr, BlockExpr, MatchExpr, IntegerLiteral, FloatLiteral, StringLiteral, InterpolatedString, RuneLiteral, BoolLiteral, NilLiteral, BinaryOp, UnaryOp, FunctionCall, SizeOfType, Identifier,
         ExternBlock, FunctionExpr,
         ArrayLiteral, SliceLiteral, IndexAccess, SliceExpr, MethodCall, TryCatch, Throw, Defer, Break
     )
@@ -211,6 +214,62 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         if value_type not in SCALAR_TYPES:
             fail(f"map value type: expected scalar, got {value_type}", node)
         return key_type, value_type
+
+    def validate_sized_type(t, node=None, *, allow_void=False):
+        if t == "void":
+            if allow_void:
+                return
+            fail("size_of: void has no size", node)
+        ref = parse_type_ref(t)
+
+        def walk(r, *, allow_void_here=False):
+            if isinstance(r, NamedType):
+                name = r.name
+                if name == "void":
+                    if allow_void_here:
+                        return
+                    fail("size_of: void has no size", node)
+                require_public_qualified(name, node)
+                if name in NUMERIC_TYPES or name in {"bool", "str", "rune"}:
+                    return
+                if name == "map":
+                    fail("size_of: map requires type arguments", node)
+                try:
+                    sym = symtab.lookup(name)
+                except NameError:
+                    fail(f"size_of: unknown type {name}", node)
+                if sym.nc_type not in {"struct", "enum", "iface"}:
+                    fail(f"size_of: unknown type {name}", node)
+                return
+            if isinstance(r, PointerType):
+                walk(r.inner, allow_void_here=True)
+                return
+            if isinstance(r, SliceType):
+                walk(r.elem)
+                return
+            if isinstance(r, ArrayTypeRef):
+                walk(r.elem)
+                return
+            if isinstance(r, FunctionType):
+                for p in r.params:
+                    walk(p)
+                walk(r.ret, allow_void_here=True)
+                return
+            if isinstance(r, GenericType):
+                if not isinstance(r.base, NamedType):
+                    fail(f"size_of: unsupported type {t}", node)
+                base = r.base.name
+                if base != "map":
+                    fail(f"size_of: unknown type {base}", node)
+                if len(r.args) != 2:
+                    fail(f"map: expected 2 type args, got {len(r.args)}", node)
+                for arg in r.args:
+                    walk(arg)
+                key_type, value_type = validate_map_type(t, node)
+                return
+            fail(f"size_of: unsupported type {t}", node)
+
+        walk(ref, allow_void_here=allow_void)
 
     def is_rune_type(t):
         return t == "rune"
@@ -454,6 +513,9 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 node.type = ret_type
                 node.is_closure_call = True
                 node.closure_param_types = param_types
+        elif isinstance(node, SizeOfType):
+            validate_sized_type(node.type_name, node)
+            node.type = "u64"
         elif isinstance(node, FunctionExpr):
             nonlocal current_return_type
             prev_return_type = current_return_type

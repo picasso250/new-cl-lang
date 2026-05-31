@@ -15,7 +15,7 @@ from compiler.ast import (
     Defer, ExpressionStatement, EnumDecl, EnumRef, FieldAccess, FloatLiteral, FunctionCall,
     FunctionExpr,
     ForIn, FunctionDeclaration, Identifier, IfExpr, IfaceDecl, IndexAccess, IntegerLiteral,
-    MatchExpr, MethodCall, NilLiteral, Return, SliceExpr, SliceLiteral, StringLiteral, InterpolatedString, RuneLiteral, StructDecl,
+    MatchExpr, MethodCall, NilLiteral, Return, SizeOfType, SliceExpr, SliceLiteral, StringLiteral, InterpolatedString, RuneLiteral, StructDecl,
     StructLiteral, Throw, TryCatch, UnaryOp, VariableDeclaration, ForCondition,
 )
 from compiler.codegen_collect import collect_codegen_inputs
@@ -854,6 +854,8 @@ class LLVMCodegen:
             return self.emit_block_expr(node)
         if isinstance(node, FunctionCall):
             return self.emit_call(node)
+        if isinstance(node, SizeOfType):
+            return ir.Constant(ir.IntType(64), self.sizeof_type(node.type_name))
         if isinstance(node, MethodCall):
             return self.emit_method_call(node)
         if isinstance(node, FunctionExpr):
@@ -970,7 +972,7 @@ class LLVMCodegen:
                 self.builder.bitcast(out, RAW_SLICE_TYPE.as_pointer()),
                 self.builder.bitcast(source_ptr, I8PTR),
                 count64,
-                ir.Constant(ir.IntType(64), self.sizeof_type(elem_type)),
+                ir.Constant(ir.IntType(64), self.aligned_sizeof_type(elem_type)),
             ],
         )
         return self.builder.load(out, name="slice.copy")
@@ -1255,7 +1257,7 @@ class LLVMCodegen:
         if not captures:
             return ir.Constant(I8PTR, None)
         env_type = self.closure_env_types[node.closure_id]
-        size = sum(self.sizeof_type(capture_type) for _name, capture_type in captures)
+        size = self.sizeof_fields([capture_type for _name, capture_type in captures])
         raw = self.malloc_bytes(ir.Constant(ir.IntType(64), max(size, 1)))
         env_ptr = self.builder.bitcast(raw, env_type.as_pointer(), name="closure.env.alloc")
         for i, (capture_name, capture_type) in enumerate(captures):
@@ -1382,7 +1384,7 @@ class LLVMCodegen:
                 self.builder.bitcast(out, RAW_SLICE_TYPE.as_pointer()),
                 self.builder.bitcast(source_slot, RAW_SLICE_TYPE.as_pointer()),
                 self.builder.bitcast(elem_slot, I8PTR),
-                ir.Constant(ir.IntType(64), self.sizeof_type(elem_type)),
+                ir.Constant(ir.IntType(64), self.aligned_sizeof_type(elem_type)),
             ],
         )
         return self.builder.load(out, name="slice.append")
@@ -1611,7 +1613,7 @@ class LLVMCodegen:
 
     def malloc_array(self, elem_type: str, count):
         self.ensure_gc_runtime()
-        elem_size = ir.Constant(ir.IntType(64), self.sizeof_type(elem_type))
+        elem_size = ir.Constant(ir.IntType(64), self.aligned_sizeof_type(elem_type))
         size = self.builder.mul(count, elem_size, name="malloc.size")
         raw = self.builder.call(self.gc_alloc, [size], name="gc.alloc.raw")
         return self.builder.bitcast(raw, llvm_type(elem_type).as_pointer(), name="malloc.typed")
@@ -1695,11 +1697,13 @@ class LLVMCodegen:
         self.builder.position_at_end(end_bb)
 
     def sizeof_type(self, nc_type: str) -> int:
+        if nc_type == "void":
+            raise NotImplementedError("LLVM backend v1 cannot sizeof void")
         if nc_type in ("i8", "u8", "bool"):
             return 1
         if nc_type in ("i16", "u16"):
             return 2
-        if nc_type in ("i32", "u32", "f32") or nc_type in ENUM_VARIANTS:
+        if nc_type in ("i32", "u32", "f32", "rune") or nc_type in ENUM_VARIANTS:
             return 4
         if nc_type in ("i64", "u64", "f64"):
             return 8
@@ -1718,10 +1722,52 @@ class LLVMCodegen:
         array_info = parse_array_type(nc_type)
         if array_info is not None:
             length, elem_type = array_info
-            return length * self.sizeof_type(elem_type)
+            return length * self.aligned_sizeof_type(elem_type)
         if nc_type in STRUCT_FIELDS:
-            return sum(self.sizeof_type(field_type) for _field_name, field_type in STRUCT_FIELDS[nc_type])
+            return self.sizeof_fields([field_type for _field_name, field_type in STRUCT_FIELDS[nc_type]])
         raise NotImplementedError(f"LLVM backend v1 cannot sizeof {nc_type}")
+
+    def alignof_type(self, nc_type: str) -> int:
+        if nc_type == "void":
+            raise NotImplementedError("LLVM backend v1 cannot alignof void")
+        if nc_type in ("i8", "u8", "bool"):
+            return 1
+        if nc_type in ("i16", "u16"):
+            return 2
+        if nc_type in ("i32", "u32", "f32", "rune") or nc_type in ENUM_VARIANTS:
+            return 4
+        if nc_type in ("i64", "u64", "f64", "str", "nc_map") or parse_map_type(nc_type) is not None:
+            return 8
+        if isinstance(nc_type, str) and (nc_type.startswith("*") or nc_type.startswith("?*")):
+            return 8
+        if parse_fn_type(nc_type) is not None or nc_type in IFACE_METHODS:
+            return 8
+        if parse_slice_type(nc_type) is not None:
+            return 8
+        array_info = parse_array_type(nc_type)
+        if array_info is not None:
+            _length, elem_type = array_info
+            return self.alignof_type(elem_type)
+        if nc_type in STRUCT_FIELDS:
+            aligns = [self.alignof_type(field_type) for _field_name, field_type in STRUCT_FIELDS[nc_type]]
+            return max(aligns, default=1)
+        raise NotImplementedError(f"LLVM backend v1 cannot alignof {nc_type}")
+
+    def align_to(self, value: int, alignment: int) -> int:
+        return ((value + alignment - 1) // alignment) * alignment
+
+    def aligned_sizeof_type(self, nc_type: str) -> int:
+        return self.align_to(self.sizeof_type(nc_type), self.alignof_type(nc_type))
+
+    def sizeof_fields(self, field_types: list[str]) -> int:
+        offset = 0
+        max_align = 1
+        for field_type in field_types:
+            align = self.alignof_type(field_type)
+            max_align = max(max_align, align)
+            offset = self.align_to(offset, align)
+            offset += self.sizeof_type(field_type)
+        return self.align_to(offset, max_align)
 
     def ensure_memcmp(self):
         if self.memcmp is None:
