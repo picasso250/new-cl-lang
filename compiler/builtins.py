@@ -4,8 +4,12 @@ This is the temporary boundary between language core, runtime test hooks,
 and functions that should eventually move behind std imports.
 """
 
+from compiler.type_ref import parse_map_type
+
+
 NUMERIC_TYPES = {"i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64"}
-STRINGIFIABLE_TYPES = NUMERIC_TYPES | {"str", "bool", "rune"}
+SCALAR_TYPES = NUMERIC_TYPES | {"str", "bool", "rune"}
+STRINGIFIABLE_TYPES = SCALAR_TYPES
 
 
 def infer_builtin_call(node, require_arg_count, require_type, fail) -> str | None:
@@ -30,14 +34,25 @@ def infer_builtin_call(node, require_arg_count, require_type, fail) -> str | Non
             fail(f"append: expected slice, got {args[0].type}", node)
         require_type(args[1].type, args[0].type[2:], "append element", node)
         return args[0].type
-    if name == "map_new":
-        return "nc_map"
-    if name == "map_set_s":
-        return "void"
-    if name == "map_get_s":
-        return "str"
     if name == "map_has":
+        require_arg_count(args, 2, "map_has", node)
+        map_args = parse_map_type(args[0].type)
+        if map_args is None:
+            fail(f"map_has: expected map, got {args[0].type}", node)
+        key_type, _value_type = map_args
+        require_type(args[1].type, key_type, "map_has key", args[1])
         return "i32"
+    map_args = parse_map_type(name)
+    if map_args is not None:
+        require_arg_count(args, 0, name, node)
+        if len(map_args) != 2:
+            fail(f"map: expected 2 type args, got {len(map_args)}", node)
+        key_type, value_type = map_args
+        if key_type not in SCALAR_TYPES:
+            fail(f"map key type: expected scalar, got {key_type}", node)
+        if value_type not in SCALAR_TYPES:
+            fail(f"map value type: expected scalar, got {value_type}", node)
+        return name
     if name == "str":
         require_arg_count(args, 1, "str", node)
         if args[0].type not in STRINGIFIABLE_TYPES:
@@ -67,7 +82,7 @@ def infer_builtin_call(node, require_arg_count, require_type, fail) -> str | Non
     if name == "len":
         require_arg_count(args, 1, "len", node)
         arg_type = args[0].type
-        if not (arg_type == "str" or arg_type == "nc_map" or arg_type.startswith("[]")):
+        if not (arg_type == "str" or parse_map_type(arg_type) is not None or arg_type.startswith("[]")):
             fail(f"len: expected str, map, or slice, got {arg_type}", node)
         return "i32"
     return None

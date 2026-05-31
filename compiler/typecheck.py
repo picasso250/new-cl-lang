@@ -4,8 +4,8 @@
 """
 
 
-from compiler.builtins import NUMERIC_TYPES, STRINGIFIABLE_TYPES, infer_builtin_call
-from compiler.type_ref import parse_fn_type
+from compiler.builtins import NUMERIC_TYPES, SCALAR_TYPES, STRINGIFIABLE_TYPES, infer_builtin_call
+from compiler.type_ref import parse_fn_type, parse_map_type
 
 
 class TypeCheckError(Exception):
@@ -198,6 +198,19 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
 
     def is_numeric_type(t):
         return t in NUMERIC_TYPES
+
+    def validate_map_type(t, node=None):
+        map_args = parse_map_type(t)
+        if map_args is None:
+            return None
+        if len(map_args) != 2:
+            fail(f"map: expected 2 type args, got {len(map_args)}", node)
+        key_type, value_type = map_args
+        if key_type not in SCALAR_TYPES:
+            fail(f"map key type: expected scalar, got {key_type}", node)
+        if value_type not in SCALAR_TYPES:
+            fail(f"map value type: expected scalar, got {value_type}", node)
+        return key_type, value_type
 
     def is_rune_type(t):
         return t == "rune"
@@ -449,6 +462,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             current_return_type = node.return_type or "void"
             symtab.push_scope()
             for pname, ptype in node.params:
+                validate_map_type(ptype, node)
                 symtab.declare(pname, ptype)
             ctx = {"level": symtab._level, "captures": {}}
             closure_stack.append(ctx)
@@ -564,6 +578,10 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             elif node.obj.type == "nc_map":
                 require_type(node.index.type, "str", "map key", node.index)
                 node.type = "str"
+            elif parse_map_type(node.obj.type) is not None:
+                key_type, value_type = validate_map_type(node.obj.type, node)
+                require_type(node.index.type, key_type, "map key", node.index)
+                node.type = value_type
             elif node.obj.type.startswith("[]"):
                 require_type(node.index.type, "i32", "index", node.index)
                 node.type = node.obj.type[2:]
@@ -598,6 +616,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             if isinstance(stmt, VariableDeclaration):
                 if stmt.annotation:
                     require_public_qualified(stmt.annotation, stmt)
+                    validate_map_type(stmt.annotation, stmt)
                 walk_expr(stmt.initializer)
                 stmt.type = stmt.annotation or stmt.initializer.type
                 if stmt.type == "void" or stmt.type == "__nil":
@@ -658,10 +677,13 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             elif isinstance(stmt, FunctionDeclaration):
                 if stmt.return_type:
                     require_public_qualified(stmt.return_type, stmt)
+                    validate_map_type(stmt.return_type, stmt)
                 if stmt.receiver_type:
                     require_public_qualified(stmt.receiver_type, stmt)
+                    validate_map_type(stmt.receiver_type, stmt)
                 for _pname, _ptype in stmt.params:
                     require_public_qualified(_ptype, stmt)
+                    validate_map_type(_ptype, stmt)
                 symtab.push_scope()
                 prev_return_type = current_return_type
                 if not stmt.return_type_explicit:
@@ -695,7 +717,8 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                     else:
                         fail(f"return: expected {current_return_type}, got void", stmt)
             elif isinstance(stmt, StructDecl):
-                pass  # 已在 Pass 1 注册
+                for _fname, _ftype in stmt.fields:
+                    validate_map_type(_ftype, stmt)
             elif isinstance(stmt, IfaceDecl):
                 iface_method_set(stmt.name)
             elif isinstance(stmt, EnumDecl):

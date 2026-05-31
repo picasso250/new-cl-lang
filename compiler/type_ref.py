@@ -181,6 +181,16 @@ def parse_slice_type(t: str):
     return None
 
 
+def parse_map_type(t: str):
+    app = parse_type_app(t)
+    if app is None:
+        return None
+    base, args = app
+    if base == "map":
+        return args
+    return None
+
+
 def parse_array_type(t: str):
     ref = parse_type_ref(t)
     if isinstance(ref, ArrayTypeRef):

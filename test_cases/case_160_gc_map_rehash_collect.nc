@@ -4,7 +4,7 @@ import io
 # STDOUT: v19
 
 fun main() {
-    let m = map_new()
+    let m = map[str,str]()
     m["k0"] = "v0"
     m["k1"] = "v1"
     m["k2"] = "v2"

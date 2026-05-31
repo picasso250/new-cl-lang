@@ -40,4 +40,4 @@ def test_llvm_declares_external_ncrt_symbols():
 
     assert "__nc_gc_alloc" in source
     assert "__nc_read_file" in source
-    assert "__nc_map_new" in source
+    assert "__nc_map_init" in source

@@ -15,7 +15,7 @@ fun main() {
   let f: f64 = 1.5
   f++
   io.println(f)
-  let s = map_new()
+  let s = map[str,str]()
   s["a"] = "x"
   s["a"] += "y"
   io.println(s["a"])

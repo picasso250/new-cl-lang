@@ -12,18 +12,25 @@ typedef struct {
 
 typedef enum {
     NC_VAL_NIL = 0,
+    NC_VAL_I8,
+    NC_VAL_I16,
     NC_VAL_I32,
-    NC_VAL_STR,
-    NC_VAL_PTR
+    NC_VAL_I64,
+    NC_VAL_U8,
+    NC_VAL_U16,
+    NC_VAL_U32,
+    NC_VAL_U64,
+    NC_VAL_F32,
+    NC_VAL_F64,
+    NC_VAL_BOOL,
+    NC_VAL_RUNE,
+    NC_VAL_STR
 } nc_val_tag;
 
 typedef struct {
-    nc_val_tag tag;
-    union {
-        long long i;
-        str s;
-        void* p;
-    };
+    int32_t tag;
+    uint64_t a;
+    uint64_t b;
 } nc_val;
 
 typedef struct nc_entry nc_entry;
@@ -86,12 +93,9 @@ void __nc_slice_append_raw(nc_slice_raw* out, const nc_slice_raw* in, const void
 
 void __nc_map_init(nc_map* m);
 void __nc_map_free(nc_map* m);
-void __nc_map_set_str(nc_map* m, str key, str value);
-str __nc_map_get_str(nc_map* m, str key);
-int __nc_map_has(nc_map* m, str key);
-void __nc_map_set_str_ptr(nc_map* m, const str* key, const str* value);
-void __nc_map_get_str_out(str* out, nc_map* m, const str* key);
-int __nc_map_has_ptr(nc_map* m, const str* key);
+void __nc_map_set(nc_map* m, const nc_val* key, const nc_val* value);
+void __nc_map_get(nc_val* out, nc_map* m, const nc_val* key, int32_t value_tag);
+int __nc_map_has(nc_map* m, const nc_val* key);
 
 void __nc_throw(str ex);
 

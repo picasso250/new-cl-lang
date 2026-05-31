@@ -63,15 +63,15 @@ import io                # 内置标准模块，不要求存在同级 io/ 目录
 - `runtime.gc_collect()` 与 `runtime.gc_live()` 是当前唯一公开的运行时调试 API；裸 `gc_collect()` / `gc_live()` 不再是 builtin。
 - `io.println` 支持输出 `str`、`rune`、`bool`、有符号整数、无符号整数和浮点数；`rune` 按对应 UTF-8 字符输出，不输出数字码点。
 - 裸 `print(...)` 不是语言内建，也不向前兼容。
-- `len`、`append`、数值转换仍是语言级内建；`nc_map` 的 `map_new` / `map_has` 等仍是临时实验边界，尚未标准库化。
+- `len`、`append`、数值转换和 `map_has` 仍是语言级内建；`map[K,V]` 是内建泛型 map 类型。
 
 当前后端边界：
 
 - LLVM 是唯一后端：`compile` 输出 LLVM IR，`build` 输出 `build/main.ll`、`build/main.obj`、`build/ncrt.obj` 与 `build/main.exe`。
 - `--backend` 入口已删除；显式传入 `--backend` 会报错。旧 C 后端和旧 `compile_nc_to_c` / `run_c_code` / `build_c_code` API 不保留向前兼容。
-- LLVM 后端 v1 当前承诺基础闭环：基础数值/bool 类型、`str` 字面量/索引/切片/拼接、数值转换、`str(i32)`、`i32(str)`、`len(str)`、`str ==/!=`、定长数组字面量/索引/索引赋值、slice layout/literal/index/`len`/`append`、定长数组与 slice 切片复制、slice `for i, item in s`、struct 值类型声明/字面量/字段读写/参数与返回、heap struct `new`、指针 receiver 方法声明/调用、nullable pointer `nil`/`!= nil` 窄化后字段与方法访问、enum tag/variant/比较、整数/字符串/bool/enum `match` 表达式、block 表达式、算术/比较、`let`、重赋值、函数、显式 `return` 与尾表达式返回、`if`、条件 `for`、range `for i in start..end`、`break`、`fs.read_file`/`fs.write_file`、`nc_map` 的 `map_new`/字符串键读写/`map_has`/`len(map)`、函数调用与 `io.println`。
+- LLVM 后端 v1 当前承诺基础闭环：基础数值/bool 类型、`str` 字面量/索引/切片/拼接、数值转换、`str(i32)`、`i32(str)`、`len(str)`、`str ==/!=`、定长数组字面量/索引/索引赋值、slice layout/literal/index/`len`/`append`、定长数组与 slice 切片复制、slice `for i, item in s`、struct 值类型声明/字面量/字段读写/参数与返回、heap struct `new`、指针 receiver 方法声明/调用、nullable pointer `nil`/`!= nil` 窄化后字段与方法访问、enum tag/variant/比较、整数/字符串/bool/enum `match` 表达式、block 表达式、算术/比较、`let`、重赋值、函数、显式 `return` 与尾表达式返回、`if`、条件 `for`、range `for i in start..end`、`break`、`fs.read_file`/`fs.write_file`、`map[K,V]` 的构造/读写/`map_has`/`len(map)`、函数调用与 `io.println`。
 - LLVM 后端链接 `runtime/ncrt.h` + `runtime/ncrt.c` 编译出的 `ncrt.obj`。`ncrt` 固定基础 ABI：`str`、`nc_map`、`nc_slice_raw`、`__nc_gc_alloc`/`__nc_gc_collect`/`__nc_gc_live`、root slot、字符串/file/cast/map helper、字节级 slice append/copy helper 与 C 异常入口。除 `runtime.gc_collect()` / `runtime.gc_live()` 外，其他 `ncrt` helper 都是编译器私有 ABI。`[]T` 语言布局仍为 `{ T* ptr; u64 len; u64 cap }`，`elem_size` 仅作为 runtime helper 调用参数传入，不进入 slice header。
-- LLVM `nc_map` 布局匹配 `ncrt.h`：`{ entries, cap, len, tombstones }`，entries 在 LLVM 侧为 opaque pointer；map_new/get/set/has 统一调用 `ncrt` 哈希表实现，`len(map)` 读取 len 字段。
+- LLVM `map[K,V]` 当前运行时布局匹配 `ncrt.h` 的私有 `nc_map`：`{ entries, cap, len, tombstones }`，entries 在 LLVM 侧为 opaque pointer；get/set/has 统一调用 `ncrt` tagged scalar 哈希表实现，`len(map)` 读取 len 字段。
 - LLVM slice、map、closure env、heap struct 与运行时构造字符串的动态存储统一通过外部 `__nc_gc_alloc` 分配；该入口由 `ncrt.obj` 提供。共享 `ncrt` 当前实现显式 mark-sweep GC：`gc_collect()` 从已注册 root slot 出发标记可达块，保守扫描已标记 heap payload 内的 machine word，释放不可达块；`gc_live()` 返回当前存活 GC block 数。
 - LLVM 后端负责为持有 GC 指针的栈槽注册 root：`str.ptr`、`[]T.ptr`、`nc_map.entries`、`*T/?*T`、function value `env`、struct 字段和定长数组元素。LLVM 函数/closure 会为参数、receiver、closure env、局部变量、返回槽、catch/throw 值注册 root，并在所有出口 rewind 到函数入口 mark。
 - LLVM `throw`/`try`/`catch` 当前使用轻量异常模型：全局异常 flag + `str` value，函数边界返回默认值传播异常，`try` 块在语句边界检查 flag 并跳转 `catch`；uncaught throw 在 `main` 输出到 stderr 并返回 1。`defer` 使用函数内动态 site 栈，按 LIFO 在函数 fallthrough、显式 `return`、`throw` 传播前执行。该模型不依赖 `setjmp`/`longjmp`。
@@ -132,6 +132,7 @@ void                        # 空
 |------|-----------|
 | `str` | builtin scalar/runtime value type，LLVM/ncrt 布局为 `{ u8* ptr; u64 len }` |
 | `[]T` | `{ T* ptr; u64 len; u64 cap }` |
+| `map[K,V]` | 编译器私有 `nc_map`，布局为 `{ entries; i64 cap; i64 len; i64 tombstones }` |
 | `[N]T` | 内联在 struct/栈中，如 C 数组 |
 | `*T` | 单个指针，非空 |
 | `?*T` | 单个指针，C 布局同 `*T`，可为 `nil` |
@@ -142,6 +143,16 @@ void                        # 空
 - `a[lo:hi]` 总是复制元素，生成新的底层存储；适用于 `str`、`[]T`、`[N]T`。
 - 切片结果与原值不共享可变底层数组；对结果做索引赋值或 `append` 不会写回原数组/原切片。
 - `[]T.cap` 是当前底层存储容量；切片复制结果的 `cap == len`。
+
+map 语义：
+
+- `map[K,V]` 是内建泛型 map 类型，构造语法为 `map[K,V]()`。
+- v1 只支持标量 key/value：`i8/i16/i32/i64/u8/u16/u32/u64/f32/f64/bool/rune/str`。非标量 key 或 value 不支持。
+- `m[k]` 要求 `k: K`，返回 `V`；缺失 key 返回 `V` 的零值。
+- `m[k] = v` 要求 `v: V`；`m[k] += v` 等复合赋值按 `V` 类型复用对应运算符规则。
+- `map_has(m, k)` 要求 `m: map[K,V]` 且 `k: K`，返回 `i32`。
+- `len(m)` 返回 map 当前条目数，类型为 `i32`。
+- `map_new()`、裸 `nc_map` 和旧字符串专用 map helper 不是语言边界，不保留向前兼容。
 
 ### 4.3 零值（Go 式）
 
@@ -418,7 +429,7 @@ extern "c" {
 }
 ```
 
-extern v1 只支持块头 `"c"`，块内只允许无函数体的 `fun name(params): Ret` 声明；省略返回类型表示 `void`。允许类型限于 C ABI scalar/pointer：`i8/i16/i32/i64/u8/u16/u32/u64/f32/f64/bool/*T/?*T/void`。不支持 `.c`、`.dll`、`.lib`、varargs、回调、头文件解析、extern struct、泛型 extern、`str`/slice/array/struct/enum/function value/`nc_map`、聚合类型按值传递。
+extern v1 只支持块头 `"c"`，块内只允许无函数体的 `fun name(params): Ret` 声明；省略返回类型表示 `void`。允许类型限于 C ABI scalar/pointer：`i8/i16/i32/i64/u8/u16/u32/u64/f32/f64/bool/*T/?*T/void`。不支持 `.c`、`.dll`、`.lib`、varargs、回调、头文件解析、extern struct、泛型 extern、`str`/slice/map/array/struct/enum/function value、聚合类型按值传递。
 
 ---
 

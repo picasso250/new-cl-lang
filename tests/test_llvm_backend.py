@@ -414,7 +414,7 @@ def test_llvm_map_basic_and_growth():
     assignments = "\n".join([f'    m["k{i}"] = "v{i}"' for i in range(20)])
     source = f"""import io
 fun main() {{
-    let m = map_new()
+    let m = map[str,str]()
 {assignments}
     m["k1"] = "updated"
     io.println(len(m))
@@ -481,7 +481,7 @@ def test_llvm_uses_external_ncrt_runtime():
     llvm_ir = compile_nc_to_llvm_ir("""import io
 import runtime
 fun main() {
-    let m = map_new()
+    let m = map[str,str]()
     m["a"] = "b"
     io.println(m["a"])
     runtime.gc_live()
@@ -490,7 +490,7 @@ fun main() {
 
     assert 'define i8* @"__nc_gc_alloc"' not in llvm_ir
     assert 'declare i8* @"__nc_gc_alloc"' in llvm_ir
-    assert "__nc_map_get_str_out" in llvm_ir
+    assert "__nc_map_get" in llvm_ir
 
 
 def test_llvm_throw_try_catch_and_uncaught():

@@ -521,3 +521,9 @@
 - 字符串插值支持任意表达式、嵌套括号/字符串/字符扫描、`{{`/`}}` 字面量大括号，并在类型检查阶段限制为可 stringify 类型；LLVM 后端降为 `str(...)` 与 `__nc_str_cat_out` 左结合拼接。`str[index] -> i32` 字节索引语义保持不变。
 - 新增 case_209~215 覆盖 rune 正向、插值正向、rune 类型错误、非法字符字面量、rune 运算错误、空插值和不可 stringify 插值。验证通过：python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_llvm_cases.py tests/test_type_ref.py -q；python nc.py build test_cases\case_210_string_interpolation.nc 并运行 build\main.exe；python nc.py build test_cases\case_209_rune_basic.nc 并确认输出含 UTF-8 bytes e4b8ad。
 
+
+## 2026-05-31
+
+- 预备实现内建泛型 map[K,V] v1：删除旧 map_new/nc_map 用户边界，支持 map[K,V]() 构造、标量 K/V、索引读写/复合赋值、map_has 与 len(map)，并把 ncrt map helper 改为 tagged scalar nc_val。
+
+- 已实现内建泛型 map[K,V] v1：map[K,V]() 走内建构造，K/V 限定为基础标量；索引读写、复合赋值、map_has 与 len(map) 按静态 K/V 检查，旧 map_new 用户边界已删除。ncrt map ABI 改为 tagged scalar nc_val，LLVM 负责标量装箱/拆箱，缺失 key 返回 V 零值。新增 case_216~225 覆盖标量正向、缺失零值、复合赋值和错误路径；design.md 已同步。验证通过：python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_llvm_cases.py tests/test_type_ref.py -q；python nc.py build test_cases\\case_216_map_generic_scalars.nc 并运行 build\\main.exe。

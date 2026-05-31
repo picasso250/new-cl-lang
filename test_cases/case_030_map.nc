@@ -3,7 +3,7 @@ import io
 # STDOUT: 1
 
 fun main() {
-    let m = map_new()
+    let m = map[str,str]()
     m["greeting"] = "hello world"
     let val = m["greeting"]
     io.println(val)

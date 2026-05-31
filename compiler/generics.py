@@ -142,6 +142,8 @@ def monomorphize(program: Program) -> Program:
         if app:
             base, args = app
             args = [rewrite_type(a) for a in args]
+            if base == "map":
+                return f"map[{','.join(args)}]"
             request_struct(base, args)
             return _instance_name(base, args)
         if t in generic_structs:
@@ -163,6 +165,10 @@ def monomorphize(program: Program) -> Program:
                 raise GenericError(f"generic function {n.name} requires explicit type args")
             if n.type_args:
                 args = [rewrite_type(a) for a in n.type_args]
+                if n.name == "map":
+                    n.name = f"map[{','.join(args)}]"
+                    n.type_args = []
+                    return
                 request_func(n.name, args)
                 n.name = _instance_name(n.name, args)
                 n.type_args = []

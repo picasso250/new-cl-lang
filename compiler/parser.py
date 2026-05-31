@@ -589,12 +589,10 @@ class Parser:
                         expr.span = (start_expr.span[0], self.tokens[self.pos - 1].pos)
                 else:
                     raise ParseError("Only named functions and closure variables can be called")
-            elif (self.peek().kind == TokenKind.LBRACKET and isinstance(expr, Identifier)
-                    and self.pos + 1 < len(self.tokens)
-                    and self.tokens[self.pos + 1].kind not in (TokenKind.INTEGER, TokenKind.STRING)):
+            elif self.peek().kind == TokenKind.LBRACKET:
                 save = self.pos
-                type_args = self._parse_type_arg_list()
-                if self.peek().kind == TokenKind.LPAREN:
+                if isinstance(expr, Identifier) and self._token_after_matching_bracket(self.pos).kind == TokenKind.LPAREN:
+                    type_args = self._parse_type_arg_list()
                     expr.generic_type_args = type_args
                 else:
                     self.pos = save
@@ -679,6 +677,20 @@ class Parser:
             else:
                 break
         return expr
+
+    def _token_after_matching_bracket(self, start_pos: int):
+        depth = 0
+        i = start_pos
+        while i < len(self.tokens):
+            kind = self.tokens[i].kind
+            if kind == TokenKind.LBRACKET:
+                depth += 1
+            elif kind == TokenKind.RBRACKET:
+                depth -= 1
+                if depth == 0:
+                    return self.tokens[i + 1] if i + 1 < len(self.tokens) else self.tokens[i]
+            i += 1
+        return self.tokens[start_pos]
 
     def parse_primary(self):
         t = self.peek()
@@ -812,8 +824,7 @@ class Parser:
                 return EnumRef(name, variant)
             # struct 字面量: Name { field: val, ... }
             if (self.peek().kind == TokenKind.LBRACKET
-                    and self.pos + 1 < len(self.tokens)
-                    and self.tokens[self.pos + 1].kind not in (TokenKind.INTEGER, TokenKind.STRING)):
+                    and self._token_after_matching_bracket(self.pos).kind in (TokenKind.LPAREN, TokenKind.LBRACE)):
                 save = self.pos
                 type_args = self._parse_type_arg_list()
                 if self.peek().kind == TokenKind.LPAREN:
