@@ -13,7 +13,7 @@
 | 内存管理 | **GC**（自动管理，不搞所有权 / borrow checker） |
 | 构建系统 | **自带**（无需外部 make/cmake）；生成 `build/main.ll`、`build/main.obj`、`build/ncrt.obj` 与 exe |
 | 入口点 | `fun main()` —— 程序从 main 函数启动 |
-| 标准库 | 内置一级模块 v1：`io`、`fs`、`os`、`runtime`、`strings`；需显式 `import` 后用限定名访问 |
+| 标准库 | 见 `stdlib.md`；标准库模块需显式 `import` 后用限定名访问，语言级 builtin 不需 import |
 | 并发 | 延迟决策，不走语言级关键字，后续以库函数提供 |
 
 ---
@@ -50,23 +50,17 @@ import io                # 内置标准模块，不要求存在同级 io/ 目录
 - CLI 目标目录是入口模块目录；`import foo` 解析为入口模块目录的同级 `foo/` 目录。
 - 只支持一级模块名：`import foo`。不支持 `import foo.bar`、`import "net/http"`、`import foo { serve }`、别名导入。
 - import 只能出现在顶层。
-- `io`、`fs`、`os`、`runtime` 与 `strings` 是保留的内置标准模块名；`import io` / `import fs` / `import os` / `import runtime` / `import strings` 不走同级目录查找，不参与 import cycle，且优先于真实同级目录。
+- `io`、`fs`、`os`、`runtime` 与 `strings` 是保留的内置标准模块名；标准库模块与语言级 builtin 的公开边界见 `stdlib.md`。
 - 导入模块后，跨模块符号必须命名空间限定访问：`foo.add()`、`foo.User`、`foo.User { ... }`、`new foo.User { ... }`、`foo.Color::Red`。
 - 同目录 `.nc` 文件仍自动共享命名空间，无需 import。
 - 导入图递归加载；重复 import 只加载一次；import cycle 报错。
 - 编译生成单个 LLVM module；非入口模块顶层符号用模块名前缀降名，例如 `foo.add` → `foo_add`、`foo.User` → `foo_User`。
 
-当前内置标准模块边界：
+当前标准库 / 内建边界：
 
-- `io.print(value)` / `io.println(value)` 是当前落地的标准输出 API；`println` 自动追加换行，`print` 不追加换行。
-- `fs.read_file(path)` / `fs.write_file(path, content)` / `fs.exists(path)` / `fs.remove(path)` / `fs.rename(old_path, new_path)` / `fs.mkdir(path)` 是当前落地的文件系统 API；除 `exists` 对不存在返回 `false` 外，操作失败会 `throw` 字符串错误。`mkdir` 只创建单级目录，`rename` 在目标已存在时失败。
-- `os.args()` / `os.getenv(name)` / `os.has_env(name)` / `os.cwd()` / `os.exit(code)` 是当前落地的 CLI/system API。`args()` 返回包含程序自身路径的 `[]str`；`getenv` 在环境变量不存在时返回 `""`，`has_env` 用于区分不存在和值为空字符串；`cwd` 失败时 `throw "os.cwd failed"`；`exit` 立即退出进程，不运行 NC `defer`。
-- v1 不提供 `os.setenv` / `os.unsetenv` / `os.chdir`。
-- `runtime.gc_collect()` 与 `runtime.gc_live()` 是当前唯一公开的运行时调试 API；裸 `gc_collect()` / `gc_live()` 不再是 builtin。
-- `strings.contains(s, sub)` / `strings.starts_with(s, prefix)` / `strings.ends_with(s, suffix)` / `strings.index(s, sub)` 是当前落地的无分配字节级字符串查询 API；参数均为 `str`。前三者返回 `bool`；`index` 返回首个匹配的 UTF-8 字节下标，未找到返回 `-1`。空子串规则为 contains/starts_with/ends_with 返回 `true`，index 返回 `0`。
-- `io.print` / `io.println` 支持输出 `str`、`rune`、`bool`、有符号整数、无符号整数和浮点数；`rune` 按对应 UTF-8 字符输出，不输出数字码点。
-- 裸 `print(...)` 不是语言内建，也不向前兼容。
-- `len`、`cap`、`append`、`copy`、`clear`、`delete`、`min`、`max`、`abs`、数值转换和 `map_has` 仍是语言级内建；`map[K,V]` 是内建泛型 map 类型。
+- 标准库一级内置模块：`io`、`fs`、`os`、`runtime`、`strings`。
+- 语言级内建函数 / 形式：`len`、`cap`、`append`、`copy`、`clear`、`delete`、`min`、`max`、`abs`、`map_has`、`size_of(T)`、`map[K,V]()` 与显式转换。
+- 详细 API、import 规则和 `ncrt` 私有 ABI 边界见 `stdlib.md`。
 
 当前后端边界：
 

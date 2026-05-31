@@ -562,3 +562,7 @@
 
 - 预备实现标准库 `os` 模块 v1：新增内置一级模块 `os`，提供 args/getenv/has_env/cwd/exit；LLVM main 改为接收 argc/argv 并保存供 `os.args()` 使用，runtime/ncrt 增加私有 OS helper；同步补 case、设计文档与边界测试。
 - 已实现标准库 `os` 模块 v1：`os` 加入内置模块集合并优先于同级目录；新增 `os.args`/`os.getenv`/`os.has_env`/`os.cwd`/`os.exit` 类型检查、LLVM lowering 和 ncrt 私有 helper；LLVM `main` 改为 C ABI `main(i32 argc, i8** argv)` 并保存 argc/argv。新增 case_242~244 与项目/LLVM 边界测试，`run_llvm_ir` 支持传入 args/env。验证通过：`python tests/test_basic.py`；`python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_type_ref.py -q`。
+
+- 预备拆分标准库/内置函数边界文档与测试目录：新增 stdlib.md，design.md 只保留索引；将标准库/语言级 builtin 专项 case 迁到 stdlib_cases/；抽共享 case runner 并拆分 language/std lib 测试入口。
+
+- 已拆分标准库/内置函数边界文档与测试目录：新增 stdlib.md 记录 io/fs/os/runtime/strings 与语言级 builtin 边界；design.md 改为索引引用；抽 tests/case_runner.py，共享 # STDOUT/# STDERR/# RC/# ERROR 解析、并发和单文件运行逻辑；新增 tests/test_language_cases.py 与 tests/test_stdlib.py，删除误导性的 tests/test_basic.py，worker 统一为 NC_TEST_WORKERS；迁移 40 个标准库/语言 builtin 专项 case 到 stdlib_cases/ 并保留历史编号。验证通过：python tests/test_language_cases.py；python tests/test_stdlib.py；python -m pytest tests/test_language_cases.py tests/test_stdlib.py -q；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_type_ref.py -q；python tests/test_stdlib.py case_245_strings_queries.nc。
