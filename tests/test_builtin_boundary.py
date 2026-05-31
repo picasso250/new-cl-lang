@@ -20,10 +20,10 @@ def test_typecheck_uses_builtin_boundary():
     assert 'node.name == "append"' not in source
 
 
-def test_io_println_is_the_only_output_builtin():
+def test_io_output_builtins_are_std_module_qualified():
     source = _read("compiler/builtins.py")
 
-    assert 'name == "io.println"' in source
+    assert 'name in {"io.print", "io.println"}' in source
     assert 'name == "fs.read_file"' in source
     assert 'name == "fs.write_file"' in source
     assert 'name == "runtime.gc_collect"' in source

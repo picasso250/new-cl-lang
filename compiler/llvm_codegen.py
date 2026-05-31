@@ -1160,10 +1160,10 @@ class LLVMCodegen:
         return ir.Constant(ir.IntType(1), 0)
 
     def emit_call(self, node: FunctionCall):
-        if node.name == "io.println":
+        if node.name in ("io.print", "io.println"):
             if len(node.args) != 1:
-                raise RuntimeError("io.println expects one argument")
-            return self.emit_println(node.args[0])
+                raise RuntimeError(f"{node.name} expects one argument")
+            return self.emit_print(node.args[0], newline=node.name == "io.println")
         if getattr(node, "is_closure_call", False):
             closure = self.emit_expr(Identifier(node.name))
             call_ptr = self.builder.extract_value(closure, 0)
@@ -1314,34 +1314,35 @@ class LLVMCodegen:
             for _name, params, ret in IFACE_METHODS[iface_name]
         ]
 
-    def emit_println(self, arg):
+    def emit_print(self, arg, newline: bool):
         self.ensure_printf()
         val = self.emit_expr(arg)
         typ = arg.type
+        line = "\n" if newline else ""
         if typ == "str":
-            fmt = self.global_c_string("%.*s\n", "fmt_str")
+            fmt = self.global_c_string("%.*s" + line, "fmt_str")
             ptr = self.builder.extract_value(val, 0)
             length64 = self.builder.extract_value(val, 1)
             length32 = self.builder.trunc(length64, ir.IntType(32))
             return self.builder.call(self.printf, [fmt, length32, ptr])
         if typ == "rune":
             s = self.emit_rune_value_to_str(val)
-            fmt = self.global_c_string("%.*s\n", "fmt_rune")
+            fmt = self.global_c_string("%.*s" + line, "fmt_rune")
             ptr = self.builder.extract_value(s, 0)
             length64 = self.builder.extract_value(s, 1)
             length32 = self.builder.trunc(length64, ir.IntType(32))
             return self.builder.call(self.printf, [fmt, length32, ptr])
         if typ == "bool":
-            fmt = self.global_c_string("%d\n", "fmt_bool")
+            fmt = self.global_c_string("%d" + line, "fmt_bool")
             as_i32 = self.builder.zext(self.bool_value(val), ir.IntType(32), name="bool.i32")
             return self.builder.call(self.printf, [fmt, as_i32])
         if typ in ("f32", "f64"):
-            fmt = self.global_c_string("%g\n", "fmt_float")
+            fmt = self.global_c_string("%g" + line, "fmt_float")
             if typ == "f32":
                 val = self.builder.fpext(val, ir.DoubleType())
             return self.builder.call(self.printf, [fmt, val])
         if typ in INT_TYPES:
-            fmt = self.global_c_string("%lld\n", "fmt_int")
+            fmt = self.global_c_string("%lld" + line, "fmt_int")
             if val.type.width < 64:
                 val = self.builder.sext(val, ir.IntType(64)) if typ in SIGNED_INT_TYPES else self.builder.zext(val, ir.IntType(64))
             return self.builder.call(self.printf, [fmt, val])

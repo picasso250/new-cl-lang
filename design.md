@@ -58,10 +58,10 @@ import io                # 内置标准模块，不要求存在同级 io/ 目录
 
 当前内置标准模块边界：
 
-- `io.println(value)` 是当前唯一落地的标准输出 API，自动追加换行。
+- `io.print(value)` / `io.println(value)` 是当前落地的标准输出 API；`println` 自动追加换行，`print` 不追加换行。
 - `fs.read_file(path)` / `fs.write_file(path, content)` 是当前唯一落地的文件 IO API；读写失败会 `throw` 字符串错误。
 - `runtime.gc_collect()` 与 `runtime.gc_live()` 是当前唯一公开的运行时调试 API；裸 `gc_collect()` / `gc_live()` 不再是 builtin。
-- `io.println` 支持输出 `str`、`rune`、`bool`、有符号整数、无符号整数和浮点数；`rune` 按对应 UTF-8 字符输出，不输出数字码点。
+- `io.print` / `io.println` 支持输出 `str`、`rune`、`bool`、有符号整数、无符号整数和浮点数；`rune` 按对应 UTF-8 字符输出，不输出数字码点。
 - 裸 `print(...)` 不是语言内建，也不向前兼容。
 - `len`、`append`、数值转换和 `map_has` 仍是语言级内建；`map[K,V]` 是内建泛型 map 类型。
 

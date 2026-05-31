@@ -16,8 +16,8 @@ def infer_builtin_call(node, require_arg_count, require_type, fail) -> str | Non
     name = node.name
     args = node.args
 
-    if name == "io.println":
-        require_arg_count(args, 1, "io.println", node)
+    if name in {"io.print", "io.println"}:
+        require_arg_count(args, 1, name, node)
         return "void"
     if name == "fs.read_file":
         require_arg_count(args, 1, "fs.read_file", node)
