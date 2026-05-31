@@ -535,3 +535,9 @@
 
 - 预备补标准库输出能力：新增 `io.print(value)`，参考 Go `fmt.Print` / Python `print(..., end="")`，与 `io.println` 支持同一组可输出类型，但不追加换行；同步补 case、文档与边界测试。
 - 已补标准库输出能力：新增 `io.print(value)`，复用 `io.println` 的输出类型集合与 LLVM lowering，仅不追加换行；新增 case_226 覆盖 str/rune/bool/int 混合连续输出，并更新 design.md 与 builtin 边界测试。验证通过：python tests/test_basic.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_llvm_cases.py tests/test_type_ref.py -q。
+
+## 2026-05-31
+
+- 预备删除重复的 LLVM 单文件 case 回归：`tests/test_llvm_cases.py` 已被 LLVM-only 的 `tests/test_basic.py` 覆盖，保留 `test_basic` 作为 `test_cases` 权威门槛。
+
+- 已删除重复的 `tests/test_llvm_cases.py`：LLVM-only 后 `tests/test_basic.py` 已覆盖同一批 `test_cases` 正向/错误回归且支持 extern 链接库。验证通过：`python tests/test_basic.py`；`python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_type_ref.py -q`。
