@@ -2,6 +2,8 @@
 
 ## 2026-05-31
 
+- 预备实验 `test_basic` 并发化：按 CPU 数量决定 worker，先以当前串行约 26s 为基线，若并发中位数至少减少 30% 则保留并提交，否则回退实现改动。
+- 已保留 `test_basic` 并发化：默认 worker 为 `min(32, os.cpu_count() or 1)`，可通过 `NC_TEST_BASIC_WORKERS=1` 强制串行；修复 ncrt 缓存 miss 时多进程写同一临时 obj 的竞态。串行基线 25.85s，并发实测 11.98s/41.81s/12.05s，中位数约 12.05s，减少约 53%；验证通过 `python tests/test_basic.py`、设置 `NC_TEST_BASIC_WORKERS=1` 后的 `python tests/test_basic.py`、`python -m pytest tests/test_basic.py -q` 与核心 pytest 组合回归。
 - 预备质疑并收敛 comptime 设计：删除通用 `comptime fun` / `comptime if` 的 v1 承诺，改为冻结该能力；后续只在具体 case 推动下考虑窄化的常量表达式、`static_assert` 或 `cfg`。
 - 已收敛 design.md 的 comptime 章节：v1 明确不引入通用 `comptime`，并记录后续只按具体 case 考虑常量表达式、`static_assert`、`cfg`、`size_of(T)` 等窄化能力。
 - 预备实现标准库 v1 第一刀：新增内置一级模块 `fs`，把裸 `read_file` / `write_file` 迁移为 `fs.read_file` / `fs.write_file`，不保留向前兼容；`len` / `append` / 类型转换继续作为语言内建。

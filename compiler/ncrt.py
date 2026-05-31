@@ -5,6 +5,7 @@ import hashlib
 import shutil
 import subprocess
 import tempfile
+import uuid
 
 ROOT_DIR = os.path.dirname(os.path.dirname(__file__))
 RUNTIME_DIR = os.path.join(ROOT_DIR, "runtime")
@@ -31,7 +32,7 @@ def _cached_ncrt_obj() -> str:
     os.makedirs(NCRT_CACHE_DIR, exist_ok=True)
     obj_path = os.path.join(NCRT_CACHE_DIR, f"ncrt-{key}.obj")
     if not os.path.exists(obj_path):
-        tmp_path = os.path.join(NCRT_CACHE_DIR, f"ncrt-{key}.tmp.obj")
+        tmp_path = os.path.join(NCRT_CACHE_DIR, f"ncrt-{key}.{os.getpid()}.{uuid.uuid4().hex}.tmp.obj")
         result = subprocess.run(
             ["gcc", "-c", NCRT_C, "-o", tmp_path],
             capture_output=True,
@@ -41,7 +42,10 @@ def _cached_ncrt_obj() -> str:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
             raise RuntimeError(f"ncrt compilation failed:\n{result.stderr}")
-        os.replace(tmp_path, obj_path)
+        if os.path.exists(obj_path):
+            os.remove(tmp_path)
+        else:
+            os.replace(tmp_path, obj_path)
     _NCRT_CACHE[key] = obj_path
     return obj_path
 

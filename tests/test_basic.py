@@ -8,6 +8,7 @@ import os
 import sys
 import glob
 import re
+from concurrent.futures import ProcessPoolExecutor
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -49,9 +50,40 @@ def _compile_and_run(source: str) -> tuple[str, str, int]:
     return stdout.strip(), stderr.strip(), rc
 
 
+def _case_ok(expected: tuple[str, str, int], actual: tuple[str, str, int]) -> bool:
+    if expected[0] == "__ERROR__":
+        return actual[0] == "__ERROR__" and expected[1] in actual[1]
+    return actual == expected
+
+
+def _run_case(case: tuple[str, str, tuple[str, str, int]]) -> tuple[str, tuple[str, str, int], tuple[str, str, int]]:
+    fname, source, expected = case
+    return fname, expected, _compile_and_run(source)
+
+
+def _worker_count() -> int:
+    override = os.environ.get("NC_TEST_BASIC_WORKERS")
+    if override:
+        try:
+            count = int(override)
+        except ValueError:
+            raise RuntimeError("NC_TEST_BASIC_WORKERS must be an integer")
+        if count < 1:
+            raise RuntimeError("NC_TEST_BASIC_WORKERS must be >= 1")
+        return count
+    return max(1, min(32, os.cpu_count() or 1))
+
+
+def _run_all_cases(cases):
+    workers = _worker_count()
+    if workers == 1:
+        return [_run_case(case) for case in cases]
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(_run_case, cases))
+
+
 def test_all_cases():
-    for fname, source, expected in _discover_cases():
-        actual = _compile_and_run(source)
+    for fname, expected, actual in _run_all_cases(_discover_cases()):
         if expected[0] == "__ERROR__":
             assert actual[0] == "__ERROR__", f"{fname}: expected error, got {actual}"
             assert expected[1] in actual[1], f"{fname}: expected error containing {expected[1]!r}, got {actual[1]!r}"
@@ -77,12 +109,8 @@ if __name__ == "__main__":
     else:
         passed = 0
         failed = 0
-        for fname, source, expected in _discover_cases():
-            actual = _compile_and_run(source)
-            if expected[0] == "__ERROR__":
-                ok = actual[0] == "__ERROR__" and expected[1] in actual[1]
-            else:
-                ok = actual == expected
+        for fname, expected, actual in _run_all_cases(_discover_cases()):
+            ok = _case_ok(expected, actual)
             if ok:
                 print(f"  PASS  {fname}")
                 passed += 1
