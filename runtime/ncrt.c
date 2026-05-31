@@ -317,6 +317,34 @@ int __nc_str_eq_ptr(const str* a, const str* b) {
     return __nc_str_eq(*a, *b);
 }
 
+int32_t __nc_str_index(const str* s, const str* sub) {
+    if (sub->len == 0) return 0;
+    if (sub->len > s->len) return -1;
+    uint64_t limit = s->len - sub->len;
+    for (uint64_t i = 0; i <= limit; i++) {
+        if (memcmp(s->ptr + i, sub->ptr, (size_t)sub->len) == 0) {
+            return (int32_t)i;
+        }
+    }
+    return -1;
+}
+
+int __nc_str_contains(const str* s, const str* sub) {
+    return __nc_str_index(s, sub) >= 0;
+}
+
+int __nc_str_starts_with(const str* s, const str* prefix) {
+    if (prefix->len > s->len) return 0;
+    if (prefix->len == 0) return 1;
+    return memcmp(s->ptr, prefix->ptr, (size_t)prefix->len) == 0;
+}
+
+int __nc_str_ends_with(const str* s, const str* suffix) {
+    if (suffix->len > s->len) return 0;
+    if (suffix->len == 0) return 1;
+    return memcmp(s->ptr + (s->len - suffix->len), suffix->ptr, (size_t)suffix->len) == 0;
+}
+
 void __nc_slice_copy_raw(nc_slice_raw* out, const void* src, uint64_t len, uint64_t elem_size) {
     out->ptr = NULL;
     out->len = len;

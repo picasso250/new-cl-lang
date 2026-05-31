@@ -291,6 +291,10 @@ class LLVMCodegen:
         self.fs_remove_fn = None
         self.fs_rename_fn = None
         self.fs_mkdir_fn = None
+        self.str_contains_fn = None
+        self.str_starts_with_fn = None
+        self.str_ends_with_fn = None
+        self.str_index_fn = None
         self.os_argc_global = None
         self.os_argv_global = None
         self.os_args_fn = None
@@ -1455,6 +1459,22 @@ class LLVMCodegen:
             if len(node.args) != 1:
                 raise RuntimeError("os.exit expects one argument")
             return self.emit_os_exit(node.args[0])
+        if node.name == "strings.contains":
+            if len(node.args) != 2:
+                raise RuntimeError("strings.contains expects two arguments")
+            return self.emit_strings_bool_call("str_contains_fn", "strings.contains", node.args[0], node.args[1])
+        if node.name == "strings.starts_with":
+            if len(node.args) != 2:
+                raise RuntimeError("strings.starts_with expects two arguments")
+            return self.emit_strings_bool_call("str_starts_with_fn", "strings.starts_with", node.args[0], node.args[1])
+        if node.name == "strings.ends_with":
+            if len(node.args) != 2:
+                raise RuntimeError("strings.ends_with expects two arguments")
+            return self.emit_strings_bool_call("str_ends_with_fn", "strings.ends_with", node.args[0], node.args[1])
+        if node.name == "strings.index":
+            if len(node.args) != 2:
+                raise RuntimeError("strings.index expects two arguments")
+            return self.emit_strings_index(node.args[0], node.args[1])
         if node.name == "runtime.gc_collect":
             if len(node.args) != 0:
                 raise RuntimeError("runtime.gc_collect expects no arguments")
@@ -1910,6 +1930,10 @@ class LLVMCodegen:
             self.fs_remove_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [I8PTR]), name="__nc_fs_remove")
             self.fs_rename_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [I8PTR, I8PTR]), name="__nc_fs_rename")
             self.fs_mkdir_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [I8PTR]), name="__nc_fs_mkdir")
+            self.str_contains_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [str_ptr, str_ptr]), name="__nc_str_contains")
+            self.str_starts_with_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [str_ptr, str_ptr]), name="__nc_str_starts_with")
+            self.str_ends_with_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [str_ptr, str_ptr]), name="__nc_str_ends_with")
+            self.str_index_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [str_ptr, str_ptr]), name="__nc_str_index")
             self.os_argc_global = ir.GlobalVariable(self.module, ir.IntType(32), name="__nc_os_argc")
             self.os_argc_global.linkage = "internal"
             self.os_argc_global.initializer = ir.Constant(ir.IntType(32), 0)
@@ -2244,6 +2268,24 @@ class LLVMCodegen:
         self.builder.call(self.os_exit_fn, [code])
         self.builder.unreachable()
         return ir.Constant(ir.IntType(1), 0)
+
+    def emit_strings_bool_call(self, fn_attr: str, label: str, s_expr, sub_expr):
+        self.ensure_ncrt_runtime()
+        fn = getattr(self, fn_attr)
+        s = self.emit_expr(s_expr)
+        sub = self.emit_expr(sub_expr)
+        s_ptr = self.value_to_stack_ptr(s, STR_TYPE, "__nc_strings_s")
+        sub_ptr = self.value_to_stack_ptr(sub, STR_TYPE, "__nc_strings_sub")
+        result = self.builder.call(fn, [s_ptr, sub_ptr], name=f"{label}.i32")
+        return self.builder.icmp_signed("!=", result, ir.Constant(ir.IntType(32), 0), name=label)
+
+    def emit_strings_index(self, s_expr, sub_expr):
+        self.ensure_ncrt_runtime()
+        s = self.emit_expr(s_expr)
+        sub = self.emit_expr(sub_expr)
+        s_ptr = self.value_to_stack_ptr(s, STR_TYPE, "__nc_strings_index_s")
+        sub_ptr = self.value_to_stack_ptr(sub, STR_TYPE, "__nc_strings_index_sub")
+        return self.builder.call(self.str_index_fn, [s_ptr, sub_ptr], name="strings.index")
 
     def raise_fs_error_if_failed(self, status, message: str):
         self.ensure_exception_runtime()

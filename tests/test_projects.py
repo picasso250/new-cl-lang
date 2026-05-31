@@ -435,6 +435,21 @@ def test_builtin_os_module_preempts_sibling_directory():
         assert result.stdout.strip() == "1"
 
 
+def test_builtin_strings_module_preempts_sibling_directory():
+    with tempfile.TemporaryDirectory() as tmp:
+        main = os.path.join(tmp, "main")
+        strings_dir = os.path.join(tmp, "strings")
+        os.mkdir(main)
+        os.mkdir(strings_dir)
+        write_file(os.path.join(main, "main.nc"), 'import io\nimport strings\nfun main() { io.println(strings.index("中x中", "x")) }\n')
+        write_file(os.path.join(strings_dir, "strings.nc"), "fun index(s: str, sub: str): i32 { bad() }\n")
+
+        result = run_nc("run", main)
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "3"
+
+
 def test_bare_print_and_unimported_io_println_errors():
     with tempfile.TemporaryDirectory() as tmp:
         main = os.path.join(tmp, "main")

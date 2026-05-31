@@ -64,6 +64,26 @@ def infer_builtin_call(node, require_arg_count, require_type, fail) -> str | Non
         require_arg_count(args, 1, "os.exit", node)
         require_type(args[0].type, "i32", "os.exit code", node)
         return "void"
+    if name == "strings.contains":
+        require_arg_count(args, 2, "strings.contains", node)
+        require_type(args[0].type, "str", "strings.contains s", node)
+        require_type(args[1].type, "str", "strings.contains sub", node)
+        return "bool"
+    if name == "strings.starts_with":
+        require_arg_count(args, 2, "strings.starts_with", node)
+        require_type(args[0].type, "str", "strings.starts_with s", node)
+        require_type(args[1].type, "str", "strings.starts_with prefix", node)
+        return "bool"
+    if name == "strings.ends_with":
+        require_arg_count(args, 2, "strings.ends_with", node)
+        require_type(args[0].type, "str", "strings.ends_with s", node)
+        require_type(args[1].type, "str", "strings.ends_with suffix", node)
+        return "bool"
+    if name == "strings.index":
+        require_arg_count(args, 2, "strings.index", node)
+        require_type(args[0].type, "str", "strings.index s", node)
+        require_type(args[1].type, "str", "strings.index sub", node)
+        return "i32"
     if name == "append":
         require_arg_count(args, 2, "append", node)
         if not args[0].type.startswith("[]"):

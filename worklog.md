@@ -2,6 +2,9 @@
 
 ## 2026-05-31
 
+- 预备实现标准库 `strings` v1：新增内置一级模块，提供无分配字节级 contains/starts_with/ends_with/index；同步 runtime helper、LLVM lowering、case、设计文档与边界测试。
+- 已实现标准库 `strings` v1：`strings` 加入内置模块集合并优先于同级目录；新增 contains/starts_with/ends_with/index 的 str 参数类型检查、ncrt 字节级 helper 与 LLVM lowering，空子串规则按设计落地。新增 case_245~247 覆盖正向、类型错误和未 import 错误，项目级测试覆盖同级 strings/ 被内置模块抢占。验证通过：`python tests/test_basic.py`；`python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_type_ref.py -q`。
+
 - 预备清理 C 后端遗留的 `codegen_collect.py`：删除未使用收集，把 LLVM 所需的顶层分类和 closure 发现内移到 `llvm_codegen.py`。
 - 已清理 C 后端遗留的 `codegen_collect.py`：删除独立收集器，LLVM 后端内部完成顶层分类与 closure 发现；移除未使用的 slice/function type/link lib 收集，link libs 继续由 compiler API 从顶层 extern block 收集。验证通过：`python tests/test_basic.py`；`python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_type_ref.py -q`。
 - 预备清理 `names.py` 的 C 保留字遗留：LLVM-only 后端不再避让 C keyword，只保留用户名与 `__nc_` runtime/internal 前缀冲突的防线；同步把符号表中的 C runtime 命名改为 NC/runtime 命名。

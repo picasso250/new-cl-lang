@@ -36,6 +36,10 @@ def test_io_output_builtins_are_std_module_qualified():
     assert 'name == "os.has_env"' in source
     assert 'name == "os.cwd"' in source
     assert 'name == "os.exit"' in source
+    assert 'name == "strings.contains"' in source
+    assert 'name == "strings.starts_with"' in source
+    assert 'name == "strings.ends_with"' in source
+    assert 'name == "strings.index"' in source
     assert 'name == "runtime.gc_collect"' in source
     assert 'name == "runtime.gc_live"' in source
     assert 'name == "cap"' in source
@@ -57,4 +61,5 @@ def test_llvm_declares_external_ncrt_symbols():
     assert "__nc_gc_alloc" in source
     assert "__nc_read_file" in source
     assert "__nc_fs_exists" in source
+    assert "__nc_str_contains" in source
     assert "__nc_map_init" in source
