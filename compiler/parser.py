@@ -316,10 +316,16 @@ class Parser:
             self.advance()
             return_type = self._parse_type()
             return_type_explicit = True
+        extern_symbol = None
+        if self.peek().kind == TokenKind.EQ:
+            self.advance()
+            extern_symbol = self.expect(TokenKind.STRING).value
         if self.peek().kind == TokenKind.LBRACE:
             raise ParseError("extern function bodies are not supported")
-        return FunctionDeclaration(name, params, return_type, Block([]),
-                                   return_type_explicit=return_type_explicit)
+        fn = FunctionDeclaration(name, params, return_type, Block([]),
+                                 return_type_explicit=return_type_explicit)
+        fn.extern_symbol = extern_symbol
+        return fn
 
     def _parse_function_expr(self, start):
         self.expect(TokenKind.LPAREN)

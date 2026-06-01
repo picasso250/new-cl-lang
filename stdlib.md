@@ -26,6 +26,7 @@
 ### fs
 
 - `fs.read_file(path): str`
+- `fs.read_bytes(path): []u8`
 - `fs.write_file(path, content)`
 - `fs.exists(path): bool`
 - `fs.remove(path)`
@@ -34,7 +35,7 @@
 
 `exists` 对不存在返回 `false`；其他操作失败会 `throw` 字符串错误。`mkdir` 只创建单级目录，`rename` 在目标已存在时失败。
 
-当前 `fs` 的公开 API 由编译器随附的 `stdlib/fs/fs.nc` 实现。读写文件的流程在 NC 源码中调用 C stdio extern；`exists/remove/rename/mkdir` 通过单独链接的 `ncfs` 平台 support 对象提供窄 C shim，不属于 `ncrt` 私有 ABI。
+当前 `fs` 的公开 API 由编译器随附的 `stdlib/fs/fs.nc` 实现。`read_bytes` 返回原始字节；`read_file` 是文本便利层，等价于 `str(fs.read_bytes(path))`。读写文件的流程在 NC 源码中调用 C stdio extern；`exists/remove/rename/mkdir` 通过单独链接的 `ncfs` 平台 support 对象提供窄 C shim，不属于 `ncrt` 私有 ABI。
 
 ### os
 
@@ -76,6 +77,7 @@ v1 不提供 `os.setenv`、`os.unsetenv`、`os.chdir`。
 - `size_of(T)`：编译期内建表达式，只接受类型实参，返回 `u64`。
 - `map[K,V]()`：内建泛型 map 构造形式。
 - 显式转换：`str(...)`、`i32(...)`、`rune(...)` 等目标类型函数式转换。
+- `str([]u8)` 会复制字节到新的 `str` buffer 并补 NUL；v1 不验证 UTF-8。
 
 ## str C interop
 

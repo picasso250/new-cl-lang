@@ -111,9 +111,15 @@ def infer_builtin_call(node, require_arg_count, require_type, fail) -> str | Non
         return name
     if name == "str":
         require_arg_count(args, 1, "str", node)
+        if args[0].type == "[]u8":
+            return "str"
         if args[0].type not in STRINGIFIABLE_TYPES:
             fail(f"str: cannot convert {args[0].type} to str", node)
         return "str"
+    if name == "__nc_bytes_alloc":
+        require_arg_count(args, 1, "__nc_bytes_alloc", node)
+        require_type(args[0].type, "u64", "__nc_bytes_alloc len", node)
+        return "[]u8"
     if name in {"min", "max"}:
         require_arg_count(args, 2, name, node)
         if args[0].type not in NUMERIC_TYPES:

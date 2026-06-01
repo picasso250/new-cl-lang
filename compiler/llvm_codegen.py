@@ -425,7 +425,7 @@ class LLVMCodegen:
 
     def function_symbol(self, fn: FunctionDeclaration):
         if getattr(fn, "is_extern", False):
-            return fn.name
+            return getattr(fn, "extern_symbol", None) or fn.name
         if fn.receiver_name:
             receiver_type = fn.receiver_type.lstrip("*").lstrip("?")
             return safe_user_ident(f"{receiver_type}_{fn.name}")
@@ -1160,6 +1160,14 @@ class LLVMCodegen:
                 index = ir.Constant(ir.IntType(32), field_index)
                 field_ptr = self.builder.gep(obj_ptr, [zero, index], inbounds=True, name="str.field.ptr")
                 return field_ptr, field_type
+            if parse_slice_type(obj_type) is not None:
+                elem_type = parse_slice_type(obj_type)
+                field_index = {"ptr": 0, "len": 1, "cap": 2}[node.field]
+                field_type = f"?*{elem_type}" if node.field == "ptr" else "u64"
+                zero = ir.Constant(ir.IntType(32), 0)
+                index = ir.Constant(ir.IntType(32), field_index)
+                field_ptr = self.builder.gep(obj_ptr, [zero, index], inbounds=True, name="slice.field.ptr")
+                return field_ptr, field_type
             if obj_type.startswith("*") or obj_type.startswith("?*"):
                 struct_type_name = obj_type[2:] if obj_type.startswith("?*") else obj_type[1:]
                 struct_ptr = self.builder.load(obj_ptr, name="field.obj.ptr")
@@ -1415,6 +1423,10 @@ class LLVMCodegen:
             if len(node.args) != 1:
                 raise RuntimeError("__nc_str_alloc expects one argument")
             return self.emit_str_alloc(node.args[0])
+        if node.name == "__nc_bytes_alloc":
+            if len(node.args) != 1:
+                raise RuntimeError("__nc_bytes_alloc expects one argument")
+            return self.emit_bytes_alloc(node.args[0])
         if node.name == "os.args":
             if len(node.args) != 0:
                 raise RuntimeError("os.args expects no arguments")
@@ -1597,6 +1609,8 @@ class LLVMCodegen:
         typ = arg_expr.type
         if typ == "str":
             return self.emit_expr(arg_expr)
+        if typ == "[]u8":
+            return self.emit_u8_slice_to_str(arg_expr)
         if typ == "rune":
             return self.emit_rune_value_to_str(self.emit_expr(arg_expr))
         if typ == "bool":
@@ -2134,6 +2148,28 @@ class LLVMCodegen:
         out = self.alloca_at_entry("__nc_str_alloc_out", STR_TYPE)
         self.builder.call(fn, [out, length])
         return self.builder.load(out, name="str.alloc")
+
+    def emit_bytes_alloc(self, len_expr):
+        self.ensure_ncrt_runtime()
+        length = self.cast_to(self.emit_expr(len_expr), "u64")
+        ptr = self.builder.call(self.gc_alloc, [length], name="bytes.alloc.ptr")
+        return self.slice_value("u8", self.builder.bitcast(ptr, llvm_type("u8").as_pointer()), length, length)
+
+    def emit_u8_slice_to_str(self, arg_expr):
+        self.ensure_ncrt_runtime()
+        source = self.emit_expr(arg_expr)
+        source_ptr = self.builder.extract_value(source, 0, name="u8str.source.ptr")
+        length = self.builder.extract_value(source, 1, name="u8str.len")
+        alloc_len = self.builder.add(length, ir.Constant(ir.IntType(64), 1), name="u8str.alloc.len")
+        dest = self.builder.call(self.gc_alloc, [alloc_len], name="u8str.dest")
+        dest_u8 = self.builder.bitcast(dest, llvm_type("u8").as_pointer(), name="u8str.dest.u8")
+        self.copy_bytes(dest_u8, ir.Constant(ir.IntType(64), 0), source_ptr, ir.Constant(ir.IntType(64), 0), length, "u8str")
+        nul_ptr = self.builder.gep(dest_u8, [length], inbounds=True, name="u8str.nul.ptr")
+        self.builder.store(ir.Constant(ir.IntType(8), 0), nul_ptr)
+        value = ir.Constant(STR_TYPE, None)
+        value = self.builder.insert_value(value, dest_u8, [0], name="u8str.ptr")
+        value = self.builder.insert_value(value, length, [1], name="u8str.out.len")
+        return value
 
     def emit_os_args(self):
         self.ensure_ncrt_runtime()

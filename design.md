@@ -199,7 +199,7 @@ let r: rune = rune(65)
 let n: i32 = i32(r)
 ```
 
-`rune(i32)` / `rune(u32)` 是整数到码点的显式转换；`i32(rune)` / `u32(rune)` 是码点到整数的显式转换。`str(rune)` 返回该码点的 UTF-8 字符串。`rune` 底层 LLVM 宽度为 `i32`，零值为 `0`，但类型系统不把它当普通 numeric：不参与算术、大小比较、位运算、复合赋值或自增自减，只允许同类型 `==` / `!=`。
+`rune(i32)` / `rune(u32)` 是整数到码点的显式转换；`i32(rune)` / `u32(rune)` 是码点到整数的显式转换。`str(rune)` 返回该码点的 UTF-8 字符串。`str([]u8)` 复制字节到新的 `str` buffer 并补 NUL，v1 不验证 UTF-8。`rune` 底层 LLVM 宽度为 `i32`，零值为 `0`，但类型系统不把它当普通 numeric：不参与算术、大小比较、位运算、复合赋值或自增自减，只允许同类型 `==` / `!=`。
 
 ### 4.6 nil 与 nullable pointer
 
@@ -442,6 +442,14 @@ extern "msvcrt.lib" {
 ```
 
 extern v1 只支持纯声明，不允许函数体。关键字 `extern` 后可跟一个可选的 lib 或 dll 路径字符串（如 `"msvcrt.lib"`、`"kernel32.lib"`、`"user32.dll"`），构建系统会在链接时追加该文件作为输入。不含路径时，符号由链接器从默认路径解析。
+
+extern 声明可用 `= "link_symbol"` 指定真实链接符号名，NC 代码只使用声明名，避免 C 符号与 NC 顶层命名空间冲突：
+
+```nc
+extern {
+    fun c_remove(path: *i8): i32 = "remove"
+}
+```
 
 省略返回类型表示 `void`。允许类型限于 C ABI scalar/pointer：`i8/i16/i32/i64/u8/u16/u32/u64/f32/f64/bool/*T/?*T/void`。不支持 varargs、回调、头文件解析、extern struct、泛型 extern、`str`/slice/map/array/struct/enum/function value、聚合类型按值传递。
 

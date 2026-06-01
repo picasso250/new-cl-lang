@@ -157,9 +157,8 @@ def _top_names(module: Module) -> set[str]:
             elif isinstance(stmt, (StructDecl, IfaceDecl, EnumDecl)):
                 names.add(stmt.name)
             elif isinstance(stmt, ExternBlock):
-                if not getattr(stmt, "trusted_stdlib", False):
-                    for fn in stmt.functions:
-                        names.add(fn.name)
+                for fn in stmt.functions:
+                    names.add(fn.name)
     return names
 
 
@@ -209,6 +208,7 @@ def _rewrite_module_names(module: Module, entry: bool):
             node.name = q(node.name)
         elif isinstance(node, ExternBlock):
             for fn in node.functions:
+                fn.name = q(fn.name)
                 fn.return_type = _qual_type(fn.return_type, module.name, local_names)
                 fn.params = [(n, _qual_type(t, module.name, local_names)) for n, t in fn.params]
         elif isinstance(node, FunctionCall):

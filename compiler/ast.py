@@ -293,6 +293,7 @@ class FunctionDeclaration(Node):
                  receiver_name: str | None = None, receiver_type: str | None = None,
                  return_type_explicit: bool = False, type_params: list[str] | None = None):
         self.name = name
+        self.extern_symbol = None
         self.params = params   # [(name, type), ...]
         self.return_type = return_type
         self.return_type_explicit = return_type_explicit

@@ -420,6 +420,27 @@ fun main() {{
         assert result.stdout.strip() == "ok"
 
 
+def test_builtin_fs_extern_names_do_not_leak_to_entry_namespace():
+    with tempfile.TemporaryDirectory() as tmp:
+        main = os.path.join(tmp, "main")
+        os.mkdir(main)
+        data_path = os.path.join(tmp, "data.txt").replace("\\", "/")
+        write_file(os.path.join(main, "main.nc"), f"""import fs
+import io
+fun c_fopen(): i32 {{ return 7 }}
+fun main() {{
+    fs.write_file("{data_path}", "ok")
+    io.println(c_fopen())
+    io.println(fs.read_file("{data_path}"))
+}}
+""")
+
+        result = run_nc("run", main)
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "7\nok"
+
+
 def test_builtin_os_module_preempts_sibling_directory():
     with tempfile.TemporaryDirectory() as tmp:
         main = os.path.join(tmp, "main")

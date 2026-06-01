@@ -572,3 +572,6 @@
 - 已推进 fs 向 NC 标准库迁移：新增 str.c_str(): *i8，LLVM 降为非空 C 字符串指针并为零值字符串返回共享空串；NC 字符串分配新增最小私有 __nc_str_alloc_out 以保持 ptr[len] == 0。新增编译器随附 stdlib/fs/fs.nc，s.read_file/write_file 的文件流程改由 NC 源码调用 C stdio extern；xists/remove/rename/mkdir 通过独立
 untime/ncfs.c support 对象承载平台/命名冲突 shim，
 crt 中旧 fs helper 已移除。更新文档与边界测试，新增 case_248_str_c_str 和 fs support 链接测试。验证通过：python tests/test_language_cases.py；python tests/test_stdlib.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_type_ref.py -q。
+
+- 预备实现 fs bytes 与 extern alias：新增 extern 声明级链接符号别名，新增 fs.read_bytes(): []u8，并让 fs.read_file 通过 str([]u8) 构造文本；str([]u8) 必须复制并补 NUL，保持 str 不变式。
+- 已实现 fs bytes 与 extern alias：extern 函数支持 `= "link_symbol"`，NC 名随模块命名空间降名，LLVM 声明调用真实链接符号，避免 stdlib extern 污染用户顶层。新增 `fs.read_bytes(): []u8`，`fs.read_file` 改为 `str(read_bytes(path))`；新增 `str([]u8)` 复制转换并补 NUL，trusted stdlib 可用内部 `__nc_bytes_alloc` 和 slice 字段访问完成 C stdio 读入。新增 extern alias、str([]u8)、fs.read_bytes 与 stdlib extern namespace 回归。验证通过：`python tests/test_language_cases.py`；`python tests/test_stdlib.py`；`python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_type_ref.py -q`。

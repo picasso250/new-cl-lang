@@ -486,6 +486,8 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             require_public_qualified(node.name, node)
             for arg in node.args:
                 walk_expr(arg)
+            if node.name == "__nc_bytes_alloc" and not getattr(getattr(node, "source_file", None), "trusted_stdlib", False):
+                fail("__nc_bytes_alloc is only available to trusted stdlib", node)
             builtin_type = infer_builtin_call(node, require_arg_count, require_type, fail)
             if builtin_type is not None:
                 node.type = builtin_type
@@ -594,6 +596,15 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                         node.type = "u64"
                         return
                 fail(f"str: unknown field {node.field}", node)
+            if obj_type.startswith("[]") and getattr(getattr(node, "source_file", None), "trusted_stdlib", False):
+                elem_type = obj_type[2:]
+                if node.field == "ptr":
+                    node.type = f"?*{elem_type}"
+                    return
+                if node.field in {"len", "cap"}:
+                    node.type = "u64"
+                    return
+                fail(f"{obj_type}: unknown field {node.field}", node)
             if obj_type.startswith("*"):
                 obj_type = obj_type[1:]
             fields = symtab.lookup_struct(obj_type)
