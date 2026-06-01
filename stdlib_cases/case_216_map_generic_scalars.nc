@@ -15,7 +15,7 @@ fun main() {
 
     let ib = map[i32,bool]()
     ib[7] = true
-    io.println(map_has(ib, 7))
+    io.println(ib.has(7))
 
     let bi = map[bool,i32]()
     bi[true] = 1

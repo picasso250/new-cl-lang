@@ -1380,10 +1380,6 @@ class LLVMCodegen:
             return self.builder.trunc(cap64, ir.IntType(32))
         if parse_map_type(node.name) is not None:
             return self.emit_map_new()
-        if node.name == "map_has":
-            if len(node.args) != 2:
-                raise RuntimeError("map_has expects two arguments")
-            return self.emit_map_has(node.args[0], node.args[1])
         if node.name == "delete":
             if len(node.args) != 2:
                 raise RuntimeError("delete expects two arguments")
@@ -1490,6 +1486,10 @@ class LLVMCodegen:
             ptr = self.builder.extract_value(value, 0)
             is_null = self.builder.icmp_unsigned("==", ptr, ir.Constant(I8PTR, None), name="str.c_str.is_null")
             return self.builder.select(is_null, self.empty_string_ptr(), ptr, name="str.c_str")
+        if parse_map_type(obj_type) is not None and node.method == "has":
+            if len(node.args) != 1:
+                raise RuntimeError("method has expects one argument")
+            return self.emit_map_has(node.obj, node.args[0])
         if obj_type in IFACE_METHODS:
             iface_value = self.emit_expr(node.obj)
             method_index = next(i for i, (name, _params, _ret) in enumerate(IFACE_METHODS[obj_type]) if name == node.method)

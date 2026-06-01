@@ -44,14 +44,6 @@ def infer_builtin_call(node, require_arg_count, require_type, fail) -> str | Non
         if not (args[0].type.startswith("[]") or parse_map_type(args[0].type) is not None):
             fail(f"clear: expected slice or map, got {args[0].type}", node)
         return "void"
-    if name == "map_has":
-        require_arg_count(args, 2, "map_has", node)
-        map_args = parse_map_type(args[0].type)
-        if map_args is None:
-            fail(f"map_has: expected map, got {args[0].type}", node)
-        key_type, _value_type = map_args
-        require_type(args[1].type, key_type, "map_has key", args[1])
-        return "i32"
     if name == "delete":
         require_arg_count(args, 2, "delete", node)
         map_args = parse_map_type(args[0].type)

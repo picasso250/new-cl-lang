@@ -459,10 +459,10 @@ fun main() {{
 {assignments}
     m["k1"] = "updated"
     io.println(len(m))
-    io.println(map_has(m, "k19"))
+    io.println(m.has("k19"))
     io.println(m["k19"])
     io.println(m["k1"])
-    io.println(map_has(m, "missing"))
+    io.println(m.has("missing"))
 }}
 """
     llvm_ir = compile_nc_to_llvm_ir(source)

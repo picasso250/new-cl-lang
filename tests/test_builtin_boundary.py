@@ -46,6 +46,7 @@ def test_std_module_builtins_are_explicitly_bounded():
     assert 'name == "copy"' in source
     assert 'name == "clear"' in source
     assert 'name == "delete"' in source
+    assert 'name == "map_has"' not in source
     assert 'name in {"min", "max"}' in source
     assert 'name == "abs"' in source
     assert 'name == "print"' not in source

@@ -59,14 +59,14 @@ import io                # 内置标准模块，不要求存在同级 io/ 目录
 当前标准库 / 内建边界：
 
 - 标准库一级内置模块：`io`、`fs`、`os`、`runtime`、`strings`、`linux`（仅 `linux-x64`）。
-- 语言级内建函数 / 形式：`len`、`cap`、`append`、`copy`、`clear`、`delete`、`min`、`max`、`abs`、`map_has`、`size_of(T)`、`map[K,V]()` 与显式转换。
+- 语言级内建函数 / 形式：`len`、`cap`、`append`、`copy`、`clear`、`delete`、`min`、`max`、`abs`、`size_of(T)`、`map[K,V]()` 与显式转换。
 - 详细 API、import 规则和 `ncrt` 私有 ABI 边界见 `stdlib.md`。
 
 当前后端边界：
 
 - LLVM 是唯一后端：`compile` 输出 LLVM IR，`build` 输出 `build/main.ll`、`build/main.obj`、`build/ncrt.obj`、按需输出标准库 C support obj 与 `build/main.exe`。
 - `--backend` 入口已删除；显式传入 `--backend` 会报错。旧 C 后端和旧 `compile_nc_to_c` / `run_c_code` / `build_c_code` API 不保留向前兼容。
-- LLVM 后端 v1 当前承诺基础闭环：基础数值/bool 类型、`str` 字面量/索引/切片/拼接/`c_str()`、数值转换、`str(i32)`、`i32(str)`、`len(str)`、`str ==/!=`、定长数组字面量/索引/索引赋值、slice layout/literal/index/`len`/`cap`/`append`/`copy`/`clear`、定长数组与 slice 切片复制、slice `for i, item in s`、struct 值类型声明/字面量/字段读写/参数与返回、heap struct `new`、指针 receiver 方法声明/调用、nullable pointer `nil`/`!= nil` 窄化后字段与方法访问、enum tag/variant/比较、整数/字符串/bool/enum `match` 表达式、block 表达式、算术/比较、`let`、重赋值、函数、显式 `return` 与尾表达式返回、`if`、条件 `for`、range `for i in start..end`、`break`、编译器随附 NC stdlib `fs`、`os.args`/`os.getenv`/`os.has_env`/`os.cwd`/`os.exit`、`strings.contains`/`strings.starts_with`/`strings.ends_with`/`strings.index`、`linux.getpid`/`linux.write`/`linux.write_str`（仅 `linux-x64`）、`map[K,V]` 的构造/读写/`map_has`/`delete`/`clear`/`len(map)`、函数调用与 `io.println`。
+- LLVM 后端 v1 当前承诺基础闭环：基础数值/bool 类型、`str` 字面量/索引/切片/拼接/`c_str()`、数值转换、`str(i32)`、`i32(str)`、`len(str)`、`str ==/!=`、定长数组字面量/索引/索引赋值、slice layout/literal/index/`len`/`cap`/`append`/`copy`/`clear`、定长数组与 slice 切片复制、slice `for i, item in s`、struct 值类型声明/字面量/字段读写/参数与返回、heap struct `new`、指针 receiver 方法声明/调用、nullable pointer `nil`/`!= nil` 窄化后字段与方法访问、enum tag/variant/比较、整数/字符串/bool/enum `match` 表达式、block 表达式、算术/比较、`let`、重赋值、函数、显式 `return` 与尾表达式返回、`if`、条件 `for`、range `for i in start..end`、`break`、编译器随附 NC stdlib `fs`、`os.args`/`os.getenv`/`os.has_env`/`os.cwd`/`os.exit`、`strings.contains`/`strings.starts_with`/`strings.ends_with`/`strings.index`、`linux.getpid`/`linux.write`/`linux.write_str`（仅 `linux-x64`）、`map[K,V]` 的构造/读写/`has`/`delete`/`clear`/`len(map)`、函数调用与 `io.println`。
 - LLVM 后端链接 `runtime/ncrt.h` + `runtime/ncrt.c` 按 target 编译出的 `ncrt.obj`/`ncrt.o`。`ncrt` 固定基础 ABI：`str`、`nc_map`、`nc_slice_raw`、`__nc_gc_alloc`/`__nc_gc_collect`/`__nc_gc_live`、root slot、字符串/cast/map helper、字节级 slice append/copy helper 与 C 异常入口。除 `runtime.gc_collect()` / `runtime.gc_live()` 外，其他 `ncrt` helper 都是编译器私有 ABI。`fs`、`os`、`strings` 与 `linux` 由编译器随附的 NC 标准库源码实现；当实际导入的源码标准库模块存在 `stdlib/<module>/<module>.c` 时，构建系统自动编译为同名 support obj 并在 `ncrt` 后、显式 extern link libs 前参与链接。该机制只服务随附标准库，不自动构建用户项目同名 C 文件。`[]T` 语言布局仍为 `{ T* ptr; u64 len; u64 cap }`，`elem_size` 仅作为 runtime helper 调用参数传入，不进入 slice header。
 - LLVM `map[K,V]` 当前运行时布局匹配 `ncrt.h` 的私有 `nc_map`：`{ entries, cap, len, tombstones }`，entries 在 LLVM 侧为 opaque pointer；get/set/has 统一调用 `ncrt` tagged scalar 哈希表实现，`len(map)` 读取 len 字段。
 - LLVM slice、map、closure env、heap struct 与运行时构造字符串的动态存储统一通过外部 `__nc_gc_alloc` 分配；该入口由 `ncrt.obj` 提供。共享 `ncrt` 当前实现显式 mark-sweep GC：`gc_collect()` 从已注册 root slot 出发标记可达块，保守扫描已标记 heap payload 内的 machine word，释放不可达块；`gc_live()` 返回当前存活 GC block 数。
@@ -150,12 +150,11 @@ map 语义：
 - v1 只支持标量 key/value：`i8/i16/i32/i64/u8/u16/u32/u64/f32/f64/bool/rune/str`。非标量 key 或 value 不支持。
 - `m[k]` 要求 `k: K`，返回 `V`；缺失 key 返回 `V` 的零值。
 - `m[k] = v` 要求 `v: V`；`m[k] += v` 等复合赋值按 `V` 类型复用对应运算符规则。
-- `map_has(m, k)` 要求 `m: map[K,V]` 且 `k: K`，返回 `i32`。
+- `m.has(k)` 要求 `k: K`，返回 `i32`。
 - `delete(m, k)` 要求 `m: map[K,V]` 且 `k: K`，删除存在的 key；缺失 key 无效果。
 - `clear(m)` 清空 map，保留 map 本身可继续写入。
 - `len(m)` 返回 map 当前条目数，类型为 `i32`。
-- `map_new()`、裸 `nc_map` 和旧字符串专用 map helper 不是语言边界，不保留向前兼容。
-- 设计备注：`map_has(m, k)` 是当前 v1 builtin 边界，主要为了和现有 builtin 流水线保持一致；最终表面语法更倾向 `m.has(k)`。引入 `m.has(k)` 需要先明确“内建类型方法”的统一规则，避免只为 map 特判方法解析。
+- `map_new()`、`map_has()`、裸 `nc_map` 和旧字符串专用 map helper 不是语言边界，不保留向前兼容。
 
 `size_of(T)` 是语言级编译期内建表达式，只接受类型实参，不调用用户函数，返回类型为 `u64`。它返回当前 LLVM/ncrt ABI 下类型 `T` 的运行时布局大小：基础标量按实际宽度，`str` 为 16，`[]T` 为 24，`map[K,V]` 为 32，函数值与接口值为 16，指针与 nullable pointer 为 8，enum/rune 为 4，数组按元素 ABI stride 乘长度，struct 按字段偏移、padding 和最终对齐计算。`size_of(void)` 非法；命名/限定类型必须存在且遵守跨模块 `_` 私有可见性；嵌套类型组件会递归校验。
 

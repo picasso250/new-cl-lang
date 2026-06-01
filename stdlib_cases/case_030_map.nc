@@ -7,6 +7,6 @@ fun main() {
     m["greeting"] = "hello world"
     let val = m["greeting"]
     io.println(val)
-    let found = map_has(m, "greeting")
+    let found = m.has("greeting")
     io.println(found)
 }

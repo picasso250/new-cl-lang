@@ -86,7 +86,6 @@ v1 不提供 `os.setenv`、`os.unsetenv`、`os.chdir`。
 - `delete(m, k)`：支持 `map[K,V]`，删除存在的 key；缺失 key 无效果。
 - `min(a, b)` / `max(a, b)`：要求两侧为完全相同的数值类型，返回同类型。
 - `abs(x)`：支持有符号整数与浮点类型，返回同类型。
-- `map_has(m, k)`：要求 `m: map[K,V]` 且 `k: K`，返回 `i32`。
 - `size_of(T)`：编译期内建表达式，只接受类型实参，返回 `u64`。
 - `map[K,V]()`：内建泛型 map 构造形式。
 - 显式转换：`str(...)`、`i32(...)`、`rune(...)` 等目标类型函数式转换。
@@ -105,8 +104,9 @@ v1 不提供 `os.setenv`、`os.unsetenv`、`os.chdir`。
 - v1 只支持标量 key/value：`i8/i16/i32/i64/u8/u16/u32/u64/f32/f64/bool/rune/str`。
 - `m[k]` 要求 `k: K`，返回 `V`；缺失 key 返回 `V` 的零值。
 - `m[k] = v` 要求 `v: V`；复合赋值按 `V` 类型复用对应运算符规则。
+- `m.has(k)` 要求 `k: K`，返回 `i32`。
 - `len(m)` 返回 map 当前条目数，类型为 `i32`。
-- `map_new()`、裸 `nc_map` 和旧字符串专用 map helper 不是语言边界。
+- `map_new()`、`map_has()`、裸 `nc_map` 和旧字符串专用 map helper 不是语言边界。
 
 ## size_of(T)
 

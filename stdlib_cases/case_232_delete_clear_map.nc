@@ -12,7 +12,7 @@ fun main() {
     io.println(len(m))
     delete(m, "a")
     io.println(len(m))
-    io.println(map_has(m, "a"))
+    io.println(m.has("a"))
     io.println(m["a"])
     clear(m)
     io.println(len(m))

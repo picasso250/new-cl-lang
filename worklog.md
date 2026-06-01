@@ -606,3 +606,7 @@ crt 中旧 fs helper 已移除。更新文档与边界测试，新增 case_248_s
 - 已修复同一链接符号多 NC extern alias 的 LLVM 重复声明问题：declare_function 遇到已有同名 LLVM declaration 时复用并校验 ABI，一致则允许，不一致时报错。验证通过：python -m pytest tests/test_llvm_backend.py -q；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_type_ref.py -q。
 
 - 已修正 linux syscall 测试：linux.write_str 返回写入字节数，作为 main 尾表达式会成为进程退出码；测试改为 let 绑定丢弃返回值。验证通过：python -m pytest tests/test_llvm_backend.py -q。
+
+- 预备实现 map.has(k) 并删除 map_has 用户边界：复用现有 MethodCall 与 __nc_map_has runtime helper，迁移 case/文档/边界测试，不保留兼容。
+
+- 已实现 map.has(k) 并删除 map_has 用户边界：typecheck 将 map 内建方法限定为 has，LLVM 复用现有 __nc_map_has helper；迁移 stdlib/LLVM 用例与文档，新增 map_has 删除错误 case。验证通过：python tests/test_language_cases.py；python tests/test_stdlib.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_type_ref.py -q。

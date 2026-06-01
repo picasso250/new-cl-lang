@@ -620,6 +620,15 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 require_arg_count(node.args, 0, "method c_str", node)
                 node.type = "*i8"
                 return
+            map_args = parse_map_type(obj_type)
+            if map_args is not None:
+                if node.method != "has":
+                    fail(f"{obj_type}: method {node.method} not found", node)
+                require_arg_count(node.args, 1, "method has", node)
+                key_type, _value_type = map_args
+                require_type(node.args[0].type, key_type, "argument 1 to method has", node.args[0])
+                node.type = "i32"
+                return
             if is_nullable_pointer_type(obj_type):
                 fail(f"nullable pointer type {obj_type}: method call requires if p != nil narrowing", node)
             if is_iface_type(obj_type):
