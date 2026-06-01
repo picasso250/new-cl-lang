@@ -604,3 +604,5 @@ crt 中旧 fs helper 已移除。更新文档与边界测试，新增 case_248_s
 - 已按 Linux CI 第二轮失败补正：test_projects 默认构建产物断言改为使用 host TargetSpec 扩展名；linux.write/write_str 拆成两个 extern alias 以分别匹配 []u8.ptr 的 ?*u8 和 str.ptr 的 ?*i8。已系统检查 LLVM emit 外部声明，平台专属符号已收进 ncrt/stdlib C shim，codegen 只直接声明 C 标准库和 __nc 私有 ABI。验证通过：python -m pytest tests/test_projects.py tests/test_llvm_backend.py -q；python tests/test_language_cases.py；python tests/test_stdlib.py；python -m pytest tests/test_builtin_boundary.py tests/test_type_ref.py -q。
 
 - 已修复同一链接符号多 NC extern alias 的 LLVM 重复声明问题：declare_function 遇到已有同名 LLVM declaration 时复用并校验 ABI，一致则允许，不一致时报错。验证通过：python -m pytest tests/test_llvm_backend.py -q；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_type_ref.py -q。
+
+- 已修正 linux syscall 测试：linux.write_str 返回写入字节数，作为 main 尾表达式会成为进程退出码；测试改为 let 绑定丢弃返回值。验证通过：python -m pytest tests/test_llvm_backend.py -q。

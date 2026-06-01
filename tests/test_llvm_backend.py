@@ -772,7 +772,7 @@ fun main() {
     if pid <= 0 {
         throw "bad pid"
     }
-    linux.write_str(1, "A\\n")
+    let n = linux.write_str(1, "A\\n")
 }
 """
     llvm_ir, link_libs, support_c_sources = compile_nc_sources_with_libs([("<memory>", source)], target_name="linux-x64")
