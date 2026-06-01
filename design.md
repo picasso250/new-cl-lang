@@ -302,6 +302,9 @@ why：
 - `os`
 - `runtime`
 - `strings`
+- `strconv`
+- `math`
+- `sort`
 - `linux`
 
 why：
@@ -377,4 +380,3 @@ why：
 
 - NC 不应依赖用户手写 make/cmake 才能完成基本构建。
 - target 必须显式进入编译模型，FFI 和标准库都依赖它。
-

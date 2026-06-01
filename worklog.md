@@ -78,3 +78,7 @@
 - 修复 Linux CI 暴露的平台符号泄漏：未捕获异常打印改走 `ncrt` 私有 stderr shim。
 - 删除 `map_has` 用户边界，改为 `m.has(k)`。why：map 操作应归属 map 类型方法，减少裸 builtin。
 - 精简 `design.md` 与 `worklog.md`。why：`design.md` 只记录目标和原因，`worklog.md` 只记录当前事实、关键决策和结果；完整旧流水归档到 `docs/archive/worklog-2026-05-31-full.md`。
+
+- 2026-06-01: 预备补齐标准库实用核心：新增 strconv/math/sort，扩展 strings。why：标准库边界已显式模块化，需要把常用转换、字符串、数学、排序能力从 case 推进到可依赖 API。
+
+- 2026-06-01: 已完成标准库实用核心：新增 strconv/math/sort，扩展 strings，并同步 stdlib/design 文档。验证：tests/test_stdlib.py、tests/test_language_cases.py、pytest test_llvm_backend/test_builtin_boundary/test_type_ref/test_projects 均通过；项目 import 测试改用非保留模块名 calc，以符合标准库模块名保留规则。

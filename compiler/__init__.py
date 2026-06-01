@@ -15,10 +15,10 @@ from compiler.ast import (
 from compiler.type_ref import rewrite_type
 from compiler.target import get_target
 
-BUILTIN_MODULES = {"io", "runtime", "fs", "os", "strings", "linux"}
+BUILTIN_MODULES = {"io", "runtime", "fs", "os", "strings", "strconv", "math", "sort", "linux"}
 ROOT_DIR = os.path.dirname(os.path.dirname(__file__))
 STDLIB_DIR = os.path.join(ROOT_DIR, "stdlib")
-STDLIB_SOURCE_MODULES = {"fs", "os", "strings", "linux"}
+STDLIB_SOURCE_MODULES = {"fs", "os", "strings", "strconv", "math", "sort", "linux"}
 
 
 def _expand_type_str(t: str, aliases: dict[str, str], stack: list[str]) -> str:

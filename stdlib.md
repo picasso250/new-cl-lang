@@ -10,7 +10,7 @@
 
 ## import 规则
 
-- 标准库一级内置模块名：`io`、`fs`、`os`、`runtime`、`strings`、`linux`。
+- 标准库一级内置模块名：`io`、`fs`、`os`、`runtime`、`strings`、`strconv`、`math`、`sort`、`linux`。
 - `import foo` 优先解析同级目录模块；内置标准模块名保留，导入这些名字时不查找同级目录。
 - 编译器随附的 NC 标准库源码模块会递归加载自身 import；用户同级目录仍不能覆盖保留标准模块名。
 - 标准库源码模块可带同名 C support 文件：若实际导入 `stdlib/<name>/<name>.nc` 所在模块，且存在 `stdlib/<name>/<name>.c`，构建系统会自动编译并链接该 C 文件。该机制只对编译器随附标准库生效，不扩展到用户项目的 `foo/foo.c`。
@@ -71,10 +71,52 @@ v1 不提供 `os.setenv`、`os.unsetenv`、`os.chdir`。
 - `strings.starts_with(s, prefix): bool`
 - `strings.ends_with(s, suffix): bool`
 - `strings.index(s, sub): i32`
+- `strings.last_index(s, sub): i32`
+- `strings.count(s, sub): i32`
+- `strings.repeat(s, n): str`
+- `strings.replace_all(s, old, new): str`
+- `strings.trim_prefix(s, prefix): str`
+- `strings.trim_suffix(s, suffix): str`
+- `strings.trim_space(s): str`
 
-这些函数是无分配字节级字符串查询 API，参数均为 `str`。`index` 返回首个匹配的 UTF-8 字节下标，未找到返回 `-1`。空子串规则为 contains/starts_with/ends_with 返回 `true`，index 返回 `0`。
+这些函数是字节级字符串 API，参数均为 `str`。`index` 返回首个匹配的 UTF-8 字节下标，`last_index` 返回最后一个匹配的 UTF-8 字节下标，未找到返回 `-1`。空子串规则为 contains/starts_with/ends_with 返回 `true`，index 返回 `0`，last_index 返回 `len(s)`，count 返回 `len(s)+1`。`replace_all` 的 `old` 为空时会 `throw "strings.replace_all empty old"`。
 
 当前 `strings` 的公开 API 由编译器随附的 `stdlib/strings/strings.nc` 以纯 NC 实现。
+
+### strconv
+
+- `strconv.atoi(s): i32`
+- `strconv.itoa(n): str`
+- `strconv.parse_i32(s): i32`
+- `strconv.parse_f64(s): f64`
+- `strconv.format_i32(n): str`
+- `strconv.format_f64(n): str`
+
+`parse_i32` 支持可选 `+`/`-` 和十进制数字；空串、只有符号、非数字字符和溢出都会 `throw "strconv.parse_i32 failed"`。`parse_f64` 支持可选符号、整数部分和小数部分，至少需要一个数字；v1 不支持 exponent，非法输入会 `throw "strconv.parse_f64 failed"`。
+
+### math
+
+- `math.sqrt(x): f64`
+- `math.pow(x, y): f64`
+- `math.sin(x): f64`
+- `math.cos(x): f64`
+- `math.tan(x): f64`
+- `math.floor(x): f64`
+- `math.ceil(x): f64`
+- `math.round(x): f64`
+- `math.exp(x): f64`
+- `math.log(x): f64`
+- `math.pi(): f64`
+- `math.e(): f64`
+
+当前 `math` 的公开 API 由 `stdlib/math/math.nc` 调用同目录 `math.c` 私有 shim 实现，用 C runtime/libm 隔离平台差异。
+
+### sort
+
+- `sort.by[T](items: []T, less: fun(T, T) bool)`
+- `sort.is_sorted_by[T](items: []T, less: fun(T, T) bool): bool`
+
+`sort.by` 原地稳定排序；`less(a, b)` 返回 `true` 表示 `a` 应排在 `b` 前。
 
 ## 语言级内建
 

@@ -80,10 +80,10 @@ def write_file(path, text):
 def test_import_function_and_multifile_module_run():
     with tempfile.TemporaryDirectory() as tmp:
         main = os.path.join(tmp, "main")
-        math = os.path.join(tmp, "math")
+        math = os.path.join(tmp, "calc")
         os.mkdir(main)
         os.mkdir(math)
-        write_file(os.path.join(main, "main.nc"), "import io\nimport math\nfun main() { io.println(math.add_twice(2, 3)) }\n")
+        write_file(os.path.join(main, "main.nc"), "import io\nimport calc\nfun main() { io.println(calc.add_twice(2, 3)) }\n")
         write_file(os.path.join(math, "a.nc"), "fun add_twice(a: i32, b: i32): i32 { return add(a, b) }\n")
         write_file(os.path.join(math, "b.nc"), "fun add(a: i32, b: i32): i32 { return a + b }\n")
 
@@ -221,10 +221,10 @@ def test_import_same_public_names_do_not_conflict():
 def test_llvm_import_projects_run():
     with tempfile.TemporaryDirectory() as tmp:
         main = os.path.join(tmp, "main")
-        math = os.path.join(tmp, "math")
+        math = os.path.join(tmp, "calc")
         os.mkdir(main)
         os.mkdir(math)
-        write_file(os.path.join(main, "main.nc"), "import io\nimport math\nfun main() { io.println(math.add_twice(2, 3)) }\n")
+        write_file(os.path.join(main, "main.nc"), "import io\nimport calc\nfun main() { io.println(calc.add_twice(2, 3)) }\n")
         write_file(os.path.join(math, "a.nc"), "fun add_twice(a: i32, b: i32): i32 { return add(a, b) }\n")
         write_file(os.path.join(math, "b.nc"), "fun add(a: i32, b: i32): i32 { return a + b }\n")
         result = run_nc("run", main)
