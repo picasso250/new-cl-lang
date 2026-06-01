@@ -575,3 +575,11 @@ crt 中旧 fs helper 已移除。更新文档与边界测试，新增 case_248_s
 
 - 预备实现 fs bytes 与 extern alias：新增 extern 声明级链接符号别名，新增 fs.read_bytes(): []u8，并让 fs.read_file 通过 str([]u8) 构造文本；str([]u8) 必须复制并补 NUL，保持 str 不变式。
 - 已实现 fs bytes 与 extern alias：extern 函数支持 `= "link_symbol"`，NC 名随模块命名空间降名，LLVM 声明调用真实链接符号，避免 stdlib extern 污染用户顶层。新增 `fs.read_bytes(): []u8`，`fs.read_file` 改为 `str(read_bytes(path))`；新增 `str([]u8)` 复制转换并补 NUL，trusted stdlib 可用内部 `__nc_bytes_alloc` 和 slice 字段访问完成 C stdio 读入。新增 extern alias、str([]u8)、fs.read_bytes 与 stdlib extern namespace 回归。验证通过：`python tests/test_language_cases.py`；`python tests/test_stdlib.py`；`python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_type_ref.py -q`。
+
+- 预备删除 runtime/ncfs.c：将 fs exists/remove/rename/mkdir 改为 stdlib/fs/fs.nc 通过 Windows/MinGW extern alias 直接调用 C runtime，移除 ncfs.obj 构建链接路径并同步文档与测试。
+
+- 已删除 runtime/ncfs.c：fs exists/remove/rename/mkdir 改由 stdlib/fs/fs.nc 通过 extern alias 直接调用 Windows/MinGW C runtime；移除 ncfs.obj 缓存、构建和条件链接逻辑，文档与后端断言已同步。验证通过：python tests/test_language_cases.py；python tests/test_stdlib.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_type_ref.py -q。
+
+- 预备将标准库 strings 与 os 迁到 NC 源码：strings 用纯 NC 字节级实现；os 用 stdlib/os/os.nc 加窄 runtime 启动参数入口和 C 字符串转 str，io 暂不动。
+
+- 已将标准库 strings 与 os 迁到 NC 源码：新增 stdlib/strings/strings.nc 纯 NC 字节级查询实现，新增 stdlib/os/os.nc 通过 extern alias 调用 getenv/_getcwd/exit 与 ncrt 启动参数 helper；compiler builtin/LLVM lowering 中移除 strings/os 特判，ncrt 删除旧 strings/os 高层 helper，仅保留 C 字符串复制与 argc/argv 窄入口。验证通过：python tests/test_stdlib.py；python tests/test_language_cases.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_type_ref.py -q。

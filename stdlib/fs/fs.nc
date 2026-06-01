@@ -6,10 +6,11 @@ extern {
     fun c_fread(ptr: ?*u8, size: u64, count: u64, stream: ?*void): u64 = "fread"
     fun c_fwrite(ptr: ?*i8, size: u64, count: u64, stream: ?*void): u64 = "fwrite"
     fun c_ferror(stream: ?*void): i32 = "ferror"
-    fun ncfs_exists(path: *i8): i32 = "__nc_fs_support_exists"
-    fun ncfs_remove(path: *i8): i32 = "__nc_fs_support_remove"
-    fun ncfs_rename(old_path: *i8, new_path: *i8): i32 = "__nc_fs_support_rename"
-    fun ncfs_mkdir(path: *i8): i32 = "__nc_fs_support_mkdir"
+    fun c_access(path: *i8, mode: i32): i32 = "_access"
+    fun c_remove(path: *i8): i32 = "remove"
+    fun c_rmdir(path: *i8): i32 = "_rmdir"
+    fun c_rename(old_path: *i8, new_path: *i8): i32 = "rename"
+    fun c_mkdir(path: *i8): i32 = "_mkdir"
 }
 
 fun read_bytes(path: str): []u8 {
@@ -64,23 +65,27 @@ fun write_file(path: str, content: str) {
 }
 
 fun exists(path: str): bool {
-    return ncfs_exists(path.c_str()) != 0
+    return c_access(path.c_str(), 0) == 0
 }
 
 fun remove(path: str) {
-    if ncfs_remove(path.c_str()) != 0 {
+    let c_path = path.c_str()
+    if c_remove(c_path) != 0 && c_rmdir(c_path) != 0 {
         throw "fs.remove failed"
     }
 }
 
 fun rename(old_path: str, new_path: str) {
-    if ncfs_rename(old_path.c_str(), new_path.c_str()) != 0 {
+    if exists(new_path) {
+        throw "fs.rename failed"
+    }
+    if c_rename(old_path.c_str(), new_path.c_str()) != 0 {
         throw "fs.rename failed"
     }
 }
 
 fun mkdir(path: str) {
-    if ncfs_mkdir(path.c_str()) != 0 {
+    if c_mkdir(path.c_str()) != 0 {
         throw "fs.mkdir failed"
     }
 }

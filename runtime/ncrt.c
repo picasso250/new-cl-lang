@@ -33,6 +33,8 @@ static void*** __nc_gc_roots = NULL;
 static size_t __nc_gc_root_count = 0;
 static size_t __nc_gc_root_cap = 0;
 __nc_ex_frame_t* __nc_ex_top = NULL;
+static int __nc_saved_argc = 0;
+static char** __nc_saved_argv = NULL;
 
 static void __nc_abort_oom(void) {
     fprintf(stderr, "nc runtime: out of memory\n");
@@ -157,60 +159,30 @@ void __nc_gc_root_rewind(size_t mark) {
     }
 }
 
-void __nc_os_args(nc_slice_raw* out, int argc, char** argv) {
-    out->ptr = NULL;
-    out->len = argc > 0 ? (uint64_t)argc : 0;
-    out->cap = out->len;
-    if (out->len == 0) return;
-    str* items = (str*)__nc_gc_alloc((size_t)out->len * sizeof(str));
-    for (uint64_t i = 0; i < out->len; i++) {
-        char* arg = argv[i] ? argv[i] : "";
-        items[i].ptr = (uint8_t*)arg;
-        items[i].len = (uint64_t)strlen(arg);
-    }
-    out->ptr = items;
-}
-
-static char* __nc_str_to_cstr(const str* s) {
-    char* buf = (char*)__nc_gc_alloc((size_t)s->len + 1);
-    if (s->len) memcpy(buf, s->ptr, (size_t)s->len);
-    buf[s->len] = 0;
-    return buf;
-}
-
-void __nc_os_getenv_out(str* out, const str* name) {
-    char* key = __nc_str_to_cstr(name);
-    char* value = getenv(key);
-    if (!value) {
+void __nc_cstr_to_str_out(str* out, const char* cstr) {
+    if (!cstr) {
         *out = (str){0, 0};
         return;
     }
-    *out = (str){(uint8_t*)value, (uint64_t)strlen(value)};
+    size_t len = strlen(cstr);
+    uint8_t* buf = (uint8_t*)__nc_gc_alloc(len + 1);
+    if (len) memcpy(buf, cstr, len);
+    buf[len] = 0;
+    *out = (str){buf, (uint64_t)len};
 }
 
-int __nc_os_has_env(const str* name) {
-    char* key = __nc_str_to_cstr(name);
-    return getenv(key) != NULL ? 1 : 0;
+void __nc_os_set_args(int argc, char** argv) {
+    __nc_saved_argc = argc;
+    __nc_saved_argv = argv;
 }
 
-int __nc_os_cwd_out(str* out) {
-    size_t cap = 256;
-    for (;;) {
-        char* buf = (char*)__nc_gc_alloc(cap);
-        if (getcwd(buf, (int)cap)) {
-            *out = (str){(uint8_t*)buf, (uint64_t)strlen(buf)};
-            return 0;
-        }
-        if (cap >= 65536) {
-            *out = (str){0, 0};
-            return 1;
-        }
-        cap *= 2;
-    }
+int32_t __nc_argc(void) {
+    return __nc_saved_argc;
 }
 
-void __nc_os_exit(int32_t code) {
-    exit((int)code);
+char* __nc_argv(int32_t i) {
+    if (i < 0 || i >= __nc_saved_argc || !__nc_saved_argv) return NULL;
+    return __nc_saved_argv[i];
 }
 
 int __nc_str_eq(str a, str b) {
@@ -221,34 +193,6 @@ int __nc_str_eq(str a, str b) {
 
 int __nc_str_eq_ptr(const str* a, const str* b) {
     return __nc_str_eq(*a, *b);
-}
-
-int32_t __nc_str_index(const str* s, const str* sub) {
-    if (sub->len == 0) return 0;
-    if (sub->len > s->len) return -1;
-    uint64_t limit = s->len - sub->len;
-    for (uint64_t i = 0; i <= limit; i++) {
-        if (memcmp(s->ptr + i, sub->ptr, (size_t)sub->len) == 0) {
-            return (int32_t)i;
-        }
-    }
-    return -1;
-}
-
-int __nc_str_contains(const str* s, const str* sub) {
-    return __nc_str_index(s, sub) >= 0;
-}
-
-int __nc_str_starts_with(const str* s, const str* prefix) {
-    if (prefix->len > s->len) return 0;
-    if (prefix->len == 0) return 1;
-    return memcmp(s->ptr, prefix->ptr, (size_t)prefix->len) == 0;
-}
-
-int __nc_str_ends_with(const str* s, const str* suffix) {
-    if (suffix->len > s->len) return 0;
-    if (suffix->len == 0) return 1;
-    return memcmp(s->ptr + (s->len - suffix->len), suffix->ptr, (size_t)suffix->len) == 0;
 }
 
 void __nc_slice_copy_raw(nc_slice_raw* out, const void* src, uint64_t len, uint64_t elem_size) {

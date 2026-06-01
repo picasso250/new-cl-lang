@@ -1,6 +1,6 @@
 import strings
 
-# ERROR: strings.contains s: expected str, got i32
+# ERROR: argument s to strings.contains: expected str, got i32
 fun main() {
     strings.contains(1, "x")
 }

@@ -20,7 +20,7 @@ from compiler.ast import (
     StructLiteral, Throw, TryCatch, UnaryOp, VariableDeclaration, ForCondition,
 )
 from compiler.names import safe_user_ident
-from compiler.ncrt import build_ncfs_obj, build_ncrt_obj
+from compiler.ncrt import build_ncrt_obj
 from compiler.type_ref import parse_array_type, parse_fn_type, parse_map_type, parse_slice_type
 
 
@@ -285,18 +285,9 @@ class LLVMCodegen:
         self.f64_to_str_fn = None
         self.rune_to_str_fn = None
         self.str_to_i32_fn = None
+        self.cstr_to_str_fn = None
         self.empty_c_string = None
-        self.str_contains_fn = None
-        self.str_starts_with_fn = None
-        self.str_ends_with_fn = None
-        self.str_index_fn = None
-        self.os_argc_global = None
-        self.os_argv_global = None
-        self.os_args_fn = None
-        self.os_getenv_fn = None
-        self.os_has_env_fn = None
-        self.os_cwd_fn = None
-        self.os_exit_fn = None
+        self.os_set_args_fn = None
         self.map_init_fn = None
         self.map_get_fn = None
         self.map_set_fn = None
@@ -638,8 +629,7 @@ class LLVMCodegen:
 
     def init_os_args(self, argc, argv):
         self.ensure_ncrt_runtime()
-        self.builder.store(argc, self.os_argc_global)
-        self.builder.store(argv, self.os_argv_global)
+        self.builder.call(self.os_set_args_fn, [argc, argv])
 
     def emit_gc_rewind(self):
         if self.current_gc_mark is not None:
@@ -1427,42 +1417,6 @@ class LLVMCodegen:
             if len(node.args) != 1:
                 raise RuntimeError("__nc_bytes_alloc expects one argument")
             return self.emit_bytes_alloc(node.args[0])
-        if node.name == "os.args":
-            if len(node.args) != 0:
-                raise RuntimeError("os.args expects no arguments")
-            return self.emit_os_args()
-        if node.name == "os.getenv":
-            if len(node.args) != 1:
-                raise RuntimeError("os.getenv expects one argument")
-            return self.emit_os_getenv(node.args[0])
-        if node.name == "os.has_env":
-            if len(node.args) != 1:
-                raise RuntimeError("os.has_env expects one argument")
-            return self.emit_os_has_env(node.args[0])
-        if node.name == "os.cwd":
-            if len(node.args) != 0:
-                raise RuntimeError("os.cwd expects no arguments")
-            return self.emit_os_cwd()
-        if node.name == "os.exit":
-            if len(node.args) != 1:
-                raise RuntimeError("os.exit expects one argument")
-            return self.emit_os_exit(node.args[0])
-        if node.name == "strings.contains":
-            if len(node.args) != 2:
-                raise RuntimeError("strings.contains expects two arguments")
-            return self.emit_strings_bool_call("str_contains_fn", "strings.contains", node.args[0], node.args[1])
-        if node.name == "strings.starts_with":
-            if len(node.args) != 2:
-                raise RuntimeError("strings.starts_with expects two arguments")
-            return self.emit_strings_bool_call("str_starts_with_fn", "strings.starts_with", node.args[0], node.args[1])
-        if node.name == "strings.ends_with":
-            if len(node.args) != 2:
-                raise RuntimeError("strings.ends_with expects two arguments")
-            return self.emit_strings_bool_call("str_ends_with_fn", "strings.ends_with", node.args[0], node.args[1])
-        if node.name == "strings.index":
-            if len(node.args) != 2:
-                raise RuntimeError("strings.index expects two arguments")
-            return self.emit_strings_index(node.args[0], node.args[1])
         if node.name == "runtime.gc_collect":
             if len(node.args) != 0:
                 raise RuntimeError("runtime.gc_collect expects no arguments")
@@ -1611,6 +1565,8 @@ class LLVMCodegen:
             return self.emit_expr(arg_expr)
         if typ == "[]u8":
             return self.emit_u8_slice_to_str(arg_expr)
+        if typ in ("*i8", "?*i8", "*u8", "?*u8"):
+            return self.emit_cstr_to_str(arg_expr)
         if typ == "rune":
             return self.emit_rune_value_to_str(self.emit_expr(arg_expr))
         if typ == "bool":
@@ -1919,22 +1875,9 @@ class LLVMCodegen:
             self.f64_to_str_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [str_ptr, ir.DoubleType()]), name="__nc_f64_to_str_out")
             self.rune_to_str_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [str_ptr, ir.IntType(32)]), name="__nc_rune_to_str_out")
             self.str_to_i32_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [str_ptr]), name="__nc_str_to_i32_ptr")
-            self.str_contains_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [str_ptr, str_ptr]), name="__nc_str_contains")
-            self.str_starts_with_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [str_ptr, str_ptr]), name="__nc_str_starts_with")
-            self.str_ends_with_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [str_ptr, str_ptr]), name="__nc_str_ends_with")
-            self.str_index_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [str_ptr, str_ptr]), name="__nc_str_index")
-            self.os_argc_global = ir.GlobalVariable(self.module, ir.IntType(32), name="__nc_os_argc")
-            self.os_argc_global.linkage = "internal"
-            self.os_argc_global.initializer = ir.Constant(ir.IntType(32), 0)
-            self.os_argv_global = ir.GlobalVariable(self.module, I8PTR.as_pointer(), name="__nc_os_argv")
-            self.os_argv_global.linkage = "internal"
-            self.os_argv_global.initializer = ir.Constant(I8PTR.as_pointer(), None)
+            self.cstr_to_str_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [str_ptr, I8PTR]), name="__nc_cstr_to_str_out")
             raw_slice_ptr = RAW_SLICE_TYPE.as_pointer()
-            self.os_args_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [raw_slice_ptr, ir.IntType(32), I8PTR.as_pointer()]), name="__nc_os_args")
-            self.os_getenv_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [str_ptr, str_ptr]), name="__nc_os_getenv_out")
-            self.os_has_env_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [str_ptr]), name="__nc_os_has_env")
-            self.os_cwd_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [str_ptr]), name="__nc_os_cwd_out")
-            self.os_exit_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [ir.IntType(32)]), name="__nc_os_exit")
+            self.os_set_args_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [ir.IntType(32), I8PTR.as_pointer()]), name="__nc_os_set_args")
             self.map_init_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [MAP_TYPE.as_pointer()]), name="__nc_map_init")
             nc_val_ptr = NC_VAL_TYPE.as_pointer()
             self.map_get_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [nc_val_ptr, MAP_TYPE.as_pointer(), nc_val_ptr, ir.IntType(32)]), name="__nc_map_get")
@@ -2171,61 +2114,13 @@ class LLVMCodegen:
         value = self.builder.insert_value(value, length, [1], name="u8str.out.len")
         return value
 
-    def emit_os_args(self):
+    def emit_cstr_to_str(self, arg_expr):
         self.ensure_ncrt_runtime()
-        out = self.alloca_at_entry("__nc_os_args_out", llvm_type("[]str"))
-        argc = self.builder.load(self.os_argc_global, name="os.argc")
-        argv = self.builder.load(self.os_argv_global, name="os.argv")
-        raw_out = self.builder.bitcast(out, RAW_SLICE_TYPE.as_pointer(), name="os.args.raw")
-        self.builder.call(self.os_args_fn, [raw_out, argc, argv])
-        return self.builder.load(out, name="os.args")
-
-    def emit_os_getenv(self, name_expr):
-        self.ensure_ncrt_runtime()
-        name = self.emit_expr(name_expr)
-        name_ptr = self.value_to_stack_ptr(name, STR_TYPE, "__nc_os_getenv_name")
-        out = self.alloca_at_entry("__nc_os_getenv_out", STR_TYPE)
-        self.builder.call(self.os_getenv_fn, [out, name_ptr])
-        return self.builder.load(out, name="os.getenv")
-
-    def emit_os_has_env(self, name_expr):
-        self.ensure_ncrt_runtime()
-        name = self.emit_expr(name_expr)
-        name_ptr = self.value_to_stack_ptr(name, STR_TYPE, "__nc_os_has_env_name")
-        result = self.builder.call(self.os_has_env_fn, [name_ptr], name="os.has_env.i32")
-        return self.builder.icmp_signed("!=", result, ir.Constant(ir.IntType(32), 0), name="os.has_env")
-
-    def emit_os_cwd(self):
-        self.ensure_ncrt_runtime()
-        out = self.alloca_at_entry("__nc_os_cwd_out", STR_TYPE)
-        status = self.builder.call(self.os_cwd_fn, [out], name="os.cwd.status")
-        self.raise_fs_error_if_failed(status, "os.cwd failed")
-        return self.builder.load(out, name="os.cwd")
-
-    def emit_os_exit(self, code_expr):
-        self.ensure_ncrt_runtime()
-        code = self.cast_to(self.emit_expr(code_expr), "i32")
-        self.builder.call(self.os_exit_fn, [code])
-        self.builder.unreachable()
-        return ir.Constant(ir.IntType(1), 0)
-
-    def emit_strings_bool_call(self, fn_attr: str, label: str, s_expr, sub_expr):
-        self.ensure_ncrt_runtime()
-        fn = getattr(self, fn_attr)
-        s = self.emit_expr(s_expr)
-        sub = self.emit_expr(sub_expr)
-        s_ptr = self.value_to_stack_ptr(s, STR_TYPE, "__nc_strings_s")
-        sub_ptr = self.value_to_stack_ptr(sub, STR_TYPE, "__nc_strings_sub")
-        result = self.builder.call(fn, [s_ptr, sub_ptr], name=f"{label}.i32")
-        return self.builder.icmp_signed("!=", result, ir.Constant(ir.IntType(32), 0), name=label)
-
-    def emit_strings_index(self, s_expr, sub_expr):
-        self.ensure_ncrt_runtime()
-        s = self.emit_expr(s_expr)
-        sub = self.emit_expr(sub_expr)
-        s_ptr = self.value_to_stack_ptr(s, STR_TYPE, "__nc_strings_index_s")
-        sub_ptr = self.value_to_stack_ptr(sub, STR_TYPE, "__nc_strings_index_sub")
-        return self.builder.call(self.str_index_fn, [s_ptr, sub_ptr], name="strings.index")
+        value = self.emit_expr(arg_expr)
+        ptr = self.builder.bitcast(value, I8PTR, name="cstr.ptr")
+        out = self.alloca_at_entry("__nc_cstr_to_str_out", STR_TYPE)
+        self.builder.call(self.cstr_to_str_fn, [out, ptr])
+        return self.builder.load(out, name="cstr.str")
 
     def raise_fs_error_if_failed(self, status, message: str):
         self.ensure_exception_runtime()
@@ -2410,12 +2305,11 @@ def build_llvm_ir(llvm_ir: str, out_dir: str, name: str = "main", link_libs: lis
     obj_path = os.path.join(out_dir, f"{name}.obj")
     exe_path = os.path.join(out_dir, f"{name}.exe")
     ncrt_obj = build_ncrt_obj(out_dir)
-    ncfs_obj = build_ncfs_obj(out_dir) if "__nc_fs_support_" in llvm_ir else None
     with open(ll_path, "w", encoding="utf-8") as f:
         f.write(llvm_ir)
     with open(obj_path, "wb") as f:
         f.write(object_from_llvm_ir(llvm_ir))
-    link_inputs = [obj_path, ncrt_obj] + ([ncfs_obj] if ncfs_obj else [])
+    link_inputs = [obj_path, ncrt_obj]
     link_cmd = ["gcc", *link_inputs, "-o", exe_path] + list(link_libs or [])
     result = subprocess.run(link_cmd, capture_output=True, text=True)
     if result.returncode != 0:

@@ -35,7 +35,7 @@
 
 `exists` 对不存在返回 `false`；其他操作失败会 `throw` 字符串错误。`mkdir` 只创建单级目录，`rename` 在目标已存在时失败。
 
-当前 `fs` 的公开 API 由编译器随附的 `stdlib/fs/fs.nc` 实现。`read_bytes` 返回原始字节；`read_file` 是文本便利层，等价于 `str(fs.read_bytes(path))`。读写文件的流程在 NC 源码中调用 C stdio extern；`exists/remove/rename/mkdir` 通过单独链接的 `ncfs` 平台 support 对象提供窄 C shim，不属于 `ncrt` 私有 ABI。
+当前 `fs` 的公开 API 由编译器随附的 `stdlib/fs/fs.nc` 实现。`read_bytes` 返回原始字节；`read_file` 是文本便利层，等价于 `str(fs.read_bytes(path))`。读写文件和路径操作都在 NC 源码中通过 extern alias 调用当前 Windows/MinGW C runtime 符号；不再链接单独的 fs support object。
 
 ### os
 
@@ -46,6 +46,8 @@
 - `os.exit(code)`：立即退出进程，不运行 NC `defer`。
 
 v1 不提供 `os.setenv`、`os.unsetenv`、`os.chdir`。
+
+当前 `os` 的公开 API 由编译器随附的 `stdlib/os/os.nc` 实现。`args` 通过 `ncrt` 私有启动参数 helper 读取 LLVM `main(argc, argv)` 保存的参数；`getenv`/`has_env`/`cwd`/`exit` 通过 extern alias 调用当前 Windows/MinGW C runtime 符号。
 
 ### runtime
 
@@ -63,6 +65,8 @@ v1 不提供 `os.setenv`、`os.unsetenv`、`os.chdir`。
 
 这些函数是无分配字节级字符串查询 API，参数均为 `str`。`index` 返回首个匹配的 UTF-8 字节下标，未找到返回 `-1`。空子串规则为 contains/starts_with/ends_with 返回 `true`，index 返回 `0`。
 
+当前 `strings` 的公开 API 由编译器随附的 `stdlib/strings/strings.nc` 以纯 NC 实现。
+
 ## 语言级内建
 
 - `len(x)`：支持 `str`、`[]T`、`map[K,V]`。
@@ -78,6 +82,7 @@ v1 不提供 `os.setenv`、`os.unsetenv`、`os.chdir`。
 - `map[K,V]()`：内建泛型 map 构造形式。
 - 显式转换：`str(...)`、`i32(...)`、`rune(...)` 等目标类型函数式转换。
 - `str([]u8)` 会复制字节到新的 `str` buffer 并补 NUL；v1 不验证 UTF-8。
+- `str(*i8)` / `str(?*i8)` / `str(*u8)` / `str(?*u8)` 会复制 NUL 结尾 C 字符串到新的 `str`；nil 返回空字符串。
 
 ## str C interop
 

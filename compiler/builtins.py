@@ -20,44 +20,6 @@ def infer_builtin_call(node, require_arg_count, require_type, fail) -> str | Non
     if name in {"io.print", "io.println"}:
         require_arg_count(args, 1, name, node)
         return "void"
-    if name == "os.args":
-        require_arg_count(args, 0, "os.args", node)
-        return "[]str"
-    if name == "os.getenv":
-        require_arg_count(args, 1, "os.getenv", node)
-        require_type(args[0].type, "str", "os.getenv name", node)
-        return "str"
-    if name == "os.has_env":
-        require_arg_count(args, 1, "os.has_env", node)
-        require_type(args[0].type, "str", "os.has_env name", node)
-        return "bool"
-    if name == "os.cwd":
-        require_arg_count(args, 0, "os.cwd", node)
-        return "str"
-    if name == "os.exit":
-        require_arg_count(args, 1, "os.exit", node)
-        require_type(args[0].type, "i32", "os.exit code", node)
-        return "void"
-    if name == "strings.contains":
-        require_arg_count(args, 2, "strings.contains", node)
-        require_type(args[0].type, "str", "strings.contains s", node)
-        require_type(args[1].type, "str", "strings.contains sub", node)
-        return "bool"
-    if name == "strings.starts_with":
-        require_arg_count(args, 2, "strings.starts_with", node)
-        require_type(args[0].type, "str", "strings.starts_with s", node)
-        require_type(args[1].type, "str", "strings.starts_with prefix", node)
-        return "bool"
-    if name == "strings.ends_with":
-        require_arg_count(args, 2, "strings.ends_with", node)
-        require_type(args[0].type, "str", "strings.ends_with s", node)
-        require_type(args[1].type, "str", "strings.ends_with suffix", node)
-        return "bool"
-    if name == "strings.index":
-        require_arg_count(args, 2, "strings.index", node)
-        require_type(args[0].type, "str", "strings.index s", node)
-        require_type(args[1].type, "str", "strings.index sub", node)
-        return "i32"
     if name == "append":
         require_arg_count(args, 2, "append", node)
         if not args[0].type.startswith("[]"):
@@ -112,6 +74,8 @@ def infer_builtin_call(node, require_arg_count, require_type, fail) -> str | Non
     if name == "str":
         require_arg_count(args, 1, "str", node)
         if args[0].type == "[]u8":
+            return "str"
+        if args[0].type in {"*i8", "?*i8", "*u8", "?*u8"}:
             return "str"
         if args[0].type not in STRINGIFIABLE_TYPES:
             fail(f"str: cannot convert {args[0].type} to str", node)

@@ -31,15 +31,15 @@ def test_std_module_builtins_are_explicitly_bounded():
     assert 'name == "fs.remove"' not in source
     assert 'name == "fs.rename"' not in source
     assert 'name == "fs.mkdir"' not in source
-    assert 'name == "os.args"' in source
-    assert 'name == "os.getenv"' in source
-    assert 'name == "os.has_env"' in source
-    assert 'name == "os.cwd"' in source
-    assert 'name == "os.exit"' in source
-    assert 'name == "strings.contains"' in source
-    assert 'name == "strings.starts_with"' in source
-    assert 'name == "strings.ends_with"' in source
-    assert 'name == "strings.index"' in source
+    assert 'name == "os.args"' not in source
+    assert 'name == "os.getenv"' not in source
+    assert 'name == "os.has_env"' not in source
+    assert 'name == "os.cwd"' not in source
+    assert 'name == "os.exit"' not in source
+    assert 'name == "strings.contains"' not in source
+    assert 'name == "strings.starts_with"' not in source
+    assert 'name == "strings.ends_with"' not in source
+    assert 'name == "strings.index"' not in source
     assert 'name == "runtime.gc_collect"' in source
     assert 'name == "runtime.gc_live"' in source
     assert 'name == "cap"' in source
@@ -61,5 +61,5 @@ def test_llvm_declares_external_ncrt_symbols():
     assert "__nc_gc_alloc" in source
     assert "__nc_read_file" not in source
     assert "__nc_fs_exists" not in source
-    assert "__nc_str_contains" in source
+    assert "__nc_str_contains" not in source
     assert "__nc_map_init" in source

@@ -17,7 +17,7 @@ from compiler.type_ref import rewrite_type
 BUILTIN_MODULES = {"io", "runtime", "fs", "os", "strings"}
 ROOT_DIR = os.path.dirname(os.path.dirname(__file__))
 STDLIB_DIR = os.path.join(ROOT_DIR, "stdlib")
-STDLIB_SOURCE_MODULES = {"fs"}
+STDLIB_SOURCE_MODULES = {"fs", "os", "strings"}
 
 
 def _expand_type_str(t: str, aliases: dict[str, str], stack: list[str]) -> str:
