@@ -12,7 +12,8 @@
 
 - 标准库一级内置模块名：`io`、`fs`、`os`、`runtime`、`strings`。
 - `import foo` 优先解析同级目录模块；内置标准模块名保留，导入这些名字时不查找同级目录。
-- 内置标准模块不参与用户模块 import cycle。
+- 编译器随附的 NC 标准库源码模块会递归加载自身 import；用户同级目录仍不能覆盖保留标准模块名。
+- 标准库源码模块可带同名 C support 文件：若实际导入 `stdlib/<name>/<name>.nc` 所在模块，且存在 `stdlib/<name>/<name>.c`，构建系统会自动编译并链接该 C 文件。该机制只对编译器随附标准库生效，不扩展到用户项目的 `foo/foo.c`。
 - 语言级 builtin 不需要 import。
 
 ## 标准库模块
@@ -35,7 +36,7 @@
 
 `exists` 对不存在返回 `false`；其他操作失败会 `throw` 字符串错误。`mkdir` 只创建单级目录，`rename` 在目标已存在时失败。
 
-当前 `fs` 的公开 API 由编译器随附的 `stdlib/fs/fs.nc` 实现。`read_bytes` 返回原始字节；`read_file` 是文本便利层，等价于 `str(fs.read_bytes(path))`。读写文件和路径操作都在 NC 源码中通过 extern alias 调用当前 Windows/MinGW C runtime 符号；不再链接单独的 fs support object。
+当前 `fs` 的公开 API 由编译器随附的 `stdlib/fs/fs.nc` 实现。`read_bytes` 返回原始字节；`read_file` 是文本便利层，等价于 `str(fs.read_bytes(path))`。需要平台或 C runtime 差异隔离的路径操作通过同目录 `stdlib/fs/fs.c` 暴露的私有 shim 实现；用户只写普通 `extern { ... }`，不需要在 NC 源码里声明对象文件或库路径。
 
 ### os
 

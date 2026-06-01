@@ -19,8 +19,8 @@ fun main() {
     io.println(restrict)
 }
 """
-    llvm_ir = compile_nc_to_llvm_ir(source)
-    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    llvm_ir, link_libs, support_c_sources = compile_nc_sources_with_libs([("<memory>", source)])
+    stdout, stderr, rc = run_llvm_ir(llvm_ir, link_libs, support_c_sources)
     assert (stdout.strip(), stderr.strip(), rc) == ("3", "", 0)
 
 
@@ -57,8 +57,8 @@ fun main() {
     io.println(y)
 }
 """
-    llvm_ir = compile_nc_to_llvm_ir(source)
-    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    llvm_ir, link_libs, support_c_sources = compile_nc_sources_with_libs([("<memory>", source)])
+    stdout, stderr, rc = run_llvm_ir(llvm_ir, link_libs, support_c_sources)
     assert (stdout.strip(), stderr.strip(), rc) == ("3\n2", "", 0)
 
 
@@ -70,8 +70,8 @@ fun main() {
     io.println(name)
 }
 """
-    llvm_ir = compile_nc_to_llvm_ir(source)
-    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    llvm_ir, link_libs, support_c_sources = compile_nc_sources_with_libs([("<memory>", source)])
+    stdout, stderr, rc = run_llvm_ir(llvm_ir, link_libs, support_c_sources)
     assert (stdout.strip(), stderr.strip(), rc) == ("hello\nnc", "", 0)
 
 
@@ -86,8 +86,8 @@ fun main() {
     io.println(a != c)
 }
 """
-    llvm_ir = compile_nc_to_llvm_ir(source)
-    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    llvm_ir, link_libs, support_c_sources = compile_nc_sources_with_libs([("<memory>", source)])
+    stdout, stderr, rc = run_llvm_ir(llvm_ir, link_libs, support_c_sources)
     assert (stdout.strip(), stderr.strip(), rc) == ("4\n1\n1", "", 0)
 
 
@@ -424,8 +424,8 @@ fun main() {{
     io.println(content)
 }}
 """
-    llvm_ir = compile_nc_to_llvm_ir(source)
-    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    llvm_ir, link_libs, support_c_sources = compile_nc_sources_with_libs([("<memory>", source)])
+    stdout, stderr, rc = run_llvm_ir(llvm_ir, link_libs, support_c_sources)
     assert (stdout.strip(), stderr.strip(), rc) == ("hello", "", 0)
 
 
@@ -441,8 +441,8 @@ fun main() {{
     }}
 }}
 """
-    llvm_ir = compile_nc_to_llvm_ir(source)
-    stdout, stderr, rc = run_llvm_ir(llvm_ir)
+    llvm_ir, link_libs, support_c_sources = compile_nc_sources_with_libs([("<memory>", source)])
+    stdout, stderr, rc = run_llvm_ir(llvm_ir, link_libs, support_c_sources)
     assert (stdout.strip(), stderr.strip(), rc) == ("fs.read_file failed", "", 0)
 
 
@@ -646,7 +646,7 @@ fun main() {
 
 
 def test_extern_lib_path_is_collected_compile_only():
-    llvm_ir, link_libs = compile_nc_sources_with_libs([("<memory>", """
+    llvm_ir, link_libs, support_c_sources = compile_nc_sources_with_libs([("<memory>", """
 extern "some.lib" {
     fun helper(): i32
 }
@@ -654,6 +654,7 @@ fun main() {}
 """)])
     assert 'declare i32 @"helper"()' in llvm_ir
     assert link_libs == ["some.lib"]
+    assert support_c_sources == []
 
 
 def test_llvm_links_external_lib_path(tmp_path):
@@ -672,8 +673,8 @@ fun main() {{
     io.println(nc_helper_add(7))
 }}
 """
-    llvm_ir, link_libs = compile_nc_sources_with_libs([("<memory>", source)])
-    stdout, stderr, rc = run_llvm_ir(llvm_ir, link_libs)
+    llvm_ir, link_libs, support_c_sources = compile_nc_sources_with_libs([("<memory>", source)])
+    stdout, stderr, rc = run_llvm_ir(llvm_ir, link_libs, support_c_sources)
     assert link_libs == [lib_path]
     assert (stdout.strip(), stderr.strip(), rc) == ("42", "", 0)
 
@@ -685,17 +686,36 @@ def test_llvm_build_writes_ir_obj_and_exe(tmp_path):
     assert os.path.exists(obj_path)
     assert os.path.exists(tmp_path / "ncrt.obj")
     assert not os.path.exists(tmp_path / "ncfs.obj")
+    assert not os.path.exists(tmp_path / "fs.obj")
     assert os.path.exists(exe_path)
     result = subprocess.run([exe_path], capture_output=True, text=True)
     assert result.stdout.strip() == "42"
     assert result.returncode == 0
 
 
-def test_llvm_build_does_not_link_fs_support_when_stdlib_fs_is_imported(tmp_path):
+def test_llvm_build_links_fs_support_when_stdlib_fs_is_imported(tmp_path):
     data_path = str(tmp_path / "data.txt").replace("\\", "/")
-    llvm_ir = compile_nc_to_llvm_ir(f'import fs\nfun main() {{ fs.write_file("{data_path}", "ok") }}')
-    _ll_path, _obj_path, exe_path = build_llvm_ir(llvm_ir, str(tmp_path / "build"), "main")
+    llvm_ir, link_libs, support_c_sources = compile_nc_sources_with_libs([
+        ("<memory>", f'import fs\nfun main() {{ fs.write_file("{data_path}", "ok") }}')
+    ])
+    _ll_path, _obj_path, exe_path = build_llvm_ir(llvm_ir, str(tmp_path / "build"), "main", link_libs, support_c_sources)
     assert os.path.exists(tmp_path / "build" / "ncrt.obj")
     assert not os.path.exists(tmp_path / "build" / "ncfs.obj")
+    assert os.path.exists(tmp_path / "build" / "fs.obj")
     result = subprocess.run([exe_path], capture_output=True, text=True)
     assert result.returncode == 0
+
+
+def test_stdlib_support_c_sources_are_collected_once():
+    _llvm_ir, link_libs, support_c_sources = compile_nc_sources_with_libs([
+        ("<memory>", """
+import fs
+import fs
+fun main() {
+    let x = fs.exists("nope")
+}
+""")
+    ])
+    assert link_libs == []
+    assert len(support_c_sources) == 1
+    assert support_c_sources[0].replace("\\", "/").endswith("/stdlib/fs/fs.c")

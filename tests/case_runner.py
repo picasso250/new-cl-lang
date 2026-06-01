@@ -39,10 +39,10 @@ def parse_expected(source: str) -> Expected:
 
 def compile_and_run(source: str) -> Expected:
     try:
-        llvm_ir, link_libs = compile_nc_sources_with_libs([("<memory>", source)])
+        llvm_ir, link_libs, support_c_sources = compile_nc_sources_with_libs([("<memory>", source)])
     except Exception as e:
         return "__ERROR__", str(e), 0
-    stdout, stderr, rc = run_llvm_ir(llvm_ir, link_libs)
+    stdout, stderr, rc = run_llvm_ir(llvm_ir, link_libs, support_c_sources)
     return stdout.strip(), stderr.strip(), rc
 
 

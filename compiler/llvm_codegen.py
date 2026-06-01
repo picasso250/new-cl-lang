@@ -20,7 +20,7 @@ from compiler.ast import (
     StructLiteral, Throw, TryCatch, UnaryOp, VariableDeclaration, ForCondition,
 )
 from compiler.names import safe_user_ident
-from compiler.ncrt import build_ncrt_obj
+from compiler.ncrt import build_ncrt_obj, build_support_c_objs
 from compiler.type_ref import parse_array_type, parse_fn_type, parse_map_type, parse_slice_type
 
 
@@ -2299,17 +2299,24 @@ def object_from_llvm_ir(llvm_ir: str) -> bytes:
     return tm.emit_object(backing)
 
 
-def build_llvm_ir(llvm_ir: str, out_dir: str, name: str = "main", link_libs: list[str] | None = None) -> tuple[str, str, str]:
+def build_llvm_ir(
+    llvm_ir: str,
+    out_dir: str,
+    name: str = "main",
+    link_libs: list[str] | None = None,
+    support_c_sources: list[str] | None = None,
+) -> tuple[str, str, str]:
     os.makedirs(out_dir, exist_ok=True)
     ll_path = os.path.join(out_dir, f"{name}.ll")
     obj_path = os.path.join(out_dir, f"{name}.obj")
     exe_path = os.path.join(out_dir, f"{name}.exe")
     ncrt_obj = build_ncrt_obj(out_dir)
+    support_objs = build_support_c_objs(out_dir, support_c_sources)
     with open(ll_path, "w", encoding="utf-8") as f:
         f.write(llvm_ir)
     with open(obj_path, "wb") as f:
         f.write(object_from_llvm_ir(llvm_ir))
-    link_inputs = [obj_path, ncrt_obj]
+    link_inputs = [obj_path, ncrt_obj, *support_objs]
     link_cmd = ["gcc", *link_inputs, "-o", exe_path] + list(link_libs or [])
     result = subprocess.run(link_cmd, capture_output=True, text=True)
     if result.returncode != 0:
@@ -2320,11 +2327,12 @@ def build_llvm_ir(llvm_ir: str, out_dir: str, name: str = "main", link_libs: lis
 def run_llvm_ir(
     llvm_ir: str,
     link_libs: list[str] | None = None,
+    support_c_sources: list[str] | None = None,
     args: list[str] | None = None,
     env: dict[str, str] | None = None,
 ) -> tuple[str, str, int]:
     with tempfile.TemporaryDirectory() as tmpdir:
-        _ll, _obj, exe = build_llvm_ir(llvm_ir, tmpdir, "out", link_libs)
+        _ll, _obj, exe = build_llvm_ir(llvm_ir, tmpdir, "out", link_libs, support_c_sources)
         run_env = os.environ.copy()
         if env is not None:
             run_env.update(env)

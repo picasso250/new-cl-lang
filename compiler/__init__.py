@@ -248,7 +248,18 @@ def parse_project_sources(sources: "list[tuple[str, str]]") -> Module:
     project_root = os.path.dirname(entry.root)
     loaded: dict[str, Module] = {}
     order: list[Module] = []
+    support_c_sources: list[str] = []
+    support_seen: set[str] = set()
     stack: list[str] = []
+
+    def add_stdlib_support_c(module_name: str):
+        c_path = os.path.abspath(os.path.join(STDLIB_DIR, module_name, f"{module_name}.c"))
+        if not os.path.exists(c_path):
+            return
+        if c_path in support_seen:
+            return
+        support_seen.add(c_path)
+        support_c_sources.append(c_path)
 
     def load(module: Module):
         if module.name in stack:
@@ -263,6 +274,7 @@ def parse_project_sources(sources: "list[tuple[str, str]]") -> Module:
                 mod_dir = os.path.join(STDLIB_DIR, imp.module_name)
                 files = [os.path.join(mod_dir, n) for n in sorted(os.listdir(mod_dir)) if n.endswith(".nc")]
                 child = parse_module_sources([(file, open(file, encoding="utf-8").read()) for file in files], trusted_stdlib=True)
+                add_stdlib_support_c(imp.module_name)
                 load(child)
                 continue
             if imp.module_name in BUILTIN_MODULES:
@@ -284,7 +296,7 @@ def parse_project_sources(sources: "list[tuple[str, str]]") -> Module:
     files = []
     for module in order:
         files.extend(module.files)
-    return Module(entry.name, entry.root, files)
+    return Module(entry.name, entry.root, files, support_c_sources=support_c_sources)
 
 
 def _typecheck_module(module: Module) -> Program:
@@ -305,14 +317,14 @@ def compile_module_to_llvm_ir(module: Module) -> str:
     return generate_llvm_ir(program)
 
 
-def compile_module_to_llvm_ir_with_libs(module: Module) -> tuple[str, list[str]]:
-    """Module → (LLVM IR, link libs)."""
+def compile_module_to_llvm_ir_with_libs(module: Module) -> tuple[str, list[str], list[str]]:
+    """Module → (LLVM IR, link libs, support C sources)."""
     program = _typecheck_module(module)
     link_libs = [
         stmt.lib for stmt in program.statements
         if isinstance(stmt, ExternBlock) and stmt.lib is not None
     ]
-    return generate_llvm_ir(program), link_libs
+    return generate_llvm_ir(program), link_libs, list(module.support_c_sources)
 
 
 def compile_nc_sources_to_llvm_ir(sources: "list[tuple[str, str]]") -> str:
@@ -320,8 +332,8 @@ def compile_nc_sources_to_llvm_ir(sources: "list[tuple[str, str]]") -> str:
     return compile_module_to_llvm_ir(parse_project_sources(sources))
 
 
-def compile_nc_sources_with_libs(sources: "list[tuple[str, str]]") -> tuple[str, list[str]]:
-    """多个 NC 源码片段 → (LLVM IR, link libs)."""
+def compile_nc_sources_with_libs(sources: "list[tuple[str, str]]") -> tuple[str, list[str], list[str]]:
+    """多个 NC 源码片段 → (LLVM IR, link libs, support C sources)."""
     return compile_module_to_llvm_ir_with_libs(parse_project_sources(sources))
 
 

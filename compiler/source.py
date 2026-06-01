@@ -19,6 +19,7 @@ class Module:
     name: str
     root: str
     files: list[SourceFile] = field(default_factory=list)
+    support_c_sources: list[str] = field(default_factory=list)
 
     def to_program(self) -> Program:
         statements = []

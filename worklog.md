@@ -2,6 +2,9 @@
 
 ## 2026-05-31
 
+- 预备实现标准库同名 C 伴随对象机制：仅对编译器随附 `stdlib/<module>/<module>.c` 生效，import 对应 NC 标准库模块时自动编译并链接同名 C support；`compile` 仍只输出 LLVM IR；同时把 fs 平台/CRT glue 迁入 `stdlib/fs/fs.c`，并记录 extern struct ABI 边界。
+- 已实现标准库同名 C 伴随对象机制：项目加载阶段按实际导入的随附 stdlib 源码模块收集 `stdlib/<module>/<module>.c`，按绝对路径去重；`compile_nc_sources_with_libs`、`run_llvm_ir`、`build_llvm_ir` 传递 support C sources，`compile` 仍只输出 IR；新增通用 support C 缓存并在 build 目录输出 `<module>.obj`，链接顺序为 main、ncrt、stdlib support objs、显式 extern libs。`fs` 路径操作已改用 `stdlib/fs/fs.c` 私有 shim，文档记录 extern 聚合类型仍需 ABI lowering 后才能支持。验证通过：`python tests/test_language_cases.py`；`python tests/test_stdlib.py`；`python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_type_ref.py -q`。
+
 - 预备实现标准库 `strings` v1：新增内置一级模块，提供无分配字节级 contains/starts_with/ends_with/index；同步 runtime helper、LLVM lowering、case、设计文档与边界测试。
 - 已实现标准库 `strings` v1：`strings` 加入内置模块集合并优先于同级目录；新增 contains/starts_with/ends_with/index 的 str 参数类型检查、ncrt 字节级 helper 与 LLVM lowering，空子串规则按设计落地。新增 case_245~247 覆盖正向、类型错误和未 import 错误，项目级测试覆盖同级 strings/ 被内置模块抢占。验证通过：`python tests/test_basic.py`；`python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_type_ref.py -q`。
 
