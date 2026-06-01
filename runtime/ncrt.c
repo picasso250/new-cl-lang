@@ -41,6 +41,10 @@ static void __nc_abort_oom(void) {
     abort();
 }
 
+FILE* __nc_stderr(void) {
+    return stderr;
+}
+
 void __nc_gc_init(void) {
 #ifdef _WIN32
     _setmode(_fileno(stdout), _O_BINARY);

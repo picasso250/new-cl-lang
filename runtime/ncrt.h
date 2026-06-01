@@ -4,6 +4,7 @@
 #include <setjmp.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 typedef struct {
     uint8_t* ptr;
@@ -86,6 +87,7 @@ void __nc_cstr_to_str_out(str* out, const char* cstr);
 void __nc_os_set_args(int argc, char** argv);
 int32_t __nc_argc(void);
 char* __nc_argv(int32_t i);
+FILE* __nc_stderr(void);
 
 void __nc_slice_copy_raw(nc_slice_raw* out, const void* src, uint64_t len, uint64_t elem_size);
 void __nc_slice_append_raw(nc_slice_raw* out, const nc_slice_raw* in, const void* elem, uint64_t elem_size);

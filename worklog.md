@@ -594,3 +594,9 @@ crt 中旧 fs helper 已移除。更新文档与边界测试，新增 case_248_s
 - 已实现 target-aware FFI/CI v1：新增 TargetSpec 与 CLI --target，windows-x64/linux-x64 分别选择 LLVM triple、对象/可执行扩展名、runtime/support C 缓存和 bare extern 库名解析；Windows 可用 extern "kernel32" 链接 import lib，Linux 可用 extern "m" 解析为 -lm。
 - 已新增 linux 标准库模块：linux.getpid/linux.write/linux.write_str 仅 linux-x64 可导入，通过 stdlib/linux/linux.c 使用 Linux syscall；os.cwd 改为 stdlib/os/os.c target shim，Windows 调 _getcwd、Linux 调 getcwd；新增 requirements.txt 与 Linux GitHub Actions。
 - 验证通过：python -m pytest tests/test_llvm_backend.py -q；python tests/test_language_cases.py；python tests/test_stdlib.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_type_ref.py -q；python nc.py compile --target windows-x64/linux-x64 -c 'fun main() {}'；python nc.py build --target windows-x64 -c 'fun main() {}'；unsupported target 按预期报错。
+
+## 2026-06-01
+
+- 预备修复 Linux CI：未捕获异常打印路径仍硬编码 Windows UCRT __acrt_iob_func，改为 ncrt 私有 __nc_stderr shim，由 C runtime 按平台返回 stderr。
+
+- 已修复 Linux CI 暴露的 Windows UCRT 符号泄漏：新增 ncrt 私有 __nc_stderr()，LLVM 未捕获异常打印改为调用该 shim，不再声明/调用 __acrt_iob_func。验证通过：python tests/test_language_cases.py case_043_uncaught_throw.nc；python -m pytest tests/test_llvm_backend.py -q；python tests/test_language_cases.py；python tests/test_stdlib.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_type_ref.py -q。

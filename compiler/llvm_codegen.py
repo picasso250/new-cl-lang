@@ -269,7 +269,7 @@ class LLVMCodegen:
         self.vars: dict[str, tuple[ir.AllocaInstr, str]] = {}
         self.printf = None
         self.fprintf = None
-        self.acrt_iob_func = None
+        self.nc_stderr = None
         self.malloc = None
         self.gc_alloc = None
         self.gc_collect = None
@@ -851,7 +851,7 @@ class LLVMCodegen:
     def emit_uncaught_exception(self):
         self.ensure_exception_runtime()
         self.ensure_fprintf()
-        stderr = self.builder.call(self.acrt_iob_func, [ir.Constant(ir.IntType(32), 2)], name="stderr")
+        stderr = self.builder.call(self.nc_stderr, [], name="stderr")
         fmt = self.global_c_string("uncaught: %.*s\n", "fmt_uncaught")
         ex = self.builder.load(self.ex_value, name="uncaught.ex")
         ptr = self.builder.extract_value(ex, 0)
@@ -1812,10 +1812,10 @@ class LLVMCodegen:
                 ir.FunctionType(ir.IntType(32), [I8PTR, I8PTR], var_arg=True),
                 name="fprintf",
             )
-            self.acrt_iob_func = ir.Function(
+            self.nc_stderr = ir.Function(
                 self.module,
-                ir.FunctionType(I8PTR, [ir.IntType(32)]),
-                name="__acrt_iob_func",
+                ir.FunctionType(I8PTR, []),
+                name="__nc_stderr",
             )
 
     def ensure_exception_runtime(self):
