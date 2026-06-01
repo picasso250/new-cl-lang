@@ -410,7 +410,13 @@ class LLVMCodegen:
         ret = ir.IntType(32) if fn.name == "main" and (fn.return_type or "void") == "void" else llvm_type(fn.return_type)
         all_params = ([(fn.receiver_name, fn.receiver_type)] if fn.receiver_name else []) + fn.params
         args = [ir.IntType(32), I8PTR.as_pointer()] if fn.name == "main" else [llvm_type(t) for _n, t in all_params]
-        self.module.globals[name] = ir.Function(self.module, ir.FunctionType(ret, args), name=name)
+        fn_type = ir.FunctionType(ret, args)
+        existing = self.module.globals.get(name)
+        if existing is not None:
+            if getattr(existing, "function_type", None) != fn_type:
+                raise RuntimeError(f"extern symbol '{name}' declared with incompatible ABI")
+        else:
+            self.module.globals[name] = ir.Function(self.module, fn_type, name=name)
         self.fn_decls[name] = fn
         if not fn.receiver_name:
             self.fn_decls[fn.name] = fn
