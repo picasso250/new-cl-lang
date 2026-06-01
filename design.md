@@ -1,446 +1,321 @@
-# NC (New C) — 语言设计文档
+# NC (New C) — 语言设计
 
-> 代号：NC。目标：更好的 C，带 GC，以 LLVM 为目标后端，自带构建系统。
+> 本文件只记录“我们要什么”和 why。标准库 API 见 `stdlib.md`；C/FFI 细节见 `c-interop.md`；实现过程见 `worklog.md`。
 
-## 一、核心定位
+## 目标
 
-| 项 | 决策 |
-|-----|------|
-| 编译目标 | **LLVM** 是唯一后端 |
-| 运行时 | **自带运行时库**（GC）；LLVM 后端链接由 `runtime/ncrt.c` 编译出的静态对象 |
-| 性能级别 | **Go 级性能**即可（非 C 级零开销），接受胖指针、间接调用 |
-| 调试 | 迁移期保留 NC 行号 → 生成产物定位；LLVM 后端后续接 debug metadata |
-| 内存管理 | **GC**（自动管理，不搞所有权 / borrow checker） |
-| 构建系统 | **自带**（无需外部 make/cmake）；生成 `build/main.ll`、`build/main.obj`、`build/ncrt.obj` 与 exe |
-| 入口点 | `fun main()` —— 程序从 main 函数启动 |
-| 标准库 | 见 `stdlib.md`；标准库模块需显式 `import` 后用限定名访问，语言级 builtin 不需 import |
-| 并发 | 延迟决策，不走语言级关键字，后续以库函数提供 |
+NC 是“更好的 C”：
 
----
+- 以 LLVM 为唯一后端。
+- 自带构建系统和运行时库。
+- 使用 GC 管理内存，不引入所有权或 borrow checker。
+- 性能目标是 Go 级别，而不是 C 级零开销。
+- 语言保持显式、可预测、容易定位错误。
+- 不向前兼容未进入当前设计的旧语法或旧 API。
 
-## 二、模块系统
+why：
 
-**规则：目录即模块。无单文件模块。模块名 = 目录名（自动推断）。**
+- C 的主要价值是贴近系统和部署简单；NC 保留这一方向。
+- C 的主要痛点是手动内存、头文件模型、隐式规则和工程组织弱；NC 优先解决这些问题。
+- 当前项目按 case 驱动，不提前承诺没有真实用例支撑的大能力。
 
-```
-src/
-  http/           # 模块 http（目录名即模块名）
-    server.nc     
-    client.nc     
-    internal.nc   # 同目录所有 .nc 文件共享命名空间，自动互见
-  json/           # 模块 json（即使只有一个文件，也必须是目录）
-    json.nc
-  main/           # 入口模块
-    main.nc
-```
+## 架构原则
 
-- 同目录 `.nc` 文件**自动共享命名空间**，可直接互调（无需 import）
-- 不再有 `http.nc` 这种单文件模块
-- 无需 `__init__.py` 标记
-- **模块名 = 目录名**，无需在文件顶部声明
+- case 驱动：每个能力由具体 case 推动。
+- 先通后优：链路未通前不优化，链路通了以后立刻自省。
+- 多 pass，各司其职：一个 pass 只做一件事。
+- LLVM 后端是语言全集和回归权威。
+- 遇到未支持语义应明确报错，不做隐式降级。
 
-```nc
-# 导入
-import http              # v1：导入同级 http 模块（目录）
-import io                # 内置标准模块，不要求存在同级 io/ 目录
-```
+## 模块
 
-当前 import v1 边界：
+我们要“目录即模块”：
 
-- CLI 目标目录是入口模块目录；`import foo` 解析为入口模块目录的同级 `foo/` 目录。
-- 只支持一级模块名：`import foo`。不支持 `import foo.bar`、`import "net/http"`、`import foo { serve }`、别名导入。
-- import 只能出现在顶层。
-- `io`、`fs`、`os`、`runtime`、`strings` 与 `linux` 是保留的内置标准模块名；其中 `fs`、`os`、`strings` 与 `linux` 由编译器随附的 NC 标准库源码实现并优先于同级同名目录；`linux` 仅对 `linux-x64` target 可用；标准库模块与语言级 builtin 的公开边界见 `stdlib.md`。
-- 导入模块后，跨模块符号必须命名空间限定访问：`foo.add()`、`foo.User`、`foo.User { ... }`、`new foo.User { ... }`、`foo.Color::Red`。
-- 同目录 `.nc` 文件仍自动共享命名空间，无需 import。
-- 导入图递归加载；重复 import 只加载一次；import cycle 报错。
-- 编译生成单个 LLVM module；非入口模块顶层符号用模块名前缀降名，例如 `foo.add` → `foo_add`、`foo.User` → `foo_User`。
+- 模块名由目录名推断。
+- 同目录 `.nc` 文件共享命名空间，自动互见。
+- 跨模块必须显式 `import`。
+- 导入后必须用模块名限定访问：`foo.add()`、`foo.User`。
+- `_` 前缀顶层符号是模块私有。
+- 标准库模块名由编译器保留，优先于同级用户目录。
 
-当前标准库 / 内建边界：
+why：
 
-- 标准库一级内置模块：`io`、`fs`、`os`、`runtime`、`strings`、`linux`（仅 `linux-x64`）。
-- 语言级内建函数 / 形式：`len`、`cap`、`append`、`copy`、`clear`、`delete`、`min`、`max`、`abs`、`size_of(T)`、`map[K,V]()` 与显式转换。
-- 详细 API、import 规则和 `ncrt` 私有 ABI 边界见 `stdlib.md`。
-
-当前后端边界：
-
-- LLVM 是唯一后端：`compile` 输出 LLVM IR，`build` 输出 `build/main.ll`、`build/main.obj`、`build/ncrt.obj`、按需输出标准库 C support obj 与 `build/main.exe`。
-- `--backend` 入口已删除；显式传入 `--backend` 会报错。旧 C 后端和旧 `compile_nc_to_c` / `run_c_code` / `build_c_code` API 不保留向前兼容。
-- LLVM 后端 v1 当前承诺基础闭环：基础数值/bool 类型、`str` 字面量/索引/切片/拼接/`c_str()`、数值转换、`str(i32)`、`i32(str)`、`len(str)`、`str ==/!=`、定长数组字面量/索引/索引赋值、slice layout/literal/index/`len`/`cap`/`append`/`copy`/`clear`、定长数组与 slice 切片复制、slice `for i, item in s`、struct 值类型声明/字面量/字段读写/参数与返回、heap struct `new`、指针 receiver 方法声明/调用、nullable pointer `nil`/`!= nil` 窄化后字段与方法访问、enum tag/variant/比较、整数/字符串/bool/enum `match` 表达式、block 表达式、算术/比较、`let`、重赋值、函数、显式 `return` 与尾表达式返回、`if`、条件 `for`、range `for i in start..end`、`break`、编译器随附 NC stdlib `fs`、`os.args`/`os.getenv`/`os.has_env`/`os.cwd`/`os.exit`、`strings.contains`/`strings.starts_with`/`strings.ends_with`/`strings.index`、`linux.getpid`/`linux.write`/`linux.write_str`（仅 `linux-x64`）、`map[K,V]` 的构造/读写/`has`/`delete`/`clear`/`len(map)`、函数调用与 `io.println`。
-- LLVM 后端链接 `runtime/ncrt.h` + `runtime/ncrt.c` 按 target 编译出的 `ncrt.obj`/`ncrt.o`。`ncrt` 固定基础 ABI：`str`、`nc_map`、`nc_slice_raw`、`__nc_gc_alloc`/`__nc_gc_collect`/`__nc_gc_live`、root slot、字符串/cast/map helper、字节级 slice append/copy helper 与 C 异常入口。除 `runtime.gc_collect()` / `runtime.gc_live()` 外，其他 `ncrt` helper 都是编译器私有 ABI。`fs`、`os`、`strings` 与 `linux` 由编译器随附的 NC 标准库源码实现；当实际导入的源码标准库模块存在 `stdlib/<module>/<module>.c` 时，构建系统自动编译为同名 support obj 并在 `ncrt` 后、显式 extern link libs 前参与链接。该机制只服务随附标准库，不自动构建用户项目同名 C 文件。`[]T` 语言布局仍为 `{ T* ptr; u64 len; u64 cap }`，`elem_size` 仅作为 runtime helper 调用参数传入，不进入 slice header。
-- LLVM `map[K,V]` 当前运行时布局匹配 `ncrt.h` 的私有 `nc_map`：`{ entries, cap, len, tombstones }`，entries 在 LLVM 侧为 opaque pointer；get/set/has 统一调用 `ncrt` tagged scalar 哈希表实现，`len(map)` 读取 len 字段。
-- LLVM slice、map、closure env、heap struct 与运行时构造字符串的动态存储统一通过外部 `__nc_gc_alloc` 分配；该入口由 `ncrt.obj` 提供。共享 `ncrt` 当前实现显式 mark-sweep GC：`gc_collect()` 从已注册 root slot 出发标记可达块，保守扫描已标记 heap payload 内的 machine word，释放不可达块；`gc_live()` 返回当前存活 GC block 数。
-- LLVM 后端负责为持有 GC 指针的栈槽注册 root：`str.ptr`、`[]T.ptr`、`nc_map.entries`、`*T/?*T`、function value `env`、struct 字段和定长数组元素。LLVM 函数/closure 会为参数、receiver、closure env、局部变量、返回槽、catch/throw 值注册 root，并在所有出口 rewind 到函数入口 mark。
-- LLVM `throw`/`try`/`catch` 当前使用轻量异常模型：全局异常 flag + `str` value，函数边界返回默认值传播异常，`try` 块在语句边界检查 flag 并跳转 `catch`；uncaught throw 在 `main` 输出到 stderr 并返回 1。`defer` 使用函数内动态 site 栈，按 LIFO 在函数 fallthrough、显式 `return`、`throw` 传播前执行。该模型不依赖 `setjmp`/`longjmp`。
-- LLVM function value 当前支持 `{ call, env }` 胖指针：`call` 首参为 `i8* env`，无捕获时 `env == null`；捕获 closure 生成 env struct 并按值拷贝捕获字段，env 通过 `__nc_gc_alloc` 分配并由 function value 的 `env` root 与保守 heap 扫描保活。
-- LLVM 接口值当前支持 `{ vtable, data }` 胖指针，LLVM 表示为 `{ i8*, i8* }`。每个实际使用的 `*T -> I` 转换生成接口专属 vtable 全局常量与 erased receiver thunk；接口方法调用从 vtable 取函数指针并以 `data` 作为 receiver 动态分派。GC root 只登记接口值的 `data` 字段，`vtable` 是全局常量。
-- LLVM 后端当前支持显式 target：`windows-x64` 使用 triple `x86_64-w64-windows-gnu` 生成 `.obj/.exe`；`linux-x64` 使用 triple `x86_64-pc-linux-gnu` 生成 `.o` 与无扩展可执行文件。CLI 可传 `--target windows-x64|linux-x64`；未传时按宿主系统选择。链接当前统一调用 `gcc`，target-specific runtime/support C 对象按 target 缓存。
-- LLVM 后端是语言全集和回归权威；不向前兼容未声明支持的节点，遇到未支持语义应明确报错。
-
-LLVM 默认后端达标门槛：
-
-- LLVM 后端通过全部 `test_cases` 正向/错误用例，以及项目级 import/module 测试。
-- str、slice、array、struct、enum、match、nullable pointer、closure/function value、defer/throw/try/catch、动态分配保活、runtime helper 链接路径均有 LLVM 覆盖。
-- 类型标注在 public AST/pass 边界暂仍保存为字符串，但内部解析/格式化集中走 `TypeRef` 工具层；type alias `type Name = Type` 在前端展开为底层类型字符串，对后续所有 pass（泛型实例化、typecheck、LLVM codegen）透明。
-- `python nc.py compile <target>`、`python nc.py build <target>` 走 LLVM；不再提供 C 后端回归入口。
-- LLVM 默认后端已接入共享 `ncrt` 显式 GC；当前 GC 不后台运行，也不在分配时自动触发，只有显式 `gc_collect()` 会回收不可达对象。
-- 若迁移中确认其他能力暂时放弃或延期，必须在 worklog/design 中记录放弃点、原因和替代边界。
-
----
-
-## 三、可见性
-
-**默认公开，`_` 前缀即私有。**
-
-```nc
-fun serve(port: i32) { ... }         # 公开 —— 外部 import 后可见
-fun _helper(x: i32): i32 { ... }     # 私有 —— 仅模块内可见
-```
-
-关键字：**`fun`**（非 `fn`）。
-
-后端符号生成时：
-- 公开 → 可被导入模块通过命名空间限定访问
-- 私有（`_` 前缀）→ 仅模块内可见，跨模块访问报错
-
----
-
-## 四、类型系统
-
-### 4.1 基础类型
-
-```
-i8  i16  i32  i64          # 有符号整数
-u8  u16  u32  u64          # 无符号整数
-f32  f64                    # 浮点
-bool                        # 布尔
-str                         # 字符串（不可变，UTF-8）
-rune                        # 单个 Unicode 码点
-void                        # 空
-*T                          # 非空指针
-?*T                         # nullable 指针（可为 nil）
-[]T                         # 切片（动态数组）
-[N]T                        # 定长数组
-```
-
-### 4.2 运行时布局
-
-| 类型 | C 层面布局 |
-|------|-----------|
-| `str` | builtin scalar/runtime value type，LLVM/ncrt 布局为 `{ u8* ptr; u64 len }`；NC 创建的 buffer 保证 `ptr[len] == 0` |
-| `[]T` | `{ T* ptr; u64 len; u64 cap }` |
-| `map[K,V]` | 编译器私有 `nc_map`，布局为 `{ entries; i64 cap; i64 len; i64 tombstones }` |
-| `[N]T` | 内联在 struct/栈中，如 C 数组 |
-| `*T` | 单个指针，非空 |
-| `?*T` | 单个指针，C 布局同 `*T`，可为 `nil` |
-| 接口值 | `{ type* vtable; void* data }` 胖指针 |
-
-切片语义：
-
-- `a[lo:hi]` 总是复制元素，生成新的底层存储；适用于 `str`、`[]T`、`[N]T`。
-- 切片结果与原值不共享可变底层数组；对结果做索引赋值或 `append` 不会写回原数组/原切片。
-- `[]T.cap` 是当前底层存储容量；切片复制结果的 `cap == len`。
-- `cap(s)` 返回 slice 当前容量，类型为 `i32`。
-- `copy(dst, src)` 要求两侧为相同 `[]T`，复制 `min(len(dst), len(src))` 个元素到 `dst`，返回复制数量 `i32`。
-- `clear(s)` 将 slice 当前 `len` 范围内元素置零，不改变 `len` 或 `cap`。
-
-map 语义：
-
-- `map[K,V]` 是内建泛型 map 类型，构造语法为 `map[K,V]()`。
-- v1 只支持标量 key/value：`i8/i16/i32/i64/u8/u16/u32/u64/f32/f64/bool/rune/str`。非标量 key 或 value 不支持。
-- `m[k]` 要求 `k: K`，返回 `V`；缺失 key 返回 `V` 的零值。
-- `m[k] = v` 要求 `v: V`；`m[k] += v` 等复合赋值按 `V` 类型复用对应运算符规则。
-- `m.has(k)` 要求 `k: K`，返回 `i32`。
-- `delete(m, k)` 要求 `m: map[K,V]` 且 `k: K`，删除存在的 key；缺失 key 无效果。
-- `clear(m)` 清空 map，保留 map 本身可继续写入。
-- `len(m)` 返回 map 当前条目数，类型为 `i32`。
-- `map_new()`、`map_has()`、裸 `nc_map` 和旧字符串专用 map helper 不是语言边界，不保留向前兼容。
-
-`size_of(T)` 是语言级编译期内建表达式，只接受类型实参，不调用用户函数，返回类型为 `u64`。它返回当前 LLVM/ncrt ABI 下类型 `T` 的运行时布局大小：基础标量按实际宽度，`str` 为 16，`[]T` 为 24，`map[K,V]` 为 32，函数值与接口值为 16，指针与 nullable pointer 为 8，enum/rune 为 4，数组按元素 ABI stride 乘长度，struct 按字段偏移、padding 和最终对齐计算。`size_of(void)` 非法；命名/限定类型必须存在且遵守跨模块 `_` 私有可见性；嵌套类型组件会递归校验。
-
-`str` 提供内建方法 `s.c_str(): *i8` 作为 C interop 边界。它返回 `s.ptr`；若字符串为 `{ null, 0 }`，则返回共享空 C 字符串。`len(s)` 仍是 NC 字符串长度权威；内部 NUL 字节允许存在，但 C API 通过 `c_str()` 消费时会按 C 字符串规则截断。
-
-### 4.3 零值（Go 式）
-
-| 类型 | 零值 |
-|------|------|
-| i8~i64, u8~u64 | `0` |
-| f32, f64 | `0.0` |
-| bool | `false` |
-| str | `""` |
-| *T | 无零值，声明时必须初始化为非空表达式 |
-| ?*T | `nil` |
-| []T | `nil`（空切片） |
-| struct | 各字段递归零值 |
-| enum | 第一个变体（若为无数据变体）/ 零值（若为有数据变体） |
-
-### 4.4 字面量默认类型
-
-| 字面量 | 默认类型 | 后缀 |
-|--------|---------|------|
-| `42` | `i32` | `42u8`, `42i64`, `42u64` |
-| `3.14` | `f64` | `3.14f32` |
-| `true` / `false` | `bool` | — |
-| `"hello"` | `str` | — |
-| `'A'` | `rune` | — |
-
-字符字面量表示单个 Unicode 码点，类型为 `rune`。支持普通字符与转义：`'\n'`、`'\t'`、`'\r'`、`'\''`、`'\\'`、`'\u{4E2D}'`。空字符字面量、多码点字符字面量、非法或越界 Unicode 码点在编译期报错。
-
-### 4.5 类型转换
-
-采用 **函数式** 语法：`目标类型(值)`。
-
-```nc
-let x: i64 = i64(42)
-let y: u8 = u8(255)
-let z: f32 = f32(3.14)
-let r: rune = rune(65)
-let n: i32 = i32(r)
-```
-
-`rune(i32)` / `rune(u32)` 是整数到码点的显式转换；`i32(rune)` / `u32(rune)` 是码点到整数的显式转换。`str(rune)` 返回该码点的 UTF-8 字符串。`str([]u8)` 复制字节到新的 `str` buffer 并补 NUL，v1 不验证 UTF-8。`str(*i8)` / `str(?*i8)` / `str(*u8)` / `str(?*u8)` 复制 NUL 结尾 C 字符串到新的 `str`；nil 返回空字符串。`rune` 底层 LLVM 宽度为 `i32`，零值为 `0`，但类型系统不把它当普通 numeric：不参与算术、大小比较、位运算、复合赋值或自增自减，只允许同类型 `==` / `!=`。
-
-### 4.6 nil 与 nullable pointer
-
-- `nil` 是特殊字面量，只能赋给 `?*T`，或与 `?*T` 做 `==` / `!=`。
-- `*T` 不可为 `nil`，`new T { ... }` 返回 `*T`。
-- `*T` 可隐式赋给 `?*T`；`?*T` 不可隐式赋给 `*T`。
-- 字段访问和方法调用只允许在非空指针上做：`p.x`、`p.x = v`、`p.method()` 要求 `p: *T`。
-- v1 支持轻量收窄：`if p != nil { ... }` 或 `if nil != p { ... }` 内，`p: ?*T` 临时视为 `*T`。
-- 收窄块内禁止给被收窄变量重新赋值，避免 `p = nil; p.x` 这类流分析漏洞。
-
-### 4.7 类型别名
-
-```nc
-type ID = u64
-type Point = struct { x: f64, y: f64 }
-```
-
-### 4.8 显式泛型 v1
-
-泛型当前只支持函数和 struct，使用显式类型实参，并在前端 monomorphization 为普通声明后再进入符号表、类型检查和后端。
-
-```nc
-fun id[T](x: T): T { x }
-fun pick[T any](x: T): T { x }
-
-struct Box[T] { value: T }
-
-fun main() {
-    let a = id[i32](42)
-    let b = Box[str] { value: "ok" }
-    let c = new Box[i32] { value: 7 }
-}
-```
+- 目录模块比单文件模块更适合真实工程组织。
+- 限定访问能避免隐式名字污染。
+- `_` 私有规则简单，不引入 `pub/private` 额外语法。
 
 当前边界：
 
-- `[T]` 与 `[T any]` 等价；v1 只有 `any` 约束。
-- 调用泛型函数必须显式写类型实参：`id[i32](x)`；不做类型实参推断。
-- 使用泛型类型必须显式写类型实参：`Box[i32]`、`[]Box[str]`、`*Box[i32]`、`Box[Box[i32]]`。
-- 未实例化的泛型模板不进入后端，不生成代码；每个使用到的实例生成稳定普通名，如 `id__i32`、`Box__str`。
-- 泛型函数体按具体实例检查；类型不匹配在实例化后的普通函数/struct 上报错。
-- 泛型方法（receiver 自带类型参数）暂不支持；可为具体实例类型写普通方法，例如 `fun (b *Box[i32]) get(): i32`。
-- 不支持 `comparable`、`numeric`、接口约束、类型集合、运行时类型擦除或胖指针泛型。
+- import v1 只支持一级模块名。
+- 不支持包路径、别名导入、选择性导入或单文件模块。
 
----
+## 可见性
 
-## 五、变量
+默认公开，`_` 前缀私有。
 
-**无 `const` / `mut` 关键字。`let` 声明变量，变量可重赋值。**
+why：
+
+- 小项目里默认公开更少仪式感。
+- 私有命名规则足够直观，也符合当前不增加关键字的取向。
+
+## 类型
+
+我们要一组明确、低魔法的基础类型：
+
+```nc
+i8 i16 i32 i64
+u8 u16 u32 u64
+f32 f64
+bool
+str
+rune
+void
+*T
+?*T
+[]T
+[N]T
+map[K,V]
+fun(T) R
+```
+
+核心语义：
+
+- `str` 不可变，表示 UTF-8 字节串。
+- `rune` 表示 Unicode 码点，不当作普通 numeric 使用。
+- `*T` 非空；`?*T` 可为 `nil`。
+- `[]T` 是动态切片；`[N]T` 是定长数组。
+- `map[K,V]` 是语言内建泛型 map。
+- 函数值类型写作 `fun(params) Ret`。
+
+why：
+
+- 指针非空默认能避免 C 式空指针常态化。
+- nullable pointer 显式表达风险。
+- `rune` 独立于 numeric，避免字符和整数混用。
+- 函数类型使用 `fun` 语法，和函数声明保持一致。
+
+## 零值
+
+我们要 Go 式零值：
+
+- 数值为 `0`。
+- bool 为 `false`。
+- str 为 `""`。
+- nullable pointer 为 `nil`。
+- slice 为 nil/空切片。
+- struct 字段递归零值。
+- 非空 `*T` 没有零值，声明时必须初始化。
+
+why：
+
+- 零值让局部初始化和容器默认值更简单。
+- 非空指针没有零值，可以让类型系统维护它的承诺。
+
+## 转换
+
+我们要显式转换：
+
+```nc
+let x = i64(42)
+let s = str(123)
+```
+
+核心规则：
+
+- 数值类型之间不做隐式提升。
+- 跨数值类型必须显式转换。
+- `str(...)` 只支持语言定义的可字符串化类型。
+- `size_of(T)` 是语言级编译期内建，返回当前 ABI 下的布局大小。
+
+why：
+
+- C 的隐式提升容易制造隐藏 bug。
+- 显式转换让代码生成和错误定位更直接。
+- `size_of(T)` 是系统语言刚需，但不需要通用 comptime。
+
+## 变量
+
+变量用 `let` 声明，声明后可重赋值。
 
 ```nc
 let x: i32 = 5
-let y: u64 = 0
-y = 42
-
-let MAX = 256          # 编译期常量（let 初始值为编译期已知量）
+x = 6
 ```
 
-`let` 不表达不可变性；它只引入名字。容器内部修改与变量重赋值都允许。
+我们不要 `const` / `mut` 作为 v1 语言边界。
 
-**顶层变量**：禁止跨模块使用。模块内顶层变量仅本模块可见。
+why：
 
----
+- 当前优先打通可用语言闭环。
+- 不提前设计不可变性系统。
 
-## 六、函数
+## 函数
 
-**单返回值。无多返回值。**
+我们要：
+
+- 关键字使用 `fun`。
+- 单返回值。
+- 支持显式 `return`。
+- 支持尾表达式返回。
+- 支持闭包和函数值。
 
 ```nc
-fun add(x: i32, y: i32): i32 { return x + y }
-import io
-fun greet(name: str) { io.println("Hello, {name}") }
-
-fun choose(b: bool): i32 {
-    if b { 1 } else { 3 }   # 函数尾表达式作为返回值
-}
-
-let x = if cond { 1 } else { 2 }
-
-# 闭包
-let twice = fun(x: i32): i32 { x * 2 }
-let f: fun(i32) i32 = twice
+fun add(x: i32, y: i32): i32 { x + y }
+let f: fun(i32) i32 = fun(x: i32): i32 { x * 2 }
 ```
 
-函数值类型标注使用 `fun(params) Ret`，例如 `fun(i32) i32`、`fun() str`、`fun(i32, str) bool`。旧 `(i32) -> i32` 函数类型语法不保留。
+why：
 
-`if` 是表达式。带 `else` 时，所有最终分支尾表达式类型必须一致；`else if` 是 `else` 分支继续接一个 `if` 表达式。
-不带 `else` 时，隐含空 `else`，整体类型为 `void`，因此 then 分支也必须是 `void`。
-普通 block 已可作为表达式：`{ statements; tail_expr }`，其值来自最后一个尾表达式。
+- 单返回值降低调用、类型检查和 ABI 复杂度。
+- 闭包是现代工程语言的基本能力，但性能目标允许胖指针和间接调用。
 
-### 方法
+## 控制流
 
-**可在任意模块为 struct 定义方法，但不可重名（只允许扩展，不允许覆盖）。**
+我们要表达式化控制流：
+
+- `if` 是表达式。
+- `match` 是表达式。
+- 条件循环写作 `for condition { ... }`。
+- 遍历写作 `for item in items` 或 `for i, item in items`。
+- 使用 `break` 跳出循环。
+
+我们不要：
+
+- `while` 关键字。
+- `switch` 关键字。
+
+why：
+
+- 控制流少而统一，语法面更小。
+- `match` 比 `switch` 更适合后续扩展到 enum、字面量和模式。
+
+## 自定义类型
+
+我们要：
+
+- `struct`。
+- `enum`。
+- `iface`。
+- `type Name = Type` 类型别名。
+- 显式泛型 v1，用于函数和 struct。
+
+接口规则：
+
+- struct 自动满足接口，不写 `implements`。
+- v1 只采纳指针 receiver 方法。
+- 接口值是胖指针。
+
+泛型规则：
+
+- 必须显式写类型实参。
+- v1 只有 `any` 约束。
+- 实例化后按普通声明检查和生成代码。
+
+why：
+
+- struct/enum 覆盖系统建模的基本需要。
+- 接口采用结构化满足，减少声明耦合。
+- 显式泛型避免 v1 引入类型推断和复杂约束系统。
+
+## 方法
+
+方法可定义在 struct 上：
 
 ```nc
-struct Point { x: f64, y: f64 }
-
-# 同模块或异模块均可
-fun (p: Point) dist(): f64 { ... }
-# 若已有 dist 方法，再定义同名 → 编译错误
+fun (p *Point) move(dx: f64, dy: f64) { ... }
 ```
 
----
+我们允许扩展方法，但不允许同名覆盖。
 
-## 七、运算符
+why：
 
-**与 C/Go 一致。**
+- 方法扩展有利于模块组织。
+- 禁止覆盖可保持调用解析简单、稳定。
 
-数值运算不做隐式提升或隐式常量适配。算术、取模和大小比较要求两侧数值类型完全一致；跨数值类型必须显式写 `目标类型(值)`。`%` 仅支持整数类型，不支持浮点。
-`min(a, b)` / `max(a, b)` 要求两侧为完全相同的数值类型，返回同类型；`abs(x)` 只支持有符号整数与浮点类型，返回同类型。
+## 运算符
 
-| 类别 | 运算符 |
-|------|--------|
-| 算术 | `+` `-` `*` `/` `%` |
-| 位运算 | `&` `|` `^` `~` `<<` `>>` |
-| 逻辑 | `&&` `||` `!` |
-| 比较 | `==` `!=` `<` `>` `<=` `>=` |
-| 赋值复合 | `+=` `-=` `*=` `/=` `%=` `&=` `|=` `^=` `<<=` `>>=` |
-| 自增/自减 | `++` `--`（语句，非表达式） |
+我们要 C/Go 风格基础运算符，但不继承 C 的隐式数值提升。
 
----
+核心规则：
 
-## 八、控制流
+- 算术、取模和大小比较要求两侧数值类型一致。
+- `%` 只支持整数。
+- 指针不参与算术、索引或大小比较。
+- 同类型指针只允许 `==` / `!=`。
+- 自增/自减是语句，不是表达式。
 
-```nc
-if x > 0 { ... } else if x < 0 { ... } else { ... }
-for i < 10 { i++ }
-for item in items { ... }
-for i, item in items { ... }
+why：
 
-let label = match color {
-    Color::Red   -> "red"
-    Color::Green -> "green"
-    Color::Blue  -> "blue"
-}
+- 保留熟悉语法。
+- 删除 C 中最容易隐藏错误的隐式转换和指针算术。
 
-let size = match n {
-    0    -> "zero"
-    1    -> "one"
-    else -> "many"
-}
-```
+## 错误处理
 
-`match` 是表达式。v1 支持字面量、`Enum::Variant` 和 `else` 分支；所有分支结果类型必须一致。enum match 无 `else` 时必须覆盖全部变体；非 enum match 必须写 `else`。v1 暂不做 enum 数据解构、变量绑定、guard、范围模式。
-
----
-
-## 九、自定义类型
+我们要 `throw`、`try/catch` 和 `defer`：
 
 ```nc
-struct Point { x: f64, y: f64 }
-let p = Point { x: 3.0, y: 4.0 }
-
-enum Color { Red, Green, Blue, RGB(u8, u8, u8), Named(str) }
-let c = Color::RGB(255, 128, 0)
-
-# 接口（胖指针）
-iface Writer { fun write(data: []u8): i32 }
-iface Reader { fun read(buf: []u8): i32 }
-iface ReadWriter { Reader; Writer }
-
-# struct 自动满足接口（不显式声明）
-fun (f *File) write(data: []u8): i32 { ... }
-```
-
-接口 v1 边界：
-
-- `iface Name { ... }` 只能出现在顶层，进入全局类型命名空间，参与 import 模块名前缀改写和 `_` 私有规则。
-- 接口方法项只允许签名，不允许函数体；嵌入项只允许接口名。嵌入会扁平化为 method set，并检测未知嵌入、循环嵌入和同名方法签名冲突。
-- struct 自动满足接口，不写 `implements`。v1 只采纳现有指针 receiver 方法：`fun (p *T) method(...)`。值 receiver、`T` 值类型、`?*T`、slice、函数值等都不会隐式装箱为接口。
-- 接口值支持作为局部变量、函数参数和函数返回值；接口方法调用按接口 method set 校验参数和返回类型，并通过 vtable 动态分派。
-- v1 不支持接口到接口隐式转换或重装箱；`ReadWriter` 值不会自动降为 `Reader`。若源表达式本身是 concrete `*T`，可在目标接口处重新装箱。
-- v1 不支持泛型接口、接口约束、显式 implements、类型断言、接口 nil 零值或从接口取回 concrete 类型。
-
----
-
-## 十、错误处理
-
-**throw 不标注类型。defer 清理（LIFO）。**
-
-```nc
-fun load_config(path: str): str {
+fun load(path: str): str {
     if path == "" { throw "empty path" }
-    return contents
-}
-
-fun process(path: str) {
-    let f = open(path)
-    defer { f.close() }
-    # 无论正常返回还是 throw，defer 都会执行
+    return fs.read_file(path)
 }
 
 try {
-    let data = fs.read_file("config.nc")
+    load("config.nc")
 } catch e {
-    io.println("error: {e}")
+    io.println(e)
 }
 ```
 
----
+核心规则：
 
-## 十一、元编程
+- `throw` 不标注异常类型。
+- `defer` 按 LIFO 执行。
+- `return`、`throw` 和函数正常退出都必须执行已登记 defer。
 
-**v1 不引入通用 `comptime`。**
+why：
 
-当前决策：
+- v1 需要比错误码更直接的错误传播。
+- `defer` 解决资源清理路径分裂问题。
+- 不引入 checked exception 或 effect system。
 
-- 不提供 `comptime fun`。
-- 不提供 `comptime if`。
-- 不提供编译期执行用户代码的解释器或求值环境。
+## 内存管理
 
-理由：
+我们要 GC：
 
-- NC 没有 C 头文件模型，模块系统已经替代 `#include` / include guard。
-- `let` 的编译期常量形态覆盖简单 `#define` 常量。
-- 显式泛型 v1 已覆盖类型级复用和单态化生成代码的主要需求。
-- 当前 LLVM-only 目标下，还没有真实 case 证明需要平台级条件编译。
-- 通用 `comptime` 会引入编译期执行、副作用、错误定位、缓存、类型生成和 pass 边界等复杂问题，不符合当前 case 驱动原则。
+- 用户不手动释放普通 NC 对象。
+- 运行时提供显式 `runtime.gc_collect()` 与 `runtime.gc_live()`。
+- 当前不承诺后台 GC 或分配时自动触发。
 
-后续只在具体 case 推动下考虑窄化能力，例如：
+why：
 
-- 常量表达式求值。
-- `static_assert(expr)`，且只接受编译期常量表达式。
-- `cfg` / build config，用于平台或 feature 分支。
-- 其他有限内建常量表达式。
+- 目标是减少 C 的生命周期负担。
+- 项目仍处在 case 驱动阶段，先保守落地显式 GC，再由真实压力推动自动触发策略。
 
----
+## 标准库
 
-## 十二、FFI
+我们要显式 import 的标准库模块。
+
+当前标准库边界见 `stdlib.md`，包括：
+
+- `io`
+- `fs`
+- `os`
+- `runtime`
+- `strings`
+- `linux`
+
+why：
+
+- 标准库能力不应伪装成裸语言魔法。
+- 显式 import 能让依赖和命名空间清楚。
+
+## FFI
+
+我们要最小 C ABI 互操作：
 
 ```nc
 extern {
     fun putchar(c: i32): i32
-    fun strlen(p: *u8): u64
-}
-
-extern "msvcrt.lib" {
-    fun _sopen(path: *u8, oflag: i32, pmode: i32): i32
-}
-
-extern "kernel32" {
-    fun GetCurrentProcessId(): i32
 }
 
 extern "m" {
@@ -448,53 +323,58 @@ extern "m" {
 }
 ```
 
-extern v1 只支持纯声明，不允许函数体。关键字 `extern` 后可跟一个可选的链接输入字符串。字符串若是路径、对象文件、`.lib` 或 `.a`，构建系统原样追加为链接输入；若是裸库名，则按 target 转成 linker lib flag，例如 Windows `extern "kernel32"` → `-lkernel32`，Linux `extern "m"` → `-lm`。不含字符串时，符号由链接器从默认路径解析。v1 不支持 `extern "user32.dll"` 这类直接 DLL 运行时加载；Windows DLL API 通过 import library / linker library 解析。
+核心规则：
 
-extern 声明可用 `= "link_symbol"` 指定真实链接符号名，NC 代码只使用声明名，避免 C 符号与 NC 顶层命名空间冲突：
+- extern 只声明外部符号。
+- 可选字符串表示链接输入。
+- 允许声明级链接符号别名。
+- v1 只支持 C ABI scalar/pointer。
+- 聚合类型按值传递不进入当前边界。
+
+why：
+
+- 系统语言必须能调用 C。
+- 聚合 ABI 在不同 target 上差异大，不能用“看起来能跑”的 lowering 代替真正 ABI 分类。
+
+## 元编程
+
+v1 不引入通用 `comptime`。
+
+当前只接受具体、窄化的编译期能力，例如：
+
+- `size_of(T)`。
+- 后续可能的常量表达式。
+- 后续可能的 `static_assert`。
+- 后续可能的 `cfg` / build config。
+
+why：
+
+- 通用 comptime 会引入编译期执行、副作用、缓存、错误定位和类型生成复杂度。
+- 当前还没有 case 证明需要完整 comptime。
+
+## 注释
+
+只支持行注释：
 
 ```nc
-extern {
-    fun c_remove(path: *i8): i32 = "remove"
-}
+# comment
 ```
 
-省略返回类型表示 `void`。允许类型限于 C ABI scalar/pointer：`i8/i16/i32/i64/u8/u16/u32/u64/f32/f64/bool/*T/?*T/void`。不支持 varargs、回调、头文件解析、extern struct、泛型 extern、`str`/slice/map/array/struct/enum/function value、聚合类型按值传递。
+why：
 
-聚合类型按值传给 extern 或从 extern 返回仍明确禁止。当前 Windows/Linux x64 C ABI 对小 struct、较大 struct 参数和返回值有不同分类规则；后续若支持 extern struct，需要新增目标 C ABI classifier/lowering，而不是直接复用 NC struct 的 LLVM 类型声明。
+- 语法简单。
+- 不处理块注释嵌套和词法边界问题。
 
----
+## 构建与目标
 
-## 十三、注释
+我们要自带构建系统：
 
-**仅行注释，以 `#` 开头。**
+- `compile` 输出 LLVM IR。
+- `build` 输出对象文件、运行时对象和可执行文件。
+- 支持显式 target：`windows-x64`、`linux-x64`。
 
-```nc
-# 这是注释
-let x = 5   # 行尾注释
-```
+why：
 
-无块注释（`/* */`）。
+- NC 不应依赖用户手写 make/cmake 才能完成基本构建。
+- target 必须显式进入编译模型，FFI 和标准库都依赖它。
 
----
-
-## 十四、杂项汇总
-
-| 项 | 决策 |
-|-----|------|
-| 字符串插值 | `"Hello, {expr}"` |
-| 数值溢出 | 静默截断（wrapping，如 C） |
-| 空指针 | `*T` 非空；`?*T` 可为 `nil`；nullable deref 由类型系统禁止 |
-| 指针类型 | `*T` / `?*T`，不设 `*const T` |
-| 方法定义 | 任意模块可扩展，不可重名 |
-| 顶层变量 | 禁止跨模块使用 |
-| `if` 表达式 | 全部 `if` 都是表达式；无 `else` 时类型为 `void`；有 `else` 时分支类型一致 |
-| 条件循环 | 使用 `for condition { ... }`，无 `while` 关键字 |
-| block 表达式 | `{ statements; tail_expr }`，值来自尾表达式 |
-
-字符串插值 v1：
-
-- 插值段支持任意表达式：`"x={a + 1}"`、`"name={user.name}"`、`"v={f(1)}"`。
-- 编译期降为字符串拼接；非 `str` 插值表达式必须有 `str(...)` 转换规则，目前支持 `str`、`rune`、`bool`、整数和浮点。
-- 字符串里的字面量 `{` / `}` 写作 `{{` / `}}`。
-- 未闭合 `{`、空 `{}`、单个未转义 `}` 报编译错误。
-- `str[index]` 当前仍保持字节索引语义，返回 `i32`，本轮不改为 rune/codepoint 索引。
