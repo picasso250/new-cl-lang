@@ -4,6 +4,8 @@ import subprocess
 import sys
 import tempfile
 
+from compiler.target import get_target
+
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 
@@ -39,10 +41,11 @@ def test_default_build_outputs_llvm_ir_obj_and_exe():
         project = os.path.join(ROOT, "test_cases", "project_095_multifile")
         build = run_nc("build", project, cwd=tmp)
         assert build.returncode == 0, build.stderr
+        target = get_target()
         ll_path = os.path.join(tmp, "build", "main.ll")
-        obj_path = os.path.join(tmp, "build", "main.obj")
-        ncrt_obj_path = os.path.join(tmp, "build", "ncrt.obj")
-        exe_path = os.path.join(tmp, "build", "main.exe")
+        obj_path = os.path.join(tmp, "build", f"main{target.object_ext}")
+        ncrt_obj_path = os.path.join(tmp, "build", f"ncrt{target.object_ext}")
+        exe_path = os.path.join(tmp, "build", f"main{target.exe_ext}")
         assert os.path.exists(ll_path)
         assert os.path.exists(obj_path)
         assert os.path.exists(ncrt_obj_path)
