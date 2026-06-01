@@ -11,6 +11,7 @@ class SourceFile:
     path: str
     source: str
     ast: Program | None = None
+    trusted_stdlib: bool = False
 
 
 @dataclass

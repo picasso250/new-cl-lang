@@ -15,6 +15,9 @@ from compiler.ast import (
 from compiler.type_ref import rewrite_type
 
 BUILTIN_MODULES = {"io", "runtime", "fs", "os", "strings"}
+ROOT_DIR = os.path.dirname(os.path.dirname(__file__))
+STDLIB_DIR = os.path.join(ROOT_DIR, "stdlib")
+STDLIB_SOURCE_MODULES = {"fs"}
 
 
 def _expand_type_str(t: str, aliases: dict[str, str], stack: list[str]) -> str:
@@ -107,13 +110,13 @@ def _expand_type_aliases_in_module(module: Module):
             walk(stmt)
 
 
-def parse_module_sources(sources: "list[tuple[str, str]]") -> Module:
+def parse_module_sources(sources: "list[tuple[str, str]]", *, trusted_stdlib: bool = False) -> Module:
     """Parse source tuples as one directory module.
 
     当前语义仍是同目录多文件自动互见，但 SourceFile 边界会保留给诊断
     和后续 import/module namespace。
     """
-    source_files = [SourceFile(filename, source) for filename, source in sources]
+    source_files = [SourceFile(filename, source, trusted_stdlib=trusted_stdlib) for filename, source in sources]
     name, root = module_name_from_sources(source_files)
     module = Module(name, root, source_files)
     token_lists = []
@@ -124,6 +127,12 @@ def parse_module_sources(sources: "list[tuple[str, str]]") -> Module:
         imported_modules.update(_scan_imports(tokens))
     for source_file, tokens in zip(module.files, token_lists):
         source_file.ast = parse(tokens, imported_modules)
+        if trusted_stdlib:
+            for stmt in source_file.ast.statements:
+                if isinstance(stmt, ExternBlock):
+                    stmt.trusted_stdlib = True
+                    for fn in stmt.functions:
+                        fn.trusted_stdlib = True
         annotate_source_file(source_file.ast, source_file)
     _expand_type_aliases_in_module(module)
     return module
@@ -148,8 +157,9 @@ def _top_names(module: Module) -> set[str]:
             elif isinstance(stmt, (StructDecl, IfaceDecl, EnumDecl)):
                 names.add(stmt.name)
             elif isinstance(stmt, ExternBlock):
-                for fn in stmt.functions:
-                    names.add(fn.name)
+                if not getattr(stmt, "trusted_stdlib", False):
+                    for fn in stmt.functions:
+                        names.add(fn.name)
     return names
 
 
@@ -235,8 +245,6 @@ def _rewrite_module_names(module: Module, entry: bool):
 def parse_project_sources(sources: "list[tuple[str, str]]") -> Module:
     """Parse an entry directory and its imported sibling modules."""
     entry = parse_module_sources(sources)
-    if not entry.root:
-        return entry
     project_root = os.path.dirname(entry.root)
     loaded: dict[str, Module] = {}
     order: list[Module] = []
@@ -251,6 +259,12 @@ def parse_project_sources(sources: "list[tuple[str, str]]") -> Module:
         stack.append(module.name)
         loaded[module.name] = module
         for imp in _module_imports(module):
+            if imp.module_name in STDLIB_SOURCE_MODULES:
+                mod_dir = os.path.join(STDLIB_DIR, imp.module_name)
+                files = [os.path.join(mod_dir, n) for n in sorted(os.listdir(mod_dir)) if n.endswith(".nc")]
+                child = parse_module_sources([(file, open(file, encoding="utf-8").read()) for file in files], trusted_stdlib=True)
+                load(child)
+                continue
             if imp.module_name in BUILTIN_MODULES:
                 continue
             mod_dir = os.path.join(project_root, imp.module_name)

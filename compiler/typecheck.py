@@ -298,6 +298,8 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
     def validate_extern_function(fn):
         if fn.type_params:
             fail("generic extern functions are not supported", fn)
+        if getattr(fn, "trusted_stdlib", False):
+            return
         ret = fn.return_type or "void"
         if not is_extern_abi_type(ret):
             fail(f"extern function {fn.name}: unsupported return type {ret}", fn)
@@ -583,6 +585,15 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             obj_type = node.obj.type
             if is_nullable_pointer_type(obj_type):
                 fail(f"nullable pointer type {obj_type}: field access requires if p != nil narrowing", node)
+            if obj_type == "str":
+                if getattr(getattr(node, "source_file", None), "trusted_stdlib", False):
+                    if node.field == "ptr":
+                        node.type = "?*i8"
+                        return
+                    if node.field == "len":
+                        node.type = "u64"
+                        return
+                fail(f"str: unknown field {node.field}", node)
             if obj_type.startswith("*"):
                 obj_type = obj_type[1:]
             fields = symtab.lookup_struct(obj_type)
@@ -594,6 +605,10 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             for arg in node.args:
                 walk_expr(arg)
             obj_type = node.obj.type
+            if obj_type == "str" and node.method == "c_str":
+                require_arg_count(node.args, 0, "method c_str", node)
+                node.type = "*i8"
+                return
             if is_nullable_pointer_type(obj_type):
                 fail(f"nullable pointer type {obj_type}: method call requires if p != nil narrowing", node)
             if is_iface_type(obj_type):

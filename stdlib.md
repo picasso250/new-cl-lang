@@ -34,6 +34,8 @@
 
 `exists` 对不存在返回 `false`；其他操作失败会 `throw` 字符串错误。`mkdir` 只创建单级目录，`rename` 在目标已存在时失败。
 
+当前 `fs` 的公开 API 由编译器随附的 `stdlib/fs/fs.nc` 实现。读写文件的流程在 NC 源码中调用 C stdio extern；`exists/remove/rename/mkdir` 通过单独链接的 `ncfs` 平台 support 对象提供窄 C shim，不属于 `ncrt` 私有 ABI。
+
 ### os
 
 - `os.args(): []str`：返回包含程序自身路径的参数列表。
@@ -74,6 +76,12 @@ v1 不提供 `os.setenv`、`os.unsetenv`、`os.chdir`。
 - `size_of(T)`：编译期内建表达式，只接受类型实参，返回 `u64`。
 - `map[K,V]()`：内建泛型 map 构造形式。
 - 显式转换：`str(...)`、`i32(...)`、`rune(...)` 等目标类型函数式转换。
+
+## str C interop
+
+- `s.c_str(): *i8`：返回指向 `str` 内容的 NUL 终止 C 字符串指针。
+- `len(s)` 仍是 NC 字符串长度的权威；字符串内部允许 `NUL` 字节，C API 通过 `c_str()` 消费时会按 C 字符串规则在首个 `NUL` 处截断。
+- NC 创建的字符串 buffer 保证 `ptr[len] == 0`；空字符串或 `{ null, 0 }` 零值经 `c_str()` 返回共享空 C 字符串指针。
 
 ## map 边界
 

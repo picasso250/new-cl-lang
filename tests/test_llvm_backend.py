@@ -684,7 +684,18 @@ def test_llvm_build_writes_ir_obj_and_exe(tmp_path):
     assert os.path.exists(ll_path)
     assert os.path.exists(obj_path)
     assert os.path.exists(tmp_path / "ncrt.obj")
+    assert not os.path.exists(tmp_path / "ncfs.obj")
     assert os.path.exists(exe_path)
     result = subprocess.run([exe_path], capture_output=True, text=True)
     assert result.stdout.strip() == "42"
+    assert result.returncode == 0
+
+
+def test_llvm_build_links_fs_support_when_stdlib_fs_is_imported(tmp_path):
+    data_path = str(tmp_path / "data.txt").replace("\\", "/")
+    llvm_ir = compile_nc_to_llvm_ir(f'import fs\nfun main() {{ fs.write_file("{data_path}", "ok") }}')
+    _ll_path, _obj_path, exe_path = build_llvm_ir(llvm_ir, str(tmp_path / "build"), "main")
+    assert os.path.exists(tmp_path / "build" / "ncrt.obj")
+    assert os.path.exists(tmp_path / "build" / "ncfs.obj")
+    result = subprocess.run([exe_path], capture_output=True, text=True)
     assert result.returncode == 0

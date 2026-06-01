@@ -20,32 +20,6 @@ def infer_builtin_call(node, require_arg_count, require_type, fail) -> str | Non
     if name in {"io.print", "io.println"}:
         require_arg_count(args, 1, name, node)
         return "void"
-    if name == "fs.read_file":
-        require_arg_count(args, 1, "fs.read_file", node)
-        require_type(args[0].type, "str", "fs.read_file path", node)
-        return "str"
-    if name == "fs.write_file":
-        require_arg_count(args, 2, "fs.write_file", node)
-        require_type(args[0].type, "str", "fs.write_file path", node)
-        require_type(args[1].type, "str", "fs.write_file content", node)
-        return "void"
-    if name == "fs.exists":
-        require_arg_count(args, 1, "fs.exists", node)
-        require_type(args[0].type, "str", "fs.exists path", node)
-        return "bool"
-    if name == "fs.remove":
-        require_arg_count(args, 1, "fs.remove", node)
-        require_type(args[0].type, "str", "fs.remove path", node)
-        return "void"
-    if name == "fs.rename":
-        require_arg_count(args, 2, "fs.rename", node)
-        require_type(args[0].type, "str", "fs.rename old_path", node)
-        require_type(args[1].type, "str", "fs.rename new_path", node)
-        return "void"
-    if name == "fs.mkdir":
-        require_arg_count(args, 1, "fs.mkdir", node)
-        require_type(args[0].type, "str", "fs.mkdir path", node)
-        return "void"
     if name == "os.args":
         require_arg_count(args, 0, "os.args", node)
         return "[]str"

@@ -7,7 +7,7 @@
 | 项 | 决策 |
 |-----|------|
 | 编译目标 | **LLVM** 是唯一后端 |
-| 运行时 | **自带运行时库**（GC）；LLVM 后端链接由 `runtime/ncrt.c` 编译出的静态对象 |
+| 运行时 | **自带运行时库**（GC）；LLVM 后端链接由 `runtime/ncrt.c` 编译出的静态对象，按导入标准库需求追加小型 support 对象 |
 | 性能级别 | **Go 级性能**即可（非 C 级零开销），接受胖指针、间接调用 |
 | 调试 | 迁移期保留 NC 行号 → 生成产物定位；LLVM 后端后续接 debug metadata |
 | 内存管理 | **GC**（自动管理，不搞所有权 / borrow checker） |
@@ -50,7 +50,7 @@ import io                # 内置标准模块，不要求存在同级 io/ 目录
 - CLI 目标目录是入口模块目录；`import foo` 解析为入口模块目录的同级 `foo/` 目录。
 - 只支持一级模块名：`import foo`。不支持 `import foo.bar`、`import "net/http"`、`import foo { serve }`、别名导入。
 - import 只能出现在顶层。
-- `io`、`fs`、`os`、`runtime` 与 `strings` 是保留的内置标准模块名；标准库模块与语言级 builtin 的公开边界见 `stdlib.md`。
+- `io`、`fs`、`os`、`runtime` 与 `strings` 是保留的内置标准模块名；其中 `fs` 由编译器随附的 NC 标准库源码实现并优先于同级 `fs/` 目录；标准库模块与语言级 builtin 的公开边界见 `stdlib.md`。
 - 导入模块后，跨模块符号必须命名空间限定访问：`foo.add()`、`foo.User`、`foo.User { ... }`、`new foo.User { ... }`、`foo.Color::Red`。
 - 同目录 `.nc` 文件仍自动共享命名空间，无需 import。
 - 导入图递归加载；重复 import 只加载一次；import cycle 报错。
@@ -66,8 +66,8 @@ import io                # 内置标准模块，不要求存在同级 io/ 目录
 
 - LLVM 是唯一后端：`compile` 输出 LLVM IR，`build` 输出 `build/main.ll`、`build/main.obj`、`build/ncrt.obj` 与 `build/main.exe`。
 - `--backend` 入口已删除；显式传入 `--backend` 会报错。旧 C 后端和旧 `compile_nc_to_c` / `run_c_code` / `build_c_code` API 不保留向前兼容。
-- LLVM 后端 v1 当前承诺基础闭环：基础数值/bool 类型、`str` 字面量/索引/切片/拼接、数值转换、`str(i32)`、`i32(str)`、`len(str)`、`str ==/!=`、定长数组字面量/索引/索引赋值、slice layout/literal/index/`len`/`cap`/`append`/`copy`/`clear`、定长数组与 slice 切片复制、slice `for i, item in s`、struct 值类型声明/字面量/字段读写/参数与返回、heap struct `new`、指针 receiver 方法声明/调用、nullable pointer `nil`/`!= nil` 窄化后字段与方法访问、enum tag/variant/比较、整数/字符串/bool/enum `match` 表达式、block 表达式、算术/比较、`let`、重赋值、函数、显式 `return` 与尾表达式返回、`if`、条件 `for`、range `for i in start..end`、`break`、`fs.read_file`/`fs.write_file`/`fs.exists`/`fs.remove`/`fs.rename`/`fs.mkdir`、`os.args`/`os.getenv`/`os.has_env`/`os.cwd`/`os.exit`、`strings.contains`/`strings.starts_with`/`strings.ends_with`/`strings.index`、`map[K,V]` 的构造/读写/`map_has`/`delete`/`clear`/`len(map)`、函数调用与 `io.println`。
-- LLVM 后端链接 `runtime/ncrt.h` + `runtime/ncrt.c` 编译出的 `ncrt.obj`。`ncrt` 固定基础 ABI：`str`、`nc_map`、`nc_slice_raw`、`__nc_gc_alloc`/`__nc_gc_collect`/`__nc_gc_live`、root slot、字符串/file/cast/map helper、字节级 slice append/copy helper 与 C 异常入口。除 `runtime.gc_collect()` / `runtime.gc_live()` 外，其他 `ncrt` helper 都是编译器私有 ABI。`[]T` 语言布局仍为 `{ T* ptr; u64 len; u64 cap }`，`elem_size` 仅作为 runtime helper 调用参数传入，不进入 slice header。
+- LLVM 后端 v1 当前承诺基础闭环：基础数值/bool 类型、`str` 字面量/索引/切片/拼接/`c_str()`、数值转换、`str(i32)`、`i32(str)`、`len(str)`、`str ==/!=`、定长数组字面量/索引/索引赋值、slice layout/literal/index/`len`/`cap`/`append`/`copy`/`clear`、定长数组与 slice 切片复制、slice `for i, item in s`、struct 值类型声明/字面量/字段读写/参数与返回、heap struct `new`、指针 receiver 方法声明/调用、nullable pointer `nil`/`!= nil` 窄化后字段与方法访问、enum tag/variant/比较、整数/字符串/bool/enum `match` 表达式、block 表达式、算术/比较、`let`、重赋值、函数、显式 `return` 与尾表达式返回、`if`、条件 `for`、range `for i in start..end`、`break`、编译器随附 NC stdlib `fs`、`os.args`/`os.getenv`/`os.has_env`/`os.cwd`/`os.exit`、`strings.contains`/`strings.starts_with`/`strings.ends_with`/`strings.index`、`map[K,V]` 的构造/读写/`map_has`/`delete`/`clear`/`len(map)`、函数调用与 `io.println`。
+- LLVM 后端链接 `runtime/ncrt.h` + `runtime/ncrt.c` 编译出的 `ncrt.obj`。`ncrt` 固定基础 ABI：`str`、`nc_map`、`nc_slice_raw`、`__nc_gc_alloc`/`__nc_gc_collect`/`__nc_gc_live`、root slot、字符串/cast/map helper、字节级 slice append/copy helper 与 C 异常入口。除 `runtime.gc_collect()` / `runtime.gc_live()` 外，其他 `ncrt` helper 都是编译器私有 ABI。导入 `fs` 时额外链接 `runtime/ncfs.c` 编译出的 `ncfs.obj`，只承载 C 标准库无法直接表达或与公开 API 命名冲突的窄平台 shim。`[]T` 语言布局仍为 `{ T* ptr; u64 len; u64 cap }`，`elem_size` 仅作为 runtime helper 调用参数传入，不进入 slice header。
 - LLVM `map[K,V]` 当前运行时布局匹配 `ncrt.h` 的私有 `nc_map`：`{ entries, cap, len, tombstones }`，entries 在 LLVM 侧为 opaque pointer；get/set/has 统一调用 `ncrt` tagged scalar 哈希表实现，`len(map)` 读取 len 字段。
 - LLVM slice、map、closure env、heap struct 与运行时构造字符串的动态存储统一通过外部 `__nc_gc_alloc` 分配；该入口由 `ncrt.obj` 提供。共享 `ncrt` 当前实现显式 mark-sweep GC：`gc_collect()` 从已注册 root slot 出发标记可达块，保守扫描已标记 heap payload 内的 machine word，释放不可达块；`gc_live()` 返回当前存活 GC block 数。
 - LLVM 后端负责为持有 GC 指针的栈槽注册 root：`str.ptr`、`[]T.ptr`、`nc_map.entries`、`*T/?*T`、function value `env`、struct 字段和定长数组元素。LLVM 函数/closure 会为参数、receiver、closure env、局部变量、返回槽、catch/throw 值注册 root，并在所有出口 rewind 到函数入口 mark。
@@ -127,7 +127,7 @@ void                        # 空
 
 | 类型 | C 层面布局 |
 |------|-----------|
-| `str` | builtin scalar/runtime value type，LLVM/ncrt 布局为 `{ u8* ptr; u64 len }` |
+| `str` | builtin scalar/runtime value type，LLVM/ncrt 布局为 `{ u8* ptr; u64 len }`；NC 创建的 buffer 保证 `ptr[len] == 0` |
 | `[]T` | `{ T* ptr; u64 len; u64 cap }` |
 | `map[K,V]` | 编译器私有 `nc_map`，布局为 `{ entries; i64 cap; i64 len; i64 tombstones }` |
 | `[N]T` | 内联在 struct/栈中，如 C 数组 |
@@ -158,6 +158,8 @@ map 语义：
 - 设计备注：`map_has(m, k)` 是当前 v1 builtin 边界，主要为了和现有 builtin 流水线保持一致；最终表面语法更倾向 `m.has(k)`。引入 `m.has(k)` 需要先明确“内建类型方法”的统一规则，避免只为 map 特判方法解析。
 
 `size_of(T)` 是语言级编译期内建表达式，只接受类型实参，不调用用户函数，返回类型为 `u64`。它返回当前 LLVM/ncrt ABI 下类型 `T` 的运行时布局大小：基础标量按实际宽度，`str` 为 16，`[]T` 为 24，`map[K,V]` 为 32，函数值与接口值为 16，指针与 nullable pointer 为 8，enum/rune 为 4，数组按元素 ABI stride 乘长度，struct 按字段偏移、padding 和最终对齐计算。`size_of(void)` 非法；命名/限定类型必须存在且遵守跨模块 `_` 私有可见性；嵌套类型组件会递归校验。
+
+`str` 提供内建方法 `s.c_str(): *i8` 作为 C interop 边界。它返回 `s.ptr`；若字符串为 `{ null, 0 }`，则返回共享空 C 字符串。`len(s)` 仍是 NC 字符串长度权威；内部 NUL 字节允许存在，但 C API 通过 `c_str()` 消费时会按 C 字符串规则截断。
 
 ### 4.3 零值（Go 式）
 

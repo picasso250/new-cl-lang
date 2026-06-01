@@ -566,3 +566,9 @@
 - 预备拆分标准库/内置函数边界文档与测试目录：新增 stdlib.md，design.md 只保留索引；将标准库/语言级 builtin 专项 case 迁到 stdlib_cases/；抽共享 case runner 并拆分 language/std lib 测试入口。
 
 - 已拆分标准库/内置函数边界文档与测试目录：新增 stdlib.md 记录 io/fs/os/runtime/strings 与语言级 builtin 边界；design.md 改为索引引用；抽 tests/case_runner.py，共享 # STDOUT/# STDERR/# RC/# ERROR 解析、并发和单文件运行逻辑；新增 tests/test_language_cases.py 与 tests/test_stdlib.py，删除误导性的 tests/test_basic.py，worker 统一为 NC_TEST_WORKERS；迁移 40 个标准库/语言 builtin 专项 case 到 stdlib_cases/ 并保留历史编号。验证通过：python tests/test_language_cases.py；python tests/test_stdlib.py；python -m pytest tests/test_language_cases.py tests/test_stdlib.py -q；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_type_ref.py -q；python tests/test_stdlib.py case_245_strings_queries.nc。
+
+- 预备推进 fs 向 NC 标准库迁移：新增 str.c_str() 作为 C interop 字符串出口，保持 str 两字段布局但强化 NC 字符串 NUL 终止不变式；引入编译器内置 stdlib NC 源加载，把 fs 从 compiler builtin lowering 移到标准库源码和独立 C support shim；同步 case、边界测试、文档并提交。
+
+- 已推进 fs 向 NC 标准库迁移：新增 str.c_str(): *i8，LLVM 降为非空 C 字符串指针并为零值字符串返回共享空串；NC 字符串分配新增最小私有 __nc_str_alloc_out 以保持 ptr[len] == 0。新增编译器随附 stdlib/fs/fs.nc，s.read_file/write_file 的文件流程改由 NC 源码调用 C stdio extern；xists/remove/rename/mkdir 通过独立
+untime/ncfs.c support 对象承载平台/命名冲突 shim，
+crt 中旧 fs helper 已移除。更新文档与边界测试，新增 case_248_str_c_str 和 fs support 链接测试。验证通过：python tests/test_language_cases.py；python tests/test_stdlib.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_type_ref.py -q。

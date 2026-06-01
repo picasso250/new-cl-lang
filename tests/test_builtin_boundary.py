@@ -21,16 +21,16 @@ def test_typecheck_uses_builtin_boundary():
     assert 'node.name == "delete"' not in source
 
 
-def test_io_output_builtins_are_std_module_qualified():
+def test_std_module_builtins_are_explicitly_bounded():
     source = _read("compiler/builtins.py")
 
     assert 'name in {"io.print", "io.println"}' in source
-    assert 'name == "fs.read_file"' in source
-    assert 'name == "fs.write_file"' in source
-    assert 'name == "fs.exists"' in source
-    assert 'name == "fs.remove"' in source
-    assert 'name == "fs.rename"' in source
-    assert 'name == "fs.mkdir"' in source
+    assert 'name == "fs.read_file"' not in source
+    assert 'name == "fs.write_file"' not in source
+    assert 'name == "fs.exists"' not in source
+    assert 'name == "fs.remove"' not in source
+    assert 'name == "fs.rename"' not in source
+    assert 'name == "fs.mkdir"' not in source
     assert 'name == "os.args"' in source
     assert 'name == "os.getenv"' in source
     assert 'name == "os.has_env"' in source
@@ -59,7 +59,7 @@ def test_llvm_declares_external_ncrt_symbols():
     source = _read("compiler/llvm_codegen.py")
 
     assert "__nc_gc_alloc" in source
-    assert "__nc_read_file" in source
-    assert "__nc_fs_exists" in source
+    assert "__nc_read_file" not in source
+    assert "__nc_fs_exists" not in source
     assert "__nc_str_contains" in source
     assert "__nc_map_init" in source
