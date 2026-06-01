@@ -1,5 +1,8 @@
 import os
 import subprocess
+import sys
+
+import pytest
 
 from compiler import build_llvm_ir, compile_nc_sources_with_libs, compile_nc_to_llvm_ir, run_llvm_ir
 
@@ -37,9 +40,11 @@ fun main() {
     io.println(os.has_env("NC_OS_TEST_MISSING"))
 }
 """
-    llvm_ir = compile_nc_to_llvm_ir(source)
+    llvm_ir, link_libs, support_c_sources = compile_nc_sources_with_libs([("<memory>", source)])
     stdout, stderr, rc = run_llvm_ir(
         llvm_ir,
+        link_libs,
+        support_c_sources,
         args=["alpha"],
         env={"NC_OS_TEST_SET": "value", "NC_OS_TEST_EMPTY": ""},
     )
@@ -657,6 +662,32 @@ fun main() {}
     assert support_c_sources == []
 
 
+def test_bare_extern_lib_name_is_collected():
+    _llvm_ir, link_libs, _support_c_sources = compile_nc_sources_with_libs([("<memory>", """
+extern "m" {
+    fun fabs(x: f64): f64
+}
+fun main() {}
+""")])
+    assert link_libs == ["m"]
+
+
+@pytest.mark.skipif(not sys.platform.startswith("win"), reason="kernel32 is a Windows linker library")
+def test_windows_bare_extern_links_kernel32():
+    source = """import io
+extern "kernel32" {
+    fun GetCurrentProcessId(): i32
+}
+fun main() {
+    let pid = GetCurrentProcessId()
+    io.println(pid > 0)
+}
+"""
+    llvm_ir, link_libs, support_c_sources = compile_nc_sources_with_libs([("<memory>", source)], target_name="windows-x64")
+    stdout, stderr, rc = run_llvm_ir(llvm_ir, link_libs, support_c_sources, target_name="windows-x64")
+    assert (stdout.strip(), stderr.strip(), rc) == ("1", "", 0)
+
+
 def test_llvm_links_external_lib_path(tmp_path):
     helper_c = tmp_path / "helper.c"
     helper_obj = tmp_path / "helper.o"
@@ -684,9 +715,10 @@ def test_llvm_build_writes_ir_obj_and_exe(tmp_path):
     ll_path, obj_path, exe_path = build_llvm_ir(llvm_ir, str(tmp_path), "main")
     assert os.path.exists(ll_path)
     assert os.path.exists(obj_path)
-    assert os.path.exists(tmp_path / "ncrt.obj")
+    ext = ".obj" if sys.platform.startswith("win") else ".o"
+    assert os.path.exists(tmp_path / f"ncrt{ext}")
     assert not os.path.exists(tmp_path / "ncfs.obj")
-    assert not os.path.exists(tmp_path / "fs.obj")
+    assert not os.path.exists(tmp_path / f"fs{ext}")
     assert os.path.exists(exe_path)
     result = subprocess.run([exe_path], capture_output=True, text=True)
     assert result.stdout.strip() == "42"
@@ -699,9 +731,10 @@ def test_llvm_build_links_fs_support_when_stdlib_fs_is_imported(tmp_path):
         ("<memory>", f'import fs\nfun main() {{ fs.write_file("{data_path}", "ok") }}')
     ])
     _ll_path, _obj_path, exe_path = build_llvm_ir(llvm_ir, str(tmp_path / "build"), "main", link_libs, support_c_sources)
-    assert os.path.exists(tmp_path / "build" / "ncrt.obj")
-    assert not os.path.exists(tmp_path / "build" / "ncfs.obj")
-    assert os.path.exists(tmp_path / "build" / "fs.obj")
+    ext = ".obj" if sys.platform.startswith("win") else ".o"
+    assert os.path.exists(tmp_path / "build" / f"ncrt{ext}")
+    assert not os.path.exists(tmp_path / "build" / f"ncfs{ext}")
+    assert os.path.exists(tmp_path / "build" / f"fs{ext}")
     result = subprocess.run([exe_path], capture_output=True, text=True)
     assert result.returncode == 0
 
@@ -719,3 +752,29 @@ fun main() {
     assert link_libs == []
     assert len(support_c_sources) == 1
     assert support_c_sources[0].replace("\\", "/").endswith("/stdlib/fs/fs.c")
+
+
+def test_linux_module_rejected_on_windows_target():
+    with pytest.raises(RuntimeError, match="module 'linux' is only available"):
+        compile_nc_sources_with_libs([("<memory>", "import linux\nfun main() {}")], target_name="windows-x64")
+
+
+def test_linux_target_emits_linux_triple():
+    llvm_ir = compile_nc_sources_with_libs([("<memory>", "fun main() {}")], target_name="linux-x64")[0]
+    assert 'target triple = "x86_64-pc-linux-gnu"' in llvm_ir
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="linux stdlib runs only on Linux")
+def test_linux_stdlib_syscalls():
+    source = """import linux
+fun main() {
+    let pid = linux.getpid()
+    if pid <= 0 {
+        throw "bad pid"
+    }
+    linux.write_str(1, "A\\n")
+}
+"""
+    llvm_ir, link_libs, support_c_sources = compile_nc_sources_with_libs([("<memory>", source)], target_name="linux-x64")
+    stdout, stderr, rc = run_llvm_ir(llvm_ir, link_libs, support_c_sources, target_name="linux-x64")
+    assert (stdout.strip(), stderr.strip(), rc) == ("A", "", 0)

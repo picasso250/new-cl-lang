@@ -586,3 +586,11 @@ crt 中旧 fs helper 已移除。更新文档与边界测试，新增 case_248_s
 - 预备将标准库 strings 与 os 迁到 NC 源码：strings 用纯 NC 字节级实现；os 用 stdlib/os/os.nc 加窄 runtime 启动参数入口和 C 字符串转 str，io 暂不动。
 
 - 已将标准库 strings 与 os 迁到 NC 源码：新增 stdlib/strings/strings.nc 纯 NC 字节级查询实现，新增 stdlib/os/os.nc 通过 extern alias 调用 getenv/_getcwd/exit 与 ncrt 启动参数 helper；compiler builtin/LLVM lowering 中移除 strings/os 特判，ncrt 删除旧 strings/os 高层 helper，仅保留 C 字符串复制与 argc/argv 窄入口。验证通过：python tests/test_stdlib.py；python tests/test_language_cases.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_type_ref.py -q。
+
+## 2026-06-01
+
+- 预备实现 target-aware FFI/CI v1：新增 windows-x64/linux-x64 显式 target，按 target 选择 LLVM triple、产物扩展名、runtime/support C 编译和 extern 链接参数；新增 linux 标准库 syscall surface，并让 os.cwd 在 Windows/Linux 下分别调用 _getcwd/getcwd。
+
+- 已实现 target-aware FFI/CI v1：新增 TargetSpec 与 CLI --target，windows-x64/linux-x64 分别选择 LLVM triple、对象/可执行扩展名、runtime/support C 缓存和 bare extern 库名解析；Windows 可用 extern "kernel32" 链接 import lib，Linux 可用 extern "m" 解析为 -lm。
+- 已新增 linux 标准库模块：linux.getpid/linux.write/linux.write_str 仅 linux-x64 可导入，通过 stdlib/linux/linux.c 使用 Linux syscall；os.cwd 改为 stdlib/os/os.c target shim，Windows 调 _getcwd、Linux 调 getcwd；新增 requirements.txt 与 Linux GitHub Actions。
+- 验证通过：python -m pytest tests/test_llvm_backend.py -q；python tests/test_language_cases.py；python tests/test_stdlib.py；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_type_ref.py -q；python nc.py compile --target windows-x64/linux-x64 -c 'fun main() {}'；python nc.py build --target windows-x64 -c 'fun main() {}'；unsupported target 按预期报错。

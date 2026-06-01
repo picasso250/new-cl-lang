@@ -10,7 +10,7 @@
 
 ## import 规则
 
-- 标准库一级内置模块名：`io`、`fs`、`os`、`runtime`、`strings`。
+- 标准库一级内置模块名：`io`、`fs`、`os`、`runtime`、`strings`、`linux`。
 - `import foo` 优先解析同级目录模块；内置标准模块名保留，导入这些名字时不查找同级目录。
 - 编译器随附的 NC 标准库源码模块会递归加载自身 import；用户同级目录仍不能覆盖保留标准模块名。
 - 标准库源码模块可带同名 C support 文件：若实际导入 `stdlib/<name>/<name>.nc` 所在模块，且存在 `stdlib/<name>/<name>.c`，构建系统会自动编译并链接该 C 文件。该机制只对编译器随附标准库生效，不扩展到用户项目的 `foo/foo.c`。
@@ -48,7 +48,15 @@
 
 v1 不提供 `os.setenv`、`os.unsetenv`、`os.chdir`。
 
-当前 `os` 的公开 API 由编译器随附的 `stdlib/os/os.nc` 实现。`args` 通过 `ncrt` 私有启动参数 helper 读取 LLVM `main(argc, argv)` 保存的参数；`getenv`/`has_env`/`cwd`/`exit` 通过 extern alias 调用当前 Windows/MinGW C runtime 符号。
+当前 `os` 的公开 API 由编译器随附的 `stdlib/os/os.nc` 实现。`args` 通过 `ncrt` 私有启动参数 helper 读取 LLVM `main(argc, argv)` 保存的参数；`getenv`/`has_env`/`exit` 通过 extern alias 调用 C runtime 符号，`cwd` 通过同目录 `stdlib/os/os.c` 私有 shim 在 Windows 调 `_getcwd`、Linux 调 `getcwd`。
+
+### linux
+
+- `linux.getpid(): i32`
+- `linux.write(fd: i32, data: []u8): i64`
+- `linux.write_str(fd: i32, data: str): i64`
+
+`linux` 只在 `--target linux-x64` 下可导入；在 Windows target 下导入会编译报错。当前实现由 `stdlib/linux/linux.nc` 调用同目录 `linux.c` 私有 shim，shim 在 C 侧使用 Linux x64 用户态 `syscall`，暂不暴露 NC varargs 或指针整数转换能力。
 
 ### runtime
 

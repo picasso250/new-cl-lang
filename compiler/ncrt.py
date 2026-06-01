@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import uuid
+from compiler.target import TargetSpec, get_target
 
 ROOT_DIR = os.path.dirname(os.path.dirname(__file__))
 RUNTIME_DIR = os.path.join(ROOT_DIR, "runtime")
@@ -17,24 +18,25 @@ _NCRT_CACHE: dict[str, str] = {}
 _SUPPORT_CACHE: dict[str, str] = {}
 
 
-def _ncrt_cache_key() -> str:
+def _ncrt_cache_key(target: TargetSpec) -> str:
     digest = hashlib.sha256()
+    digest.update(target.name.encode("utf-8"))
     for path in (NCRT_C, NCRT_H):
         with open(path, "rb") as f:
             digest.update(f.read())
     return digest.hexdigest()
 
 
-def _cached_ncrt_obj() -> str:
-    key = _ncrt_cache_key()
+def _cached_ncrt_obj(target: TargetSpec) -> str:
+    key = _ncrt_cache_key(target)
     cached = _NCRT_CACHE.get(key)
     if cached and os.path.exists(cached):
         return cached
 
     os.makedirs(NCRT_CACHE_DIR, exist_ok=True)
-    obj_path = os.path.join(NCRT_CACHE_DIR, f"ncrt-{key}.obj")
+    obj_path = os.path.join(NCRT_CACHE_DIR, f"ncrt-{target.name}-{key}{target.object_ext}")
     if not os.path.exists(obj_path):
-        tmp_path = os.path.join(NCRT_CACHE_DIR, f"ncrt-{key}.{os.getpid()}.{uuid.uuid4().hex}.tmp.obj")
+        tmp_path = os.path.join(NCRT_CACHE_DIR, f"ncrt-{target.name}-{key}.{os.getpid()}.{uuid.uuid4().hex}.tmp{target.object_ext}")
         result = subprocess.run(
             ["gcc", "-c", NCRT_C, "-o", tmp_path],
             capture_output=True,
@@ -52,16 +54,18 @@ def _cached_ncrt_obj() -> str:
     return obj_path
 
 
-def build_ncrt_obj(out_dir: str) -> str:
+def build_ncrt_obj(out_dir: str, target_name: str | None = None) -> str:
+    target = get_target(target_name)
     os.makedirs(out_dir, exist_ok=True)
-    obj_path = os.path.join(out_dir, "ncrt.obj")
-    shutil.copyfile(_cached_ncrt_obj(), obj_path)
+    obj_path = os.path.join(out_dir, f"ncrt{target.object_ext}")
+    shutil.copyfile(_cached_ncrt_obj(target), obj_path)
     return obj_path
 
 
-def _support_cache_key(label: str, c_path: str, include_dirs: list[str]) -> str:
+def _support_cache_key(label: str, c_path: str, include_dirs: list[str], target: TargetSpec) -> str:
     digest = hashlib.sha256()
     digest.update(label.encode("utf-8"))
+    digest.update(target.name.encode("utf-8"))
     cmd = ["gcc", "-c", os.path.abspath(c_path), *[f"-I{os.path.abspath(d)}" for d in include_dirs]]
     digest.update("\0".join(cmd).encode("utf-8"))
     paths = [os.path.abspath(c_path), NCRT_H]
@@ -78,17 +82,17 @@ def _support_cache_key(label: str, c_path: str, include_dirs: list[str]) -> str:
     return digest.hexdigest()
 
 
-def _cached_c_obj(label: str, c_path: str, include_dirs: list[str]) -> str:
+def _cached_c_obj(label: str, c_path: str, include_dirs: list[str], target: TargetSpec) -> str:
     c_path = os.path.abspath(c_path)
-    key = _support_cache_key(label, c_path, include_dirs)
+    key = _support_cache_key(label, c_path, include_dirs, target)
     cached = _SUPPORT_CACHE.get(key)
     if cached and os.path.exists(cached):
         return cached
 
     os.makedirs(SUPPORT_CACHE_DIR, exist_ok=True)
-    obj_path = os.path.join(SUPPORT_CACHE_DIR, f"{label}-{key}.obj")
+    obj_path = os.path.join(SUPPORT_CACHE_DIR, f"{label}-{target.name}-{key}{target.object_ext}")
     if not os.path.exists(obj_path):
-        tmp_path = os.path.join(SUPPORT_CACHE_DIR, f"{label}-{key}.{os.getpid()}.{uuid.uuid4().hex}.tmp.obj")
+        tmp_path = os.path.join(SUPPORT_CACHE_DIR, f"{label}-{target.name}-{key}.{os.getpid()}.{uuid.uuid4().hex}.tmp{target.object_ext}")
         cmd = ["gcc", "-c", c_path, "-o", tmp_path] + [f"-I{d}" for d in include_dirs]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
@@ -103,7 +107,8 @@ def _cached_c_obj(label: str, c_path: str, include_dirs: list[str]) -> str:
     return obj_path
 
 
-def build_support_c_objs(out_dir: str, support_c_sources: list[str] | None) -> list[str]:
+def build_support_c_objs(out_dir: str, support_c_sources: list[str] | None, target_name: str | None = None) -> list[str]:
+    target = get_target(target_name)
     os.makedirs(out_dir, exist_ok=True)
     result = []
     seen: set[str] = set()
@@ -114,8 +119,8 @@ def build_support_c_objs(out_dir: str, support_c_sources: list[str] | None) -> l
         seen.add(abs_path)
         label = os.path.splitext(os.path.basename(abs_path))[0]
         include_dirs = [RUNTIME_DIR, os.path.dirname(abs_path)]
-        obj_path = os.path.join(out_dir, f"{label}.obj")
-        shutil.copyfile(_cached_c_obj(label, abs_path, include_dirs), obj_path)
+        obj_path = os.path.join(out_dir, f"{label}{target.object_ext}")
+        shutil.copyfile(_cached_c_obj(label, abs_path, include_dirs, target), obj_path)
         result.append(obj_path)
     return result
 

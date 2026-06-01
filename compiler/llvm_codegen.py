@@ -21,6 +21,7 @@ from compiler.ast import (
 )
 from compiler.names import safe_user_ident
 from compiler.ncrt import build_ncrt_obj, build_support_c_objs
+from compiler.target import TargetSpec, get_target
 from compiler.type_ref import parse_array_type, parse_fn_type, parse_map_type, parse_slice_type
 
 
@@ -44,7 +45,6 @@ NC_VAL_TAGS = {
     "u8": 5, "u16": 6, "u32": 7, "u64": 8,
     "f32": 9, "f64": 10, "bool": 11, "rune": 12, "str": 13,
 }
-DEFAULT_TRIPLE = "x86_64-w64-windows-gnu"
 I8PTR = ir.IntType(8).as_pointer()
 STR_TYPE = ir.LiteralStructType([I8PTR, ir.IntType(64)])
 MAP_TYPE = ir.LiteralStructType([I8PTR, ir.IntType(64), ir.IntType(64), ir.IntType(64)])
@@ -260,9 +260,10 @@ def llvm_type(nc_type: str | None):
 
 
 class LLVMCodegen:
-    def __init__(self):
+    def __init__(self, target: TargetSpec | None = None):
+        self.target = target or get_target()
         self.module = ir.Module(name="nc")
-        self.module.triple = DEFAULT_TRIPLE
+        self.module.triple = self.target.triple
         self.builder = None
         self.func = None
         self.vars: dict[str, tuple[ir.AllocaInstr, str]] = {}
@@ -2285,14 +2286,15 @@ class LLVMCodegen:
         raise NotImplementedError(f"LLVM backend v1 cannot cast {from_type} to {to_type}")
 
 
-def generate_llvm_ir(program) -> str:
-    return LLVMCodegen().generate(program)
+def generate_llvm_ir(program, target_name: str | None = None) -> str:
+    return LLVMCodegen(get_target(target_name)).generate(program)
 
 
-def object_from_llvm_ir(llvm_ir: str) -> bytes:
+def object_from_llvm_ir(llvm_ir: str, target_name: str | None = None) -> bytes:
+    target_spec = get_target(target_name)
     binding.initialize_all_targets()
     binding.initialize_all_asmprinters()
-    target = binding.Target.from_triple(DEFAULT_TRIPLE)
+    target = binding.Target.from_triple(target_spec.triple)
     tm = target.create_target_machine(reloc="static")
     backing = binding.parse_assembly(llvm_ir)
     backing.verify()
@@ -2305,19 +2307,21 @@ def build_llvm_ir(
     name: str = "main",
     link_libs: list[str] | None = None,
     support_c_sources: list[str] | None = None,
+    target_name: str | None = None,
 ) -> tuple[str, str, str]:
+    target_spec = get_target(target_name)
     os.makedirs(out_dir, exist_ok=True)
     ll_path = os.path.join(out_dir, f"{name}.ll")
-    obj_path = os.path.join(out_dir, f"{name}.obj")
-    exe_path = os.path.join(out_dir, f"{name}.exe")
-    ncrt_obj = build_ncrt_obj(out_dir)
-    support_objs = build_support_c_objs(out_dir, support_c_sources)
+    obj_path = os.path.join(out_dir, f"{name}{target_spec.object_ext}")
+    exe_path = os.path.join(out_dir, f"{name}{target_spec.exe_ext}")
+    ncrt_obj = build_ncrt_obj(out_dir, target_spec.name)
+    support_objs = build_support_c_objs(out_dir, support_c_sources, target_spec.name)
     with open(ll_path, "w", encoding="utf-8") as f:
         f.write(llvm_ir)
     with open(obj_path, "wb") as f:
-        f.write(object_from_llvm_ir(llvm_ir))
+        f.write(object_from_llvm_ir(llvm_ir, target_spec.name))
     link_inputs = [obj_path, ncrt_obj, *support_objs]
-    link_cmd = ["gcc", *link_inputs, "-o", exe_path] + list(link_libs or [])
+    link_cmd = ["gcc", *link_inputs, "-o", exe_path] + [target_spec.resolve_link_lib(lib) for lib in list(link_libs or [])]
     result = subprocess.run(link_cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"LLVM object link failed:\n{result.stderr}")
@@ -2330,9 +2334,10 @@ def run_llvm_ir(
     support_c_sources: list[str] | None = None,
     args: list[str] | None = None,
     env: dict[str, str] | None = None,
+    target_name: str | None = None,
 ) -> tuple[str, str, int]:
     with tempfile.TemporaryDirectory() as tmpdir:
-        _ll, _obj, exe = build_llvm_ir(llvm_ir, tmpdir, "out", link_libs, support_c_sources)
+        _ll, _obj, exe = build_llvm_ir(llvm_ir, tmpdir, "out", link_libs, support_c_sources, target_name=target_name)
         run_env = os.environ.copy()
         if env is not None:
             run_env.update(env)

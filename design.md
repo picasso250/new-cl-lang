@@ -50,7 +50,7 @@ import io                # 内置标准模块，不要求存在同级 io/ 目录
 - CLI 目标目录是入口模块目录；`import foo` 解析为入口模块目录的同级 `foo/` 目录。
 - 只支持一级模块名：`import foo`。不支持 `import foo.bar`、`import "net/http"`、`import foo { serve }`、别名导入。
 - import 只能出现在顶层。
-- `io`、`fs`、`os`、`runtime` 与 `strings` 是保留的内置标准模块名；其中 `fs`、`os` 与 `strings` 由编译器随附的 NC 标准库源码实现并优先于同级同名目录；标准库模块与语言级 builtin 的公开边界见 `stdlib.md`。
+- `io`、`fs`、`os`、`runtime`、`strings` 与 `linux` 是保留的内置标准模块名；其中 `fs`、`os`、`strings` 与 `linux` 由编译器随附的 NC 标准库源码实现并优先于同级同名目录；`linux` 仅对 `linux-x64` target 可用；标准库模块与语言级 builtin 的公开边界见 `stdlib.md`。
 - 导入模块后，跨模块符号必须命名空间限定访问：`foo.add()`、`foo.User`、`foo.User { ... }`、`new foo.User { ... }`、`foo.Color::Red`。
 - 同目录 `.nc` 文件仍自动共享命名空间，无需 import。
 - 导入图递归加载；重复 import 只加载一次；import cycle 报错。
@@ -58,7 +58,7 @@ import io                # 内置标准模块，不要求存在同级 io/ 目录
 
 当前标准库 / 内建边界：
 
-- 标准库一级内置模块：`io`、`fs`、`os`、`runtime`、`strings`。
+- 标准库一级内置模块：`io`、`fs`、`os`、`runtime`、`strings`、`linux`（仅 `linux-x64`）。
 - 语言级内建函数 / 形式：`len`、`cap`、`append`、`copy`、`clear`、`delete`、`min`、`max`、`abs`、`map_has`、`size_of(T)`、`map[K,V]()` 与显式转换。
 - 详细 API、import 规则和 `ncrt` 私有 ABI 边界见 `stdlib.md`。
 
@@ -66,15 +66,15 @@ import io                # 内置标准模块，不要求存在同级 io/ 目录
 
 - LLVM 是唯一后端：`compile` 输出 LLVM IR，`build` 输出 `build/main.ll`、`build/main.obj`、`build/ncrt.obj`、按需输出标准库 C support obj 与 `build/main.exe`。
 - `--backend` 入口已删除；显式传入 `--backend` 会报错。旧 C 后端和旧 `compile_nc_to_c` / `run_c_code` / `build_c_code` API 不保留向前兼容。
-- LLVM 后端 v1 当前承诺基础闭环：基础数值/bool 类型、`str` 字面量/索引/切片/拼接/`c_str()`、数值转换、`str(i32)`、`i32(str)`、`len(str)`、`str ==/!=`、定长数组字面量/索引/索引赋值、slice layout/literal/index/`len`/`cap`/`append`/`copy`/`clear`、定长数组与 slice 切片复制、slice `for i, item in s`、struct 值类型声明/字面量/字段读写/参数与返回、heap struct `new`、指针 receiver 方法声明/调用、nullable pointer `nil`/`!= nil` 窄化后字段与方法访问、enum tag/variant/比较、整数/字符串/bool/enum `match` 表达式、block 表达式、算术/比较、`let`、重赋值、函数、显式 `return` 与尾表达式返回、`if`、条件 `for`、range `for i in start..end`、`break`、编译器随附 NC stdlib `fs`、`os.args`/`os.getenv`/`os.has_env`/`os.cwd`/`os.exit`、`strings.contains`/`strings.starts_with`/`strings.ends_with`/`strings.index`、`map[K,V]` 的构造/读写/`map_has`/`delete`/`clear`/`len(map)`、函数调用与 `io.println`。
-- LLVM 后端链接 `runtime/ncrt.h` + `runtime/ncrt.c` 编译出的 `ncrt.obj`。`ncrt` 固定基础 ABI：`str`、`nc_map`、`nc_slice_raw`、`__nc_gc_alloc`/`__nc_gc_collect`/`__nc_gc_live`、root slot、字符串/cast/map helper、字节级 slice append/copy helper 与 C 异常入口。除 `runtime.gc_collect()` / `runtime.gc_live()` 外，其他 `ncrt` helper 都是编译器私有 ABI。`fs`、`os` 与 `strings` 由编译器随附的 NC 标准库源码实现；当实际导入的源码标准库模块存在 `stdlib/<module>/<module>.c` 时，构建系统自动编译为同名 support obj 并在 `ncrt.obj` 后、显式 extern link libs 前参与链接。该机制只服务随附标准库，不自动构建用户项目同名 C 文件。`[]T` 语言布局仍为 `{ T* ptr; u64 len; u64 cap }`，`elem_size` 仅作为 runtime helper 调用参数传入，不进入 slice header。
+- LLVM 后端 v1 当前承诺基础闭环：基础数值/bool 类型、`str` 字面量/索引/切片/拼接/`c_str()`、数值转换、`str(i32)`、`i32(str)`、`len(str)`、`str ==/!=`、定长数组字面量/索引/索引赋值、slice layout/literal/index/`len`/`cap`/`append`/`copy`/`clear`、定长数组与 slice 切片复制、slice `for i, item in s`、struct 值类型声明/字面量/字段读写/参数与返回、heap struct `new`、指针 receiver 方法声明/调用、nullable pointer `nil`/`!= nil` 窄化后字段与方法访问、enum tag/variant/比较、整数/字符串/bool/enum `match` 表达式、block 表达式、算术/比较、`let`、重赋值、函数、显式 `return` 与尾表达式返回、`if`、条件 `for`、range `for i in start..end`、`break`、编译器随附 NC stdlib `fs`、`os.args`/`os.getenv`/`os.has_env`/`os.cwd`/`os.exit`、`strings.contains`/`strings.starts_with`/`strings.ends_with`/`strings.index`、`linux.getpid`/`linux.write`/`linux.write_str`（仅 `linux-x64`）、`map[K,V]` 的构造/读写/`map_has`/`delete`/`clear`/`len(map)`、函数调用与 `io.println`。
+- LLVM 后端链接 `runtime/ncrt.h` + `runtime/ncrt.c` 按 target 编译出的 `ncrt.obj`/`ncrt.o`。`ncrt` 固定基础 ABI：`str`、`nc_map`、`nc_slice_raw`、`__nc_gc_alloc`/`__nc_gc_collect`/`__nc_gc_live`、root slot、字符串/cast/map helper、字节级 slice append/copy helper 与 C 异常入口。除 `runtime.gc_collect()` / `runtime.gc_live()` 外，其他 `ncrt` helper 都是编译器私有 ABI。`fs`、`os`、`strings` 与 `linux` 由编译器随附的 NC 标准库源码实现；当实际导入的源码标准库模块存在 `stdlib/<module>/<module>.c` 时，构建系统自动编译为同名 support obj 并在 `ncrt` 后、显式 extern link libs 前参与链接。该机制只服务随附标准库，不自动构建用户项目同名 C 文件。`[]T` 语言布局仍为 `{ T* ptr; u64 len; u64 cap }`，`elem_size` 仅作为 runtime helper 调用参数传入，不进入 slice header。
 - LLVM `map[K,V]` 当前运行时布局匹配 `ncrt.h` 的私有 `nc_map`：`{ entries, cap, len, tombstones }`，entries 在 LLVM 侧为 opaque pointer；get/set/has 统一调用 `ncrt` tagged scalar 哈希表实现，`len(map)` 读取 len 字段。
 - LLVM slice、map、closure env、heap struct 与运行时构造字符串的动态存储统一通过外部 `__nc_gc_alloc` 分配；该入口由 `ncrt.obj` 提供。共享 `ncrt` 当前实现显式 mark-sweep GC：`gc_collect()` 从已注册 root slot 出发标记可达块，保守扫描已标记 heap payload 内的 machine word，释放不可达块；`gc_live()` 返回当前存活 GC block 数。
 - LLVM 后端负责为持有 GC 指针的栈槽注册 root：`str.ptr`、`[]T.ptr`、`nc_map.entries`、`*T/?*T`、function value `env`、struct 字段和定长数组元素。LLVM 函数/closure 会为参数、receiver、closure env、局部变量、返回槽、catch/throw 值注册 root，并在所有出口 rewind 到函数入口 mark。
 - LLVM `throw`/`try`/`catch` 当前使用轻量异常模型：全局异常 flag + `str` value，函数边界返回默认值传播异常，`try` 块在语句边界检查 flag 并跳转 `catch`；uncaught throw 在 `main` 输出到 stderr 并返回 1。`defer` 使用函数内动态 site 栈，按 LIFO 在函数 fallthrough、显式 `return`、`throw` 传播前执行。该模型不依赖 `setjmp`/`longjmp`。
 - LLVM function value 当前支持 `{ call, env }` 胖指针：`call` 首参为 `i8* env`，无捕获时 `env == null`；捕获 closure 生成 env struct 并按值拷贝捕获字段，env 通过 `__nc_gc_alloc` 分配并由 function value 的 `env` root 与保守 heap 扫描保活。
 - LLVM 接口值当前支持 `{ vtable, data }` 胖指针，LLVM 表示为 `{ i8*, i8* }`。每个实际使用的 `*T -> I` 转换生成接口专属 vtable 全局常量与 erased receiver thunk；接口方法调用从 vtable 取函数指针并以 `data` 作为 receiver 动态分派。GC root 只登记接口值的 `data` 字段，`vtable` 是全局常量。
-- LLVM 后端当前使用 MinGW GNU triple `x86_64-w64-windows-gnu` 生成 Windows COFF object，并用 `gcc` 链接。
+- LLVM 后端当前支持显式 target：`windows-x64` 使用 triple `x86_64-w64-windows-gnu` 生成 `.obj/.exe`；`linux-x64` 使用 triple `x86_64-pc-linux-gnu` 生成 `.o` 与无扩展可执行文件。CLI 可传 `--target windows-x64|linux-x64`；未传时按宿主系统选择。链接当前统一调用 `gcc`，target-specific runtime/support C 对象按 target 缓存。
 - LLVM 后端是语言全集和回归权威；不向前兼容未声明支持的节点，遇到未支持语义应明确报错。
 
 LLVM 默认后端达标门槛：
@@ -439,9 +439,17 @@ extern {
 extern "msvcrt.lib" {
     fun _sopen(path: *u8, oflag: i32, pmode: i32): i32
 }
+
+extern "kernel32" {
+    fun GetCurrentProcessId(): i32
+}
+
+extern "m" {
+    fun fabs(x: f64): f64
+}
 ```
 
-extern v1 只支持纯声明，不允许函数体。关键字 `extern` 后可跟一个可选的 lib 或 dll 路径字符串（如 `"msvcrt.lib"`、`"kernel32.lib"`、`"user32.dll"`），构建系统会在链接时追加该文件作为输入。不含路径时，符号由链接器从默认路径解析。
+extern v1 只支持纯声明，不允许函数体。关键字 `extern` 后可跟一个可选的链接输入字符串。字符串若是路径、对象文件、`.lib` 或 `.a`，构建系统原样追加为链接输入；若是裸库名，则按 target 转成 linker lib flag，例如 Windows `extern "kernel32"` → `-lkernel32`，Linux `extern "m"` → `-lm`。不含字符串时，符号由链接器从默认路径解析。v1 不支持 `extern "user32.dll"` 这类直接 DLL 运行时加载；Windows DLL API 通过 import library / linker library 解析。
 
 extern 声明可用 `= "link_symbol"` 指定真实链接符号名，NC 代码只使用声明名，避免 C 符号与 NC 顶层命名空间冲突：
 
@@ -453,7 +461,7 @@ extern {
 
 省略返回类型表示 `void`。允许类型限于 C ABI scalar/pointer：`i8/i16/i32/i64/u8/u16/u32/u64/f32/f64/bool/*T/?*T/void`。不支持 varargs、回调、头文件解析、extern struct、泛型 extern、`str`/slice/map/array/struct/enum/function value、聚合类型按值传递。
 
-聚合类型按值传给 extern 或从 extern 返回仍明确禁止。当前 `x86_64-w64-windows-gnu` ABI 下，小 struct 可能被打包进整数寄存器，较大 struct 参数可能改为栈上临时副本指针，较大 struct 返回可能使用隐藏 sret/out pointer；后续若支持 extern struct，需要新增目标 C ABI classifier/lowering，而不是直接复用 NC struct 的 LLVM 类型声明。
+聚合类型按值传给 extern 或从 extern 返回仍明确禁止。当前 Windows/Linux x64 C ABI 对小 struct、较大 struct 参数和返回值有不同分类规则；后续若支持 extern struct，需要新增目标 C ABI classifier/lowering，而不是直接复用 NC struct 的 LLVM 类型声明。
 
 ---
 

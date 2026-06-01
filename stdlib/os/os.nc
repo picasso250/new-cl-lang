@@ -2,7 +2,7 @@ extern {
     fun nc_argc(): i32 = "__nc_argc"
     fun nc_argv(i: i32): ?*i8 = "__nc_argv"
     fun c_getenv(name: *i8): ?*i8 = "getenv"
-    fun c_getcwd(buf: ?*u8, size: i32): ?*u8 = "_getcwd"
+    fun c_getcwd(buf: ?*u8, size: i32): ?*u8 = "__nc_os_getcwd"
     fun c_exit(code: i32): void = "exit"
 }
 

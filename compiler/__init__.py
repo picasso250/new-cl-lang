@@ -13,11 +13,12 @@ from compiler.ast import (
     Identifier, StructLiteral, EnumRef, TypeAlias, FunctionExpr, ExternBlock,
 )
 from compiler.type_ref import rewrite_type
+from compiler.target import get_target
 
-BUILTIN_MODULES = {"io", "runtime", "fs", "os", "strings"}
+BUILTIN_MODULES = {"io", "runtime", "fs", "os", "strings", "linux"}
 ROOT_DIR = os.path.dirname(os.path.dirname(__file__))
 STDLIB_DIR = os.path.join(ROOT_DIR, "stdlib")
-STDLIB_SOURCE_MODULES = {"fs", "os", "strings"}
+STDLIB_SOURCE_MODULES = {"fs", "os", "strings", "linux"}
 
 
 def _expand_type_str(t: str, aliases: dict[str, str], stack: list[str]) -> str:
@@ -242,8 +243,9 @@ def _rewrite_module_names(module: Module, entry: bool):
             walk(stmt)
 
 
-def parse_project_sources(sources: "list[tuple[str, str]]") -> Module:
+def parse_project_sources(sources: "list[tuple[str, str]]", *, target_name: str | None = None) -> Module:
     """Parse an entry directory and its imported sibling modules."""
+    target_name = get_target(target_name).name
     entry = parse_module_sources(sources)
     project_root = os.path.dirname(entry.root)
     loaded: dict[str, Module] = {}
@@ -270,6 +272,8 @@ def parse_project_sources(sources: "list[tuple[str, str]]") -> Module:
         stack.append(module.name)
         loaded[module.name] = module
         for imp in _module_imports(module):
+            if imp.module_name == "linux" and target_name != "linux-x64":
+                raise RuntimeError("module 'linux' is only available for target linux-x64")
             if imp.module_name in STDLIB_SOURCE_MODULES:
                 mod_dir = os.path.join(STDLIB_DIR, imp.module_name)
                 files = [os.path.join(mod_dir, n) for n in sorted(os.listdir(mod_dir)) if n.endswith(".nc")]
@@ -311,30 +315,30 @@ def _typecheck_module(module: Module) -> Program:
     return program
 
 
-def compile_module_to_llvm_ir(module: Module) -> str:
+def compile_module_to_llvm_ir(module: Module, *, target_name: str | None = None) -> str:
     """Module → LLVM IR（三 pass）。"""
     program = _typecheck_module(module)
-    return generate_llvm_ir(program)
+    return generate_llvm_ir(program, target_name=target_name)
 
 
-def compile_module_to_llvm_ir_with_libs(module: Module) -> tuple[str, list[str], list[str]]:
+def compile_module_to_llvm_ir_with_libs(module: Module, *, target_name: str | None = None) -> tuple[str, list[str], list[str]]:
     """Module → (LLVM IR, link libs, support C sources)."""
     program = _typecheck_module(module)
     link_libs = [
         stmt.lib for stmt in program.statements
         if isinstance(stmt, ExternBlock) and stmt.lib is not None
     ]
-    return generate_llvm_ir(program), link_libs, list(module.support_c_sources)
+    return generate_llvm_ir(program, target_name=target_name), link_libs, list(module.support_c_sources)
 
 
-def compile_nc_sources_to_llvm_ir(sources: "list[tuple[str, str]]") -> str:
+def compile_nc_sources_to_llvm_ir(sources: "list[tuple[str, str]]", *, target_name: str | None = None) -> str:
     """多个 NC 源码片段 → 单个 LLVM IR。"""
-    return compile_module_to_llvm_ir(parse_project_sources(sources))
+    return compile_module_to_llvm_ir(parse_project_sources(sources, target_name=target_name), target_name=target_name)
 
 
-def compile_nc_sources_with_libs(sources: "list[tuple[str, str]]") -> tuple[str, list[str], list[str]]:
+def compile_nc_sources_with_libs(sources: "list[tuple[str, str]]", *, target_name: str | None = None) -> tuple[str, list[str], list[str]]:
     """多个 NC 源码片段 → (LLVM IR, link libs, support C sources)."""
-    return compile_module_to_llvm_ir_with_libs(parse_project_sources(sources))
+    return compile_module_to_llvm_ir_with_libs(parse_project_sources(sources, target_name=target_name), target_name=target_name)
 
 
 def compile_nc_to_llvm_ir(nc_source: str) -> str:
