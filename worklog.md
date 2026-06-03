@@ -98,3 +98,7 @@
 - 2026-06-03: 预备实现 map 遍历：支持 for key, value in map[K,V]，保持 range 和 slice 遍历既有语义，不增加单变量 map 遍历。why：typed map 已落地，需要 case 驱动补齐自然遍历能力。
 
 - 2026-06-03: 已实现 map 遍历：typecheck 支持 for key, value in map[K,V] 并保持 range/slice 语义；ncrt 新增 __nc_map_next typed copy helper；LLVM 后端按 cursor 调用 helper 并 root key/value slot。同步 design.md/stdlib.md，新增 case_271~275 覆盖基础、非字符串、struct copy、break 和错误路径。验证：python tests/test_language_cases.py；python tests/test_stdlib.py；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q。
+
+- 2026-06-03: 预备实现窄版泛型约束与默认排序：新增编译器识别的 `types.Cmp` 约束，支持 `sort.sort[T types.Cmp]([]T)` 对有序数值类型原地稳定排序，暂不引入完整 type-set 语法，也暂不把 `str` 纳入有序类型。why：sort 默认排序需要比较约束，但当前泛型 v1 只有 any，先以具体 case 推动最小约束能力。
+
+- 2026-06-03: 已实现窄版泛型约束与默认排序：新增 `types.Cmp` 编译器约束模块名，泛型参数支持 `T types.Cmp` 并在单态化时校验类型实参；`types.Cmp` 当前限定为数值类型，`str` 和 struct 明确拒绝。`sort` 新增 `sort.sort[T types.Cmp]` 原地稳定升序排序，保留 `sort.by` 用于自定义比较。同步 design.md/stdlib.md，新增 case_276~279 与泛型约束 case。验证：python tests/test_stdlib.py；python tests/test_language_cases.py；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q。

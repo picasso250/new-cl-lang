@@ -10,7 +10,7 @@
 
 ## import 规则
 
-- 标准库一级内置模块名：`io`、`fs`、`os`、`runtime`、`strings`、`strconv`、`math`、`sort`、`linux`。
+- 标准库一级内置模块名：`io`、`fs`、`os`、`runtime`、`strings`、`strconv`、`math`、`sort`、`types`、`linux`。
 - `import foo` 优先解析同级目录模块；内置标准模块名保留，导入这些名字时不查找同级目录。
 - 编译器随附的 NC 标准库源码模块会递归加载自身 import；用户同级目录仍不能覆盖保留标准模块名。
 - 标准库源码模块可带同名 C support 文件：若实际导入 `stdlib/<name>/<name>.nc` 所在模块，且存在 `stdlib/<name>/<name>.c`，构建系统会自动编译并链接该 C 文件。该机制只对编译器随附标准库生效，不扩展到用户项目的 `foo/foo.c`。
@@ -113,10 +113,17 @@ v1 不提供 `os.setenv`、`os.unsetenv`、`os.chdir`。
 
 ### sort
 
+- `sort.sort[T types.Cmp](items: []T)`
 - `sort.by[T](items: []T, less: fun(T, T) bool)`
 - `sort.is_sorted_by[T](items: []T, less: fun(T, T) bool): bool`
 
-`sort.by` 原地稳定排序；`less(a, b)` 返回 `true` 表示 `a` 应排在 `b` 前。
+`sort.sort` 对 `types.Cmp` 类型原地稳定升序排序。`sort.by` 原地稳定排序；`less(a, b)` 返回 `true` 表示 `a` 应排在 `b` 前。
+
+### types
+
+- `types.Cmp`：泛型约束，当前支持有符号整数、无符号整数和浮点类型。
+
+`types.Cmp` 是编译器识别的约束名，不是运行时值类型；当前不包含 `str`。
 
 ## 语言级内建
 

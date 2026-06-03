@@ -1,3 +1,21 @@
+import types
+
+fun sort[T types.Cmp](items: []T) {
+    for i in 1..len(items) {
+        let value = items[i]
+        let j = i
+        for j > 0 {
+            let prev = items[j - 1]
+            if !(value < prev) {
+                break
+            }
+            items[j] = prev
+            j = j - 1
+        }
+        items[j] = value
+    }
+}
+
 fun by[T](items: []T, less: fun(T, T) bool) {
     for i in 1..len(items) {
         let value = items[i]

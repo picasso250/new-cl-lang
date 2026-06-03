@@ -227,24 +227,30 @@ class Parser:
         self.expect(TokenKind.RBRACKET)
         return args
 
-    def _parse_type_params(self) -> list[str]:
+    def _parse_type_params(self) -> tuple[list[str], dict[str, str]]:
         if self.peek().kind != TokenKind.LBRACKET:
-            return []
+            return [], {}
         self.advance()
         params = []
+        constraints = {}
         if self.peek().kind != TokenKind.RBRACKET:
             while True:
                 name = self.expect(TokenKind.IDENT).value
+                constraint = "any"
                 if self.peek().kind == TokenKind.IDENT:
                     constraint = self.advance().value
-                    if constraint != "any":
-                        raise ParseError("generic v1 only supports any constraints")
+                    if self.peek().kind == TokenKind.DOT:
+                        self.advance()
+                        constraint = f"{constraint}.{self.expect(TokenKind.IDENT).value}"
+                    if constraint not in {"any", "types.Cmp"}:
+                        raise ParseError(f"unknown generic constraint {constraint}")
                 params.append(name)
+                constraints[name] = constraint
                 if self.peek().kind != TokenKind.COMMA:
                     break
                 self.advance()
         self.expect(TokenKind.RBRACKET)
-        return params
+        return params, constraints
 
     def _parse_param(self, *, allow_default: bool) -> Param:
         pname = self.expect(TokenKind.IDENT).value
@@ -283,7 +289,7 @@ class Parser:
             receiver_name = rname
             receiver_type = "*" + rtype
         name = self.expect(TokenKind.IDENT).value
-        type_params = self._parse_type_params()
+        type_params, type_param_constraints = self._parse_type_params()
         self.expect(TokenKind.LPAREN)
         params = self._parse_param_list(allow_default=True)
         self.expect(TokenKind.RPAREN)
@@ -296,14 +302,15 @@ class Parser:
         body = self._parse_block()
         self.match(TokenKind.SEMI)
         return FunctionDeclaration(name, params, return_type, body,
-                                   receiver_name, receiver_type, return_type_explicit, type_params)
+                                   receiver_name, receiver_type, return_type_explicit, type_params,
+                                   type_param_constraints)
 
     def _parse_function_signature_only(self):
         self.advance()  # fun
         if self.peek().kind == TokenKind.LPAREN:
             raise ParseError("extern methods are not supported")
         name = self.expect(TokenKind.IDENT).value
-        type_params = self._parse_type_params()
+        type_params, _type_param_constraints = self._parse_type_params()
         if type_params:
             raise ParseError("generic extern functions are not supported")
         self.expect(TokenKind.LPAREN)
@@ -403,7 +410,7 @@ class Parser:
     def _parse_struct(self):
         self.advance()  # 吞 struct
         name = self.expect(TokenKind.IDENT).value
-        type_params = self._parse_type_params()
+        type_params, type_param_constraints = self._parse_type_params()
         self.expect(TokenKind.LBRACE)
         fields = []
         if self.peek().kind != TokenKind.RBRACE:
@@ -418,7 +425,7 @@ class Parser:
                 ftype = self._parse_type()
                 fields.append((fname, ftype))
         self.expect(TokenKind.RBRACE)
-        stmt = StructDecl(name, fields, type_params)
+        stmt = StructDecl(name, fields, type_params, type_param_constraints)
         self.match(TokenKind.SEMI)
         return stmt
 

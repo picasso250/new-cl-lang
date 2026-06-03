@@ -6,6 +6,7 @@ import copy
 import re
 
 from compiler.ast import FunctionCall, FunctionDeclaration, Program, SizeOfType, StructDecl, StructLiteral
+from compiler.constraints import satisfies_constraint
 from compiler.type_ref import parse_type_app, rewrite_type as rewrite_type_ref
 
 
@@ -63,9 +64,11 @@ def _substitute_node(node, subst: dict[str, str]):
             n.return_type = _sub_type(n.return_type, subst)
             n.receiver_type = _sub_type(n.receiver_type, subst)
             n.type_params = []
+            n.type_param_constraints = {}
         elif isinstance(n, StructDecl):
             n.fields = [(name, _sub_type(t, subst)) for name, t in n.fields]
             n.type_params = []
+            n.type_param_constraints = {}
         elif isinstance(n, StructLiteral):
             n.name = _sub_type(n.name, subst)
         elif isinstance(n, FunctionCall):
@@ -106,6 +109,10 @@ def monomorphize(program: Program) -> Program:
         tmpl = generic_structs[base]
         if len(args) != len(tmpl.type_params):
             raise GenericError(f"generic type {base}: expected {len(tmpl.type_params)} type args, got {len(args)}")
+        for param, arg in zip(tmpl.type_params, args):
+            constraint = tmpl.type_param_constraints.get(param, "any")
+            if not satisfies_constraint(arg, constraint):
+                raise GenericError(f"generic type {base}: type arg {arg} does not satisfy {constraint}")
         key = (base, tuple(args))
         if key in made_structs:
             return
@@ -123,6 +130,10 @@ def monomorphize(program: Program) -> Program:
         tmpl = generic_funcs[base]
         if len(args) != len(tmpl.type_params):
             raise GenericError(f"generic function {base}: expected {len(tmpl.type_params)} type args, got {len(args)}")
+        for param, arg in zip(tmpl.type_params, args):
+            constraint = tmpl.type_param_constraints.get(param, "any")
+            if not satisfies_constraint(arg, constraint):
+                raise GenericError(f"generic function {base}: type arg {arg} does not satisfy {constraint}")
         key = (base, tuple(args))
         if key in made_funcs:
             return

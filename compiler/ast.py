@@ -110,10 +110,12 @@ class ForIn(Node):
 
 class StructDecl(Node):
     """struct Name { field: type, ... }"""
-    def __init__(self, name: str, fields: list, type_params: list[str] | None = None):
+    def __init__(self, name: str, fields: list, type_params: list[str] | None = None,
+                 type_param_constraints: dict[str, str] | None = None):
         self.name = name
         self.fields = fields  # [(name, type), ...]
         self.type_params = type_params or []
+        self.type_param_constraints = type_param_constraints or {}
 
     def __repr__(self):
         fs = ', '.join(f'{n}: {t}' for n, t in self.fields)
@@ -307,7 +309,8 @@ class FunctionDeclaration(Node):
        或  fun (r *T) name(params): return_type { body }"""
     def __init__(self, name: str, params: list, return_type: str | None, body: Block,
                  receiver_name: str | None = None, receiver_type: str | None = None,
-                 return_type_explicit: bool = False, type_params: list[str] | None = None):
+                 return_type_explicit: bool = False, type_params: list[str] | None = None,
+                 type_param_constraints: dict[str, str] | None = None):
         self.name = name
         self.extern_symbol = None
         self.params = params   # [Param, ...]
@@ -317,6 +320,7 @@ class FunctionDeclaration(Node):
         self.receiver_name = receiver_name  # 方法接收者名
         self.receiver_type = receiver_type  # 方法接收者类型 (如 "*Stack")
         self.type_params = type_params or []
+        self.type_param_constraints = type_param_constraints or {}
 
     def __repr__(self):
         p = ', '.join(str(param) for param in self.params)
