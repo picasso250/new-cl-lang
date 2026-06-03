@@ -9,7 +9,7 @@ import copy
 from compiler.builtins import NUMERIC_TYPES, SCALAR_TYPES, STRINGIFIABLE_TYPES, infer_builtin_call
 from compiler.type_ref import (
     ArrayTypeRef, FunctionType, GenericType, NamedType, PointerType, SliceType,
-    format_type_ref, parse_fn_type, parse_map_type, parse_type_ref,
+    format_type_ref, parse_fn_type, parse_map_type, parse_slice_type, parse_type_ref,
 )
 
 
@@ -1048,12 +1048,23 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                     require_type(stmt.end.type, "i32", "for range end", stmt.end)
                 else:
                     walk_expr(stmt.iterable)
-                    if not stmt.iterable.type.startswith("[]"):
-                        fail(f"for-in: expected slice, got {stmt.iterable.type}", stmt.iterable)
+                    if parse_slice_type(stmt.iterable.type) is None and parse_map_type(stmt.iterable.type) is None:
+                        fail(f"for-in: expected slice or map, got {stmt.iterable.type}", stmt.iterable)
                 symtab.push_scope()
-                symtab.declare(stmt.index, "i32")
-                if stmt.value:
-                    symtab.declare(stmt.value, stmt.iterable.type[2:])
+                if stmt.start is not None:
+                    symtab.declare(stmt.index, "i32")
+                else:
+                    slice_elem_type = parse_slice_type(stmt.iterable.type)
+                    map_parts = parse_map_type(stmt.iterable.type)
+                    if map_parts is not None:
+                        if stmt.value is None:
+                            fail("for-in: map requires key, value variables", stmt)
+                        symtab.declare(stmt.index, map_parts[0])
+                        symtab.declare(stmt.value, map_parts[1])
+                    else:
+                        symtab.declare(stmt.index, "i32")
+                        if stmt.value:
+                            symtab.declare(stmt.value, slice_elem_type)
                 break_depth += 1
                 walk_stmts(stmt.body.statements)
                 break_depth -= 1

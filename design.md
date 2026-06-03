@@ -186,7 +186,8 @@ why：
 - `if` 是表达式。
 - `match` 是表达式。
 - 条件循环写作 `for condition { ... }`。
-- 遍历写作 `for item in items` 或 `for i, item in items`。
+- slice 遍历写作 `for i, item in items`，`i` 为 `i32`。
+- map 遍历写作 `for key, value in m`，key/value 类型分别来自 `map[K,V]`。
 - 使用 `break` 跳出循环。
 
 我们不要：

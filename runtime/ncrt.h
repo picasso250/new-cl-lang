@@ -92,6 +92,7 @@ void __nc_map_get(void* out, nc_map* m, nc_map_desc* desc, const void* key);
 int __nc_map_has(nc_map* m, nc_map_desc* desc, const void* key);
 void __nc_map_delete(nc_map* m, nc_map_desc* desc, const void* key);
 void __nc_map_clear(nc_map* m);
+int64_t __nc_map_next(nc_map* m, int64_t start, void* key_out, void* value_out);
 
 void __nc_throw(str ex);
 

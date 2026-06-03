@@ -491,6 +491,19 @@ void __nc_map_clear(nc_map* m) {
     m->tombstones = 0;
 }
 
+int64_t __nc_map_next(nc_map* m, int64_t start, void* key_out, void* value_out) {
+    if (!m->cap || !m->desc || start < 0) return -1;
+    for (int64_t idx = start; idx < m->cap; idx++) {
+        unsigned char* entry = __nc_map_entry_at(m, idx);
+        if (*__nc_map_state_ptr(m, entry) == 1) {
+            memcpy(key_out, __nc_map_key_ptr(m, entry), (size_t)m->desc->key_size);
+            memcpy(value_out, __nc_map_value_ptr(m, entry), (size_t)m->desc->value_size);
+            return idx;
+        }
+    }
+    return -1;
+}
+
 void __nc_throw(str ex) {
     if (__nc_ex_top) {
         __nc_ex_top->ex = ex;

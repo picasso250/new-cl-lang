@@ -887,7 +887,10 @@ class LLVMCodegen:
 
     def emit_for_in(self, stmt: ForIn):
         if stmt.start is None:
-            self.emit_slice_for_in(stmt)
+            if parse_map_type(stmt.iterable.type) is not None:
+                self.emit_map_for_in(stmt)
+            else:
+                self.emit_slice_for_in(stmt)
             return
 
         idx_type = ir.IntType(32)
@@ -951,6 +954,54 @@ class LLVMCodegen:
             current = self.builder.load(idx_slot, name=safe_user_ident(stmt.index))
             next_value = self.builder.add(current, ir.Constant(idx_type, 1))
             self.builder.store(next_value, idx_slot)
+            self.builder.branch(cond_bb)
+        self.builder.position_at_end(end_bb)
+        self.vars = saved_vars
+
+    def emit_map_for_in(self, stmt: ForIn):
+        map_parts = parse_map_type(stmt.iterable.type)
+        if map_parts is None or stmt.value is None:
+            raise NotImplementedError("LLVM backend v1 only supports for key, value in map")
+        key_type, value_type = map_parts
+
+        saved_vars = self.vars.copy()
+        key_slot = self.alloca_at_entry(safe_user_ident(stmt.index), llvm_type(key_type))
+        value_slot = self.alloca_at_entry(safe_user_ident(stmt.value), llvm_type(value_type))
+        cursor_slot = self.alloca_at_entry("__nc_map_cursor", ir.IntType(64))
+        found_slot = self.alloca_at_entry("__nc_map_found", ir.IntType(64))
+        map_slot = self.alloca_at_entry("__nc_map_iter", MAP_TYPE)
+        self.vars[stmt.index] = (key_slot, key_type)
+        self.vars[stmt.value] = (value_slot, value_type)
+        self.root_slots_for_type(key_slot, key_type)
+        self.root_slots_for_type(value_slot, value_type)
+
+        map_value = self.emit_expr(stmt.iterable)
+        self.builder.store(map_value, map_slot)
+        self.builder.store(ir.Constant(ir.IntType(64), 0), cursor_slot)
+
+        cond_bb = self.func.append_basic_block("for.map.cond")
+        body_bb = self.func.append_basic_block("for.map.body")
+        end_bb = self.func.append_basic_block("for.map.end")
+        self.builder.branch(cond_bb)
+        self.builder.position_at_end(cond_bb)
+        cursor = self.builder.load(cursor_slot, name="for.map.cursor")
+        key_ptr = self.builder.bitcast(key_slot, I8PTR)
+        value_ptr = self.builder.bitcast(value_slot, I8PTR)
+        found = self.builder.call(self.map_next_fn, [map_slot, cursor, key_ptr, value_ptr], name="for.map.next")
+        self.builder.store(found, found_slot)
+        self.builder.cbranch(
+            self.builder.icmp_signed(">=", found, ir.Constant(ir.IntType(64), 0)),
+            body_bb,
+            end_bb,
+        )
+        self.builder.position_at_end(body_bb)
+        self.break_stack.append(end_bb)
+        self.emit_block(stmt.body)
+        self.break_stack.pop()
+        if not self.builder.block.is_terminated:
+            found = self.builder.load(found_slot, name="for.map.found")
+            next_cursor = self.builder.add(found, ir.Constant(ir.IntType(64), 1))
+            self.builder.store(next_cursor, cursor_slot)
             self.builder.branch(cond_bb)
         self.builder.position_at_end(end_bb)
         self.vars = saved_vars
@@ -1985,6 +2036,7 @@ class LLVMCodegen:
             self.map_has_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [MAP_TYPE.as_pointer(), MAP_DESC_PTR, I8PTR]), name="__nc_map_has")
             self.map_delete_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [MAP_TYPE.as_pointer(), MAP_DESC_PTR, I8PTR]), name="__nc_map_delete")
             self.map_clear_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [MAP_TYPE.as_pointer()]), name="__nc_map_clear")
+            self.map_next_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(64), [MAP_TYPE.as_pointer(), ir.IntType(64), I8PTR, I8PTR]), name="__nc_map_next")
             self.slice_copy_fn = ir.Function(
                 self.module,
                 ir.FunctionType(ir.VoidType(), [raw_slice_ptr, I8PTR, ir.IntType(64), ir.IntType(64)]),

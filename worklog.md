@@ -94,3 +94,7 @@
 - 2026-06-03: 预备实现显式类型默认参数：支持 fun foo(a: T, b: T = value) 并在调用端补齐尾部默认实参，不改变函数 ABI、函数类型或闭包调用 ABI。why：默认参数是常见函数 ergonomics case，但必须保持 NC 参数显式类型和调用语义可预测。
 
 - 2026-06-03: 已实现显式类型默认参数：函数/方法参数支持 name: T = expr，默认参数必须位于尾部，普通函数/方法调用在 typecheck 阶段补齐缺失尾部实参；默认值按声明处上下文检查，可引用前序参数和可见全局符号；extern、iface、函数表达式/函数类型不支持默认参数，ABI 不变。同步 design.md，新增 case_258~270 覆盖正向、泛型、方法和错误路径。验证：python tests/test_language_cases.py 通过 227/227；python tests/test_stdlib.py 通过 56/56；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q 通过 87 passed, 1 skipped。
+
+- 2026-06-03: 预备实现 map 遍历：支持 for key, value in map[K,V]，保持 range 和 slice 遍历既有语义，不增加单变量 map 遍历。why：typed map 已落地，需要 case 驱动补齐自然遍历能力。
+
+- 2026-06-03: 已实现 map 遍历：typecheck 支持 for key, value in map[K,V] 并保持 range/slice 语义；ncrt 新增 __nc_map_next typed copy helper；LLVM 后端按 cursor 调用 helper 并 root key/value slot。同步 design.md/stdlib.md，新增 case_271~275 覆盖基础、非字符串、struct copy、break 和错误路径。验证：python tests/test_language_cases.py；python tests/test_stdlib.py；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q。

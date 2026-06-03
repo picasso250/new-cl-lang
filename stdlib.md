@@ -147,6 +147,7 @@ v1 不提供 `os.setenv`、`os.unsetenv`、`os.chdir`。
 - value 必须是有零值的 sized 类型；`void`、非空指针和递归包含无零值字段的 struct 不可作为 value。
 - `m[k]` 要求 `k: K`，返回 `V`；缺失 key 返回 `V` 的零值。
 - `m[k] = v` 要求 `v: V`；复合赋值按 `V` 类型复用对应运算符规则。
+- 遍历使用 `for key, value in m {}`；遍历顺序不保证稳定。
 - `m.has(k)` 要求 `k: K`，返回 `i32`。
 - `len(m)` 返回 map 当前条目数，类型为 `i32`。
 - `map_new()`、`map_has()`、裸 `nc_map` 和旧字符串专用 map helper 不是语言边界。
