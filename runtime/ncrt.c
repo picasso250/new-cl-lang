@@ -15,9 +15,7 @@
 #endif
 
 struct nc_entry {
-    nc_val key;
-    nc_val value;
-    int state;
+    unsigned char data[];
 };
 
 typedef struct __nc_gc_block {
@@ -344,35 +342,36 @@ static void __nc_hash_bytes(unsigned long long* h, const void* data, size_t len)
     }
 }
 
-static int64_t __nc_map_hash(const nc_val* key, int64_t cap) {
-    unsigned long long h = 14695981039346656037ULL;
-    __nc_hash_bytes(&h, &key->tag, sizeof(key->tag));
-    if (key->tag == NC_VAL_STR) {
-        __nc_hash_bytes(&h, (const void*)(uintptr_t)key->a, (size_t)key->b);
-    } else {
-        __nc_hash_bytes(&h, &key->a, sizeof(key->a));
-        __nc_hash_bytes(&h, &key->b, sizeof(key->b));
-    }
-    return (int64_t)(h % (unsigned long long)cap);
+static unsigned char* __nc_map_entry_at(const nc_map* m, int64_t idx) {
+    return ((unsigned char*)m->entries) + (size_t)idx * (size_t)m->desc->entry_size;
 }
 
-static int __nc_val_eq(const nc_val* a, const nc_val* b) {
-    if (a->tag != b->tag) return 0;
-    if (a->tag == NC_VAL_STR) {
-        if (a->b != b->b) return 0;
-        return __nc_str_bytes_eq((const uint8_t*)(uintptr_t)a->a, (const uint8_t*)(uintptr_t)b->a, (int64_t)a->b);
-    }
-    return a->a == b->a && a->b == b->b;
+static int* __nc_map_state_ptr(const nc_map* m, unsigned char* entry) {
+    return (int*)(void*)(entry + m->desc->state_offset);
 }
 
-void __nc_map_init(nc_map* m) {
+static void* __nc_map_key_ptr(const nc_map* m, unsigned char* entry) {
+    return entry + m->desc->key_offset;
+}
+
+static void* __nc_map_value_ptr(const nc_map* m, unsigned char* entry) {
+    return entry + m->desc->value_offset;
+}
+
+static int64_t __nc_map_hash(nc_map_desc* desc, const void* key, int64_t cap) {
+    return (int64_t)(desc->hash(key) % (uint64_t)cap);
+}
+
+void __nc_map_init(nc_map* m, nc_map_desc* desc) {
+    m->desc = desc;
     m->cap = 16;
     m->len = 0;
     m->tombstones = 0;
-    m->entries = (nc_entry*)__nc_gc_alloc(16 * sizeof(nc_entry));
+    m->entries = (nc_entry*)__nc_gc_alloc((size_t)m->cap * (size_t)desc->entry_size);
 }
 
 void __nc_map_free(nc_map* m) {
+    m->desc = 0;
     m->entries = 0;
     m->cap = 0;
     m->len = 0;
@@ -385,13 +384,17 @@ static void __nc_map_rehash(nc_map* m) {
     m->cap *= 2;
     m->len = 0;
     m->tombstones = 0;
-    m->entries = (nc_entry*)__nc_gc_alloc((size_t)m->cap * sizeof(nc_entry));
+    m->entries = (nc_entry*)__nc_gc_alloc((size_t)m->cap * (size_t)m->desc->entry_size);
     for (int64_t i = 0; i < old_cap; i++) {
-        if (old[i].state != 1) continue;
-        int64_t idx = __nc_map_hash(&old[i].key, m->cap);
+        unsigned char* old_entry = ((unsigned char*)old) + (size_t)i * (size_t)m->desc->entry_size;
+        int old_state = *(int*)(void*)(old_entry + m->desc->state_offset);
+        if (old_state != 1) continue;
+        void* old_key = old_entry + m->desc->key_offset;
+        int64_t idx = __nc_map_hash(m->desc, old_key, m->cap);
         for (;;) {
-            if (m->entries[idx].state == 0) {
-                m->entries[idx] = old[i];
+            unsigned char* entry = __nc_map_entry_at(m, idx);
+            if (*__nc_map_state_ptr(m, entry) == 0) {
+                memcpy(entry, old_entry, (size_t)m->desc->entry_size);
                 m->len++;
                 break;
             }
@@ -400,39 +403,46 @@ static void __nc_map_rehash(nc_map* m) {
     }
 }
 
-static void __nc_map_put(nc_map* m, const nc_val* key, nc_val value) {
-    if (!m->cap) __nc_map_init(m);
+static void __nc_map_put(nc_map* m, nc_map_desc* desc, const void* key, const void* value) {
+    if (!m->cap) __nc_map_init(m, desc);
     if ((double)(m->len + m->tombstones) / (double)m->cap > 0.70) {
         __nc_map_rehash(m);
     }
-    int64_t idx = __nc_map_hash(key, m->cap);
+    int64_t idx = __nc_map_hash(m->desc, key, m->cap);
     int64_t tomb = -1;
     for (int64_t i = 0; i < m->cap; i++) {
-        if (m->entries[idx].state == 0) {
+        unsigned char* entry = __nc_map_entry_at(m, idx);
+        int state = *__nc_map_state_ptr(m, entry);
+        if (state == 0) {
             int64_t put_at = tomb >= 0 ? tomb : idx;
-            m->entries[put_at].key = *key;
-            m->entries[put_at].value = value;
-            m->entries[put_at].state = 1;
+            unsigned char* put_entry = __nc_map_entry_at(m, put_at);
+            memset(put_entry, 0, (size_t)m->desc->entry_size);
+            memcpy(__nc_map_key_ptr(m, put_entry), key, (size_t)m->desc->key_size);
+            memcpy(__nc_map_value_ptr(m, put_entry), value, (size_t)m->desc->value_size);
+            *__nc_map_state_ptr(m, put_entry) = 1;
             m->len++;
             if (tomb >= 0) m->tombstones--;
             return;
         }
-        if (m->entries[idx].state == 2 && tomb < 0) tomb = idx;
-        if (m->entries[idx].state == 1 && __nc_val_eq(key, &m->entries[idx].key)) {
-            m->entries[idx].value = value;
+        if (state == 2 && tomb < 0) tomb = idx;
+        if (state == 1 && m->desc->eq(key, __nc_map_key_ptr(m, entry))) {
+            memcpy(__nc_map_value_ptr(m, entry), value, (size_t)m->desc->value_size);
             return;
         }
         idx = (idx + 1) % m->cap;
     }
 }
 
-static int __nc_map_lookup(const nc_map* m, const nc_val* key, nc_val* out) {
+static int __nc_map_lookup(nc_map* m, nc_map_desc* desc, const void* key, void* out) {
     if (!m->cap) return 0;
-    int64_t idx = __nc_map_hash(key, m->cap);
+    if (!m->desc) m->desc = desc;
+    int64_t idx = __nc_map_hash(m->desc, key, m->cap);
     for (int64_t i = 0; i < m->cap; i++) {
-        if (m->entries[idx].state == 0) return 0;
-        if (m->entries[idx].state == 1 && __nc_val_eq(key, &m->entries[idx].key)) {
-            *out = m->entries[idx].value;
+        unsigned char* entry = __nc_map_entry_at(m, idx);
+        int state = *__nc_map_state_ptr(m, entry);
+        if (state == 0) return 0;
+        if (state == 1 && m->desc->eq(key, __nc_map_key_ptr(m, entry))) {
+            if (out) memcpy(out, __nc_map_value_ptr(m, entry), (size_t)m->desc->value_size);
             return 1;
         }
         idx = (idx + 1) % m->cap;
@@ -440,35 +450,32 @@ static int __nc_map_lookup(const nc_map* m, const nc_val* key, nc_val* out) {
     return 0;
 }
 
-void __nc_map_set(nc_map* m, const nc_val* key, const nc_val* value) {
-    __nc_map_put(m, key, *value);
+void __nc_map_set(nc_map* m, nc_map_desc* desc, const void* key, const void* value) {
+    __nc_map_put(m, desc, key, value);
 }
 
-void __nc_map_get(nc_val* out, nc_map* m, const nc_val* key, int32_t value_tag) {
-    nc_val v;
-    if (__nc_map_lookup(m, key, &v) && v.tag == value_tag) {
-        *out = v;
+void __nc_map_get(void* out, nc_map* m, nc_map_desc* desc, const void* key) {
+    if (__nc_map_lookup(m, desc, key, out)) {
         return;
     }
-    out->tag = value_tag;
-    out->a = 0;
-    out->b = 0;
+    memset(out, 0, (size_t)desc->value_size);
 }
 
-int __nc_map_has(nc_map* m, const nc_val* key) {
-    nc_val v;
-    return __nc_map_lookup(m, key, &v);
+int __nc_map_has(nc_map* m, nc_map_desc* desc, const void* key) {
+    return __nc_map_lookup(m, desc, key, NULL);
 }
 
-void __nc_map_delete(nc_map* m, const nc_val* key) {
+void __nc_map_delete(nc_map* m, nc_map_desc* desc, const void* key) {
     if (!m->cap) return;
-    int64_t idx = __nc_map_hash(key, m->cap);
+    if (!m->desc) m->desc = desc;
+    int64_t idx = __nc_map_hash(m->desc, key, m->cap);
     for (int64_t i = 0; i < m->cap; i++) {
-        if (m->entries[idx].state == 0) return;
-        if (m->entries[idx].state == 1 && __nc_val_eq(key, &m->entries[idx].key)) {
-            memset(&m->entries[idx].key, 0, sizeof(nc_val));
-            memset(&m->entries[idx].value, 0, sizeof(nc_val));
-            m->entries[idx].state = 2;
+        unsigned char* entry = __nc_map_entry_at(m, idx);
+        int* state = __nc_map_state_ptr(m, entry);
+        if (*state == 0) return;
+        if (*state == 1 && m->desc->eq(key, __nc_map_key_ptr(m, entry))) {
+            memset(entry, 0, (size_t)m->desc->entry_size);
+            *state = 2;
             m->len--;
             m->tombstones++;
             return;
@@ -479,7 +486,7 @@ void __nc_map_delete(nc_map* m, const nc_val* key) {
 
 void __nc_map_clear(nc_map* m) {
     if (!m->cap) return;
-    memset(m->entries, 0, (size_t)m->cap * sizeof(nc_entry));
+    memset(m->entries, 0, (size_t)m->cap * (size_t)m->desc->entry_size);
     m->len = 0;
     m->tombstones = 0;
 }

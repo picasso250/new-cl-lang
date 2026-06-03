@@ -86,3 +86,7 @@
 - 2026-06-03: 预备实现 struct 值结构相等：同类型 struct 的 `==` / `!=` 按字段递归比较，同时收紧不可比较类型的 typecheck。why：当前前端会放行同类型 struct 比较，但 LLVM 后端没有聚合比较语义，`struct ==` case 需要明确语言能力并避免后端崩溃。
 
 - 2026-06-03: 已实现 struct 值结构相等：typecheck 新增递归可比较性检查，LLVM 后端按字段递归 lowering `==` / `!=`，并明确拒绝 slice、数组、map、函数值、接口值等不可比较类型。已同步 design.md，新增 case_250~257 覆盖正向和错误路径。验证：`python tests/test_language_cases.py` 通过 214/214；`python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py -q` 通过 61 passed, 1 skipped；`python tests/test_stdlib.py` 通过 51/51；`python -m pytest tests/test_projects.py -q` 通过 26/26。
+
+- 2026-06-03: 预备优化 map 实现：质疑所有 key/value 统一 nc_val 装箱，改为 typed map descriptor；key 收敛为非 float hash-comparable，value 放宽为任意有零值 sized 类型，并补 GC 正确性 case。why：当前装箱 ABI 阻碍 map 扩展与性能，且 float key 语义和语言比较不一致。
+
+- 2026-06-03: 已优化 map 实现：runtime map ABI 从统一 nc_val 装箱改为 typed descriptor + typed bytes；key 改为非 float hash-comparable，支持 struct/enum/pointer/nullable pointer 等；value 放宽为任意有零值 sized 类型，并补充 struct value 与 GC 保活 case。同步 design.md/stdlib.md，map ABI size_of 变为 40。验证：python tests/test_stdlib.py；python tests/test_language_cases.py；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q。

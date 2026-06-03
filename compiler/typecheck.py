@@ -7,7 +7,7 @@
 from compiler.builtins import NUMERIC_TYPES, SCALAR_TYPES, STRINGIFIABLE_TYPES, infer_builtin_call
 from compiler.type_ref import (
     ArrayTypeRef, FunctionType, GenericType, NamedType, PointerType, SliceType,
-    parse_fn_type, parse_map_type, parse_type_ref,
+    format_type_ref, parse_fn_type, parse_map_type, parse_type_ref,
 )
 
 
@@ -27,6 +27,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         ArrayLiteral, SliceLiteral, IndexAccess, SliceExpr, MethodCall, TryCatch, Throw, Defer, Break
     )
 
+    FLOAT_TYPES = {"f32", "f64"}
     current_return_type = "void"
     break_depth = 0
     closure_stack = []
@@ -202,6 +203,90 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
     def is_numeric_type(t):
         return t in NUMERIC_TYPES
 
+    def hash_comparable_error_type(t, seen=None):
+        seen = seen or set()
+        if t in seen:
+            return None
+        seen.add(t)
+        if t in FLOAT_TYPES:
+            return t
+        if t in NUMERIC_TYPES or t in {"bool", "str", "rune"}:
+            return None
+        if is_pointer_type(t) or is_nullable_pointer_type(t):
+            return None
+        if parse_map_type(t) is not None:
+            return t
+        if parse_fn_type(t) is not None:
+            return t
+        ref = parse_type_ref(t)
+        if isinstance(ref, SliceType) or isinstance(ref, ArrayTypeRef) or isinstance(ref, FunctionType):
+            return t
+        if is_iface_type(t):
+            return t
+        try:
+            sym = symtab.lookup(t)
+        except NameError:
+            return t
+        if sym.nc_type == "enum":
+            return None
+        if sym.nc_type == "struct":
+            for _fname, ftype in symtab.lookup_struct(t).items():
+                err = hash_comparable_error_type(ftype, seen)
+                if err is not None:
+                    return err
+            return None
+        return t
+
+    def require_hash_comparable(t, node=None):
+        err = hash_comparable_error_type(t)
+        if err is not None:
+            fail(f"map key type: expected hash-comparable, got {err}", node)
+
+    def zero_value_error_type(t, seen=None):
+        seen = seen or set()
+        if t in seen:
+            return None
+        seen.add(t)
+        if t == "void":
+            return t
+        if t in NUMERIC_TYPES or t in {"bool", "str", "rune"}:
+            return None
+        if is_pointer_type(t):
+            return t
+        if is_nullable_pointer_type(t):
+            return None
+        if parse_map_type(t) is not None:
+            return None
+        if parse_fn_type(t) is not None:
+            return None
+        ref = parse_type_ref(t)
+        if isinstance(ref, SliceType):
+            return None
+        if isinstance(ref, ArrayTypeRef):
+            return zero_value_error_type(format_type_ref(ref.elem), seen)
+        if isinstance(ref, FunctionType):
+            return None
+        if is_iface_type(t):
+            return None
+        try:
+            sym = symtab.lookup(t)
+        except NameError:
+            return t
+        if sym.nc_type == "enum":
+            return None
+        if sym.nc_type == "struct":
+            for _fname, ftype in symtab.lookup_struct(t).items():
+                err = zero_value_error_type(ftype, seen)
+                if err is not None:
+                    return err
+            return None
+        return t
+
+    def require_zero_value_type(t, node=None):
+        err = zero_value_error_type(t)
+        if err is not None:
+            fail(f"map value type: expected zero-value type, got {err}", node)
+
     def validate_map_type(t, node=None):
         map_args = parse_map_type(t)
         if map_args is None:
@@ -209,10 +294,9 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         if len(map_args) != 2:
             fail(f"map: expected 2 type args, got {len(map_args)}", node)
         key_type, value_type = map_args
-        if key_type not in SCALAR_TYPES:
-            fail(f"map key type: expected scalar, got {key_type}", node)
-        if value_type not in SCALAR_TYPES:
-            fail(f"map value type: expected scalar, got {value_type}", node)
+        require_hash_comparable(key_type, node)
+        validate_sized_type(value_type, node)
+        require_zero_value_type(value_type, node)
         return key_type, value_type
 
     def validate_sized_type(t, node=None, *, allow_void=False):
@@ -526,6 +610,8 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 walk_expr(arg)
             if node.name == "__nc_bytes_alloc" and not getattr(getattr(node, "source_file", None), "trusted_stdlib", False):
                 fail("__nc_bytes_alloc is only available to trusted stdlib", node)
+            if parse_map_type(node.name) is not None:
+                validate_map_type(node.name, node)
             builtin_type = infer_builtin_call(node, require_arg_count, require_type, fail)
             if builtin_type is not None:
                 node.type = builtin_type

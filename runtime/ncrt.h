@@ -11,32 +11,23 @@ typedef struct {
     uint64_t len;
 } str;
 
-typedef enum {
-    NC_VAL_NIL = 0,
-    NC_VAL_I8,
-    NC_VAL_I16,
-    NC_VAL_I32,
-    NC_VAL_I64,
-    NC_VAL_U8,
-    NC_VAL_U16,
-    NC_VAL_U32,
-    NC_VAL_U64,
-    NC_VAL_F32,
-    NC_VAL_F64,
-    NC_VAL_BOOL,
-    NC_VAL_RUNE,
-    NC_VAL_STR
-} nc_val_tag;
-
-typedef struct {
-    int32_t tag;
-    uint64_t a;
-    uint64_t b;
-} nc_val;
-
 typedef struct nc_entry nc_entry;
+typedef uint64_t (*nc_map_hash_fn)(const void* key);
+typedef int32_t (*nc_map_eq_fn)(const void* a, const void* b);
 
 typedef struct {
+    int64_t key_size;
+    int64_t value_size;
+    int64_t entry_size;
+    int64_t key_offset;
+    int64_t value_offset;
+    int64_t state_offset;
+    nc_map_hash_fn hash;
+    nc_map_eq_fn eq;
+} nc_map_desc;
+
+typedef struct {
+    nc_map_desc* desc;
     nc_entry* entries;
     int64_t cap;
     int64_t len;
@@ -94,12 +85,12 @@ void __nc_slice_append_raw(nc_slice_raw* out, const nc_slice_raw* in, const void
 int32_t __nc_slice_copy_into_raw(nc_slice_raw* dst, const nc_slice_raw* src, uint64_t elem_size);
 void __nc_slice_clear_raw(nc_slice_raw* s, uint64_t elem_size);
 
-void __nc_map_init(nc_map* m);
+void __nc_map_init(nc_map* m, nc_map_desc* desc);
 void __nc_map_free(nc_map* m);
-void __nc_map_set(nc_map* m, const nc_val* key, const nc_val* value);
-void __nc_map_get(nc_val* out, nc_map* m, const nc_val* key, int32_t value_tag);
-int __nc_map_has(nc_map* m, const nc_val* key);
-void __nc_map_delete(nc_map* m, const nc_val* key);
+void __nc_map_set(nc_map* m, nc_map_desc* desc, const void* key, const void* value);
+void __nc_map_get(void* out, nc_map* m, nc_map_desc* desc, const void* key);
+int __nc_map_has(nc_map* m, nc_map_desc* desc, const void* key);
+void __nc_map_delete(nc_map* m, nc_map_desc* desc, const void* key);
 void __nc_map_clear(nc_map* m);
 
 void __nc_throw(str ex);

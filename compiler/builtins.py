@@ -57,11 +57,6 @@ def infer_builtin_call(node, require_arg_count, require_type, fail) -> str | Non
         require_arg_count(args, 0, name, node)
         if len(map_args) != 2:
             fail(f"map: expected 2 type args, got {len(map_args)}", node)
-        key_type, value_type = map_args
-        if key_type not in SCALAR_TYPES:
-            fail(f"map key type: expected scalar, got {key_type}", node)
-        if value_type not in SCALAR_TYPES:
-            fail(f"map value type: expected scalar, got {value_type}", node)
         return name
     if name == "str":
         require_arg_count(args, 1, "str", node)

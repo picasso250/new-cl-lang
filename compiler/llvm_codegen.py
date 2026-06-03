@@ -40,15 +40,17 @@ INT_TYPES = {
 SIGNED_INT_TYPES = {"i8", "i16", "i32", "i64"}
 UNSIGNED_INT_TYPES = {"u8", "u16", "u32", "u64", "bool", "rune"}
 FLOAT_TYPES = {"f32": ir.FloatType(), "f64": ir.DoubleType()}
-NC_VAL_TAGS = {
-    "i8": 1, "i16": 2, "i32": 3, "i64": 4,
-    "u8": 5, "u16": 6, "u32": 7, "u64": 8,
-    "f32": 9, "f64": 10, "bool": 11, "rune": 12, "str": 13,
-}
 I8PTR = ir.IntType(8).as_pointer()
 STR_TYPE = ir.LiteralStructType([I8PTR, ir.IntType(64)])
-MAP_TYPE = ir.LiteralStructType([I8PTR, ir.IntType(64), ir.IntType(64), ir.IntType(64)])
-NC_VAL_TYPE = ir.LiteralStructType([ir.IntType(32), ir.IntType(64), ir.IntType(64)])
+MAP_HASH_FN_TYPE = ir.FunctionType(ir.IntType(64), [I8PTR])
+MAP_EQ_FN_TYPE = ir.FunctionType(ir.IntType(32), [I8PTR, I8PTR])
+MAP_DESC_TYPE = ir.LiteralStructType([
+    ir.IntType(64), ir.IntType(64), ir.IntType(64), ir.IntType(64),
+    ir.IntType(64), ir.IntType(64),
+    MAP_HASH_FN_TYPE.as_pointer(), MAP_EQ_FN_TYPE.as_pointer(),
+])
+MAP_DESC_PTR = MAP_DESC_TYPE.as_pointer()
+MAP_TYPE = ir.LiteralStructType([MAP_DESC_PTR, I8PTR, ir.IntType(64), ir.IntType(64), ir.IntType(64)])
 RAW_SLICE_TYPE = ir.LiteralStructType([I8PTR, ir.IntType(64), ir.IntType(64)])
 STRUCT_TYPES: dict[str, ir.LiteralStructType] = {}
 STRUCT_FIELDS: dict[str, list[tuple[str, str]]] = {}
@@ -306,6 +308,9 @@ class LLVMCodegen:
         self.sprintf = None
         self.atoi = None
         self.strings: dict[tuple[str, str], ir.GlobalVariable] = {}
+        self.map_descs: dict[str, ir.GlobalVariable] = {}
+        self.map_hash_fns: dict[str, ir.Function] = {}
+        self.map_eq_fns: dict[str, ir.Function] = {}
         self.fn_decls: dict[str, FunctionDeclaration] = {}
         self.closure_env_types: dict[int, ir.LiteralStructType] = {}
         self.break_stack = []
@@ -562,7 +567,7 @@ class LLVMCodegen:
         if nc_type == "nc_map" or parse_map_type(nc_type) is not None:
             field = self.builder.gep(
                 ptr,
-                [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)],
+                [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 1)],
                 inbounds=True,
                 name="gc.root.map.entries",
             )
@@ -1372,7 +1377,7 @@ class LLVMCodegen:
                 length64 = self.builder.extract_value(arg, 1)
                 return self.builder.trunc(length64, ir.IntType(32))
             if parse_map_type(node.args[0].type) is not None:
-                length64 = self.builder.extract_value(arg, 2)
+                length64 = self.builder.extract_value(arg, 3)
                 return self.builder.trunc(length64, ir.IntType(32))
             raise NotImplementedError(f"LLVM backend v1 cannot take len of {node.args[0].type}")
         if node.name == "cap":
@@ -1384,7 +1389,7 @@ class LLVMCodegen:
             cap64 = self.builder.extract_value(arg, 2)
             return self.builder.trunc(cap64, ir.IntType(32))
         if parse_map_type(node.name) is not None:
-            return self.emit_map_new()
+            return self.emit_map_new(node.name)
         if node.name == "delete":
             if len(node.args) != 2:
                 raise RuntimeError("delete expects two arguments")
@@ -1695,18 +1700,19 @@ class LLVMCodegen:
         value = self.builder.insert_value(value, length, [1], name="str.len")
         return value
 
-    def map_value(self, entries, cap, length):
+    def map_value(self, desc, entries, cap, length):
         value = ir.Constant(MAP_TYPE, ir.Undefined)
-        value = self.builder.insert_value(value, entries, [0], name="map.entries")
-        value = self.builder.insert_value(value, cap, [1], name="map.cap")
-        value = self.builder.insert_value(value, length, [2], name="map.len")
-        value = self.builder.insert_value(value, ir.Constant(ir.IntType(64), 0), [3], name="map.tombstones")
+        value = self.builder.insert_value(value, desc, [0], name="map.desc")
+        value = self.builder.insert_value(value, entries, [1], name="map.entries")
+        value = self.builder.insert_value(value, cap, [2], name="map.cap")
+        value = self.builder.insert_value(value, length, [3], name="map.len")
+        value = self.builder.insert_value(value, ir.Constant(ir.IntType(64), 0), [4], name="map.tombstones")
         return value
 
-    def emit_map_new(self):
+    def emit_map_new(self, map_type):
         self.ensure_ncrt_runtime()
         slot = self.alloca_at_entry("__nc_map_new", MAP_TYPE)
-        self.builder.call(self.map_init_fn, [slot])
+        self.builder.call(self.map_init_fn, [slot, self.map_desc(map_type)])
         return self.builder.load(slot, name="map.new")
 
     def map_pointer_for_expr(self, map_expr):
@@ -1724,25 +1730,22 @@ class LLVMCodegen:
         self.ensure_ncrt_runtime()
         _key_type, value_type = parse_map_type(map_expr.type)
         map_ptr = self.map_pointer_for_expr(map_expr)
-        key_val = self.scalar_to_nc_val(self.emit_expr(key_expr), key_expr.type)
-        key_ptr = self.value_to_stack_ptr(key_val, NC_VAL_TYPE, "__nc_map_get_key")
-        out = self.alloca_at_entry("__nc_map_get_out", NC_VAL_TYPE)
-        self.builder.call(self.map_get_fn, [out, map_ptr, key_ptr, ir.Constant(ir.IntType(32), NC_VAL_TAGS[value_type])])
-        return self.nc_val_to_scalar(self.builder.load(out, name="map.raw"), value_type)
+        key_ptr = self.value_to_i8_stack_ptr(self.emit_expr(key_expr), llvm_type(key_expr.type), "__nc_map_get_key")
+        out = self.alloca_at_entry("__nc_map_get_out", llvm_type(value_type))
+        self.builder.call(self.map_get_fn, [self.builder.bitcast(out, I8PTR), map_ptr, self.map_desc(map_expr.type), key_ptr])
+        return self.builder.load(out, name="map.get")
 
     def emit_map_has(self, map_expr, key_expr):
         self.ensure_ncrt_runtime()
         map_ptr = self.map_pointer_for_expr(map_expr)
-        key = self.scalar_to_nc_val(self.emit_expr(key_expr), key_expr.type)
-        key_ptr = self.value_to_stack_ptr(key, NC_VAL_TYPE, "__nc_map_has_key")
-        return self.builder.call(self.map_has_fn, [map_ptr, key_ptr], name="map.has")
+        key_ptr = self.value_to_i8_stack_ptr(self.emit_expr(key_expr), llvm_type(key_expr.type), "__nc_map_has_key")
+        return self.builder.call(self.map_has_fn, [map_ptr, self.map_desc(map_expr.type), key_ptr], name="map.has")
 
     def emit_map_delete(self, map_expr, key_expr):
         self.ensure_ncrt_runtime()
         map_ptr = self.map_pointer_for_expr(map_expr)
-        key = self.scalar_to_nc_val(self.emit_expr(key_expr), key_expr.type)
-        key_ptr = self.value_to_stack_ptr(key, NC_VAL_TYPE, "__nc_map_delete_key")
-        self.builder.call(self.map_delete_fn, [map_ptr, key_ptr])
+        key_ptr = self.value_to_i8_stack_ptr(self.emit_expr(key_expr), llvm_type(key_expr.type), "__nc_map_delete_key")
+        self.builder.call(self.map_delete_fn, [map_ptr, self.map_desc(map_expr.type), key_ptr])
         return ir.Constant(ir.IntType(1), 0)
 
     def emit_map_set(self, map_expr, key_expr, value_expr, assign_op="="):
@@ -1752,64 +1755,150 @@ class LLVMCodegen:
         if map_args is None:
             raise NotImplementedError(f"LLVM backend v1 cannot map-set {map_type}")
         _key_type, value_type = map_args
-        key = self.scalar_to_nc_val(self.emit_expr(key_expr), key_expr.type)
+        key = self.emit_expr(key_expr)
+        key_ptr = self.value_to_i8_stack_ptr(key, llvm_type(key_expr.type), "__nc_map_key")
         value = self.emit_coerced_expr(value_expr, value_type)
         if assign_op != "=":
-            key_ptr_for_get = self.value_to_stack_ptr(key, NC_VAL_TYPE, "__nc_map_get_key")
-            old_out = self.alloca_at_entry("__nc_map_old_out", NC_VAL_TYPE)
-            self.builder.call(self.map_get_fn, [old_out, map_ptr, key_ptr_for_get, ir.Constant(ir.IntType(32), NC_VAL_TAGS[value_type])])
-            old = self.nc_val_to_scalar(self.builder.load(old_out, name="map.old.raw"), value_type)
+            old_out = self.alloca_at_entry("__nc_map_old_out", llvm_type(value_type))
+            self.builder.call(self.map_get_fn, [self.builder.bitcast(old_out, I8PTR), map_ptr, self.map_desc(map_type), key_ptr])
+            old = self.builder.load(old_out, name="map.old")
             if value_type == "str" and assign_op == "+=":
                 value = self.emit_str_cat(old, value)
             else:
                 value = self.emit_binary_values(old, assign_op[:-1], value, value_type)
-        key_ptr = self.value_to_stack_ptr(key, NC_VAL_TYPE, "__nc_map_set_key")
-        value_ptr = self.value_to_stack_ptr(self.scalar_to_nc_val(value, value_type), NC_VAL_TYPE, "__nc_map_set_value")
-        self.builder.call(self.map_set_fn, [map_ptr, key_ptr, value_ptr])
+        value_ptr = self.value_to_i8_stack_ptr(value, llvm_type(value_type), "__nc_map_set_value")
+        self.builder.call(self.map_set_fn, [map_ptr, self.map_desc(map_type), key_ptr, value_ptr])
         return ir.Constant(ir.IntType(1), 0)
 
-    def scalar_to_nc_val(self, value, nc_type: str):
-        if nc_type not in NC_VAL_TAGS:
-            raise NotImplementedError(f"LLVM backend v1 cannot use {nc_type} as map scalar")
-        raw_a = ir.Constant(ir.IntType(64), 0)
-        raw_b = ir.Constant(ir.IntType(64), 0)
-        if nc_type == "str":
-            ptr = self.builder.extract_value(value, 0)
-            raw_a = self.builder.ptrtoint(ptr, ir.IntType(64), name="map.str.ptr.int")
-            raw_b = self.builder.extract_value(value, 1)
-        elif nc_type in FLOAT_TYPES:
-            if nc_type == "f32":
-                bits32 = self.builder.bitcast(value, ir.IntType(32), name="map.f32.bits")
-                raw_a = self.builder.zext(bits32, ir.IntType(64), name="map.f32.bits64")
-            else:
-                raw_a = self.builder.bitcast(value, ir.IntType(64), name="map.f64.bits")
-        else:
-            int_value = value
-            if int_value.type.width < 64:
-                int_value = self.builder.sext(int_value, ir.IntType(64)) if nc_type in SIGNED_INT_TYPES else self.builder.zext(int_value, ir.IntType(64))
-            elif int_value.type.width > 64:
-                int_value = self.builder.trunc(int_value, ir.IntType(64))
-            raw_a = int_value
-        out = ir.Constant(NC_VAL_TYPE, ir.Undefined)
-        out = self.builder.insert_value(out, ir.Constant(ir.IntType(32), NC_VAL_TAGS[nc_type]), [0], name="map.val.tag")
-        out = self.builder.insert_value(out, raw_a, [1], name="map.val.a")
-        out = self.builder.insert_value(out, raw_b, [2], name="map.val.b")
-        return out
+    def map_desc(self, map_type: str):
+        if map_type in self.map_descs:
+            return self.map_descs[map_type]
+        key_type, value_type = parse_map_type(map_type)
+        key_size = self.sizeof_type(key_type)
+        value_size = self.sizeof_type(value_type)
+        key_align = self.alignof_type(key_type)
+        value_align = self.alignof_type(value_type)
+        key_offset = 0
+        value_offset = self.align_to(key_offset + key_size, value_align)
+        state_offset = self.align_to(value_offset + value_size, 4)
+        entry_size = self.align_to(state_offset + 4, max(8, key_align, value_align, 4))
+        name = "__nc_map_desc_" + self.type_label(map_type)
+        glob = ir.GlobalVariable(self.module, MAP_DESC_TYPE, name=name)
+        glob.linkage = "internal"
+        glob.global_constant = True
+        glob.initializer = ir.Constant.literal_struct([
+            ir.Constant(ir.IntType(64), key_size),
+            ir.Constant(ir.IntType(64), value_size),
+            ir.Constant(ir.IntType(64), entry_size),
+            ir.Constant(ir.IntType(64), key_offset),
+            ir.Constant(ir.IntType(64), value_offset),
+            ir.Constant(ir.IntType(64), state_offset),
+            self.map_hash_fn(key_type),
+            self.map_eq_fn(key_type),
+        ])
+        self.map_descs[map_type] = glob
+        return glob
 
-    def nc_val_to_scalar(self, value, nc_type: str):
-        raw_a = self.builder.extract_value(value, 1, name="map.val.a")
-        raw_b = self.builder.extract_value(value, 2, name="map.val.b")
-        if nc_type == "str":
-            ptr = self.builder.inttoptr(raw_a, I8PTR, name="map.str.ptr")
-            return self.str_value(ptr, raw_b)
-        if nc_type == "f32":
-            return self.builder.bitcast(self.builder.trunc(raw_a, ir.IntType(32), name="map.f32.bits32"), ir.FloatType(), name="map.f32")
-        if nc_type == "f64":
-            return self.builder.bitcast(raw_a, ir.DoubleType(), name="map.f64")
-        target_type = llvm_type(nc_type)
-        if target_type.width < 64:
-            return self.builder.trunc(raw_a, target_type, name="map.int.trunc")
-        return raw_a
+    def type_label(self, nc_type: str):
+        out = []
+        for ch in nc_type:
+            out.append(ch if ch.isalnum() else "_")
+        return "".join(out)
+
+    def map_hash_fn(self, key_type: str):
+        if key_type in self.map_hash_fns:
+            return self.map_hash_fns[key_type]
+        fn = ir.Function(self.module, MAP_HASH_FN_TYPE, name="__nc_map_hash_" + self.type_label(key_type))
+        self.map_hash_fns[key_type] = fn
+        entry = fn.append_basic_block("entry")
+        builder = ir.IRBuilder(entry)
+        key_ptr = builder.bitcast(fn.args[0], llvm_type(key_type).as_pointer())
+        key = builder.load(key_ptr, name="key")
+        h = self.emit_map_hash_value(builder, key, key_type, ir.Constant(ir.IntType(64), 14695981039346656037))
+        builder.ret(h)
+        return fn
+
+    def map_eq_fn(self, key_type: str):
+        if key_type in self.map_eq_fns:
+            return self.map_eq_fns[key_type]
+        fn = ir.Function(self.module, MAP_EQ_FN_TYPE, name="__nc_map_eq_" + self.type_label(key_type))
+        self.map_eq_fns[key_type] = fn
+        entry = fn.append_basic_block("entry")
+        builder = ir.IRBuilder(entry)
+        left_ptr = builder.bitcast(fn.args[0], llvm_type(key_type).as_pointer())
+        right_ptr = builder.bitcast(fn.args[1], llvm_type(key_type).as_pointer())
+        left = builder.load(left_ptr, name="left")
+        right = builder.load(right_ptr, name="right")
+        eq = self.emit_map_eq_value(builder, left, right, key_type)
+        builder.ret(builder.zext(eq, ir.IntType(32)))
+        return fn
+
+    def emit_map_hash_mix(self, builder, h, value):
+        if isinstance(value.type, ir.IntType):
+            if value.type.width < 64:
+                value = builder.zext(value, ir.IntType(64))
+            elif value.type.width > 64:
+                value = builder.trunc(value, ir.IntType(64))
+        elif isinstance(value.type, ir.PointerType):
+            value = builder.ptrtoint(value, ir.IntType(64))
+        mixed = builder.xor(h, value)
+        return builder.mul(mixed, ir.Constant(ir.IntType(64), 1099511628211))
+
+    def emit_map_hash_value(self, builder, value, typ, h):
+        if typ == "str":
+            ptr = builder.extract_value(value, 0)
+            length = builder.extract_value(value, 1)
+            idx_slot = builder.alloca(ir.IntType(64), name="hash.idx")
+            h_slot = builder.alloca(ir.IntType(64), name="hash.h")
+            builder.store(ir.Constant(ir.IntType(64), 0), idx_slot)
+            builder.store(h, h_slot)
+            cond_bb = builder.function.append_basic_block("hash.str.cond")
+            body_bb = builder.function.append_basic_block("hash.str.body")
+            end_bb = builder.function.append_basic_block("hash.str.end")
+            builder.branch(cond_bb)
+            builder.position_at_end(cond_bb)
+            idx = builder.load(idx_slot)
+            builder.cbranch(builder.icmp_unsigned("<", idx, length), body_bb, end_bb)
+            builder.position_at_end(body_bb)
+            ch = builder.load(builder.gep(ptr, [idx], inbounds=True))
+            next_h = self.emit_map_hash_mix(builder, builder.load(h_slot), ch)
+            builder.store(next_h, h_slot)
+            builder.store(builder.add(idx, ir.Constant(ir.IntType(64), 1)), idx_slot)
+            builder.branch(cond_bb)
+            builder.position_at_end(end_bb)
+            return builder.load(h_slot)
+        if typ in STRUCT_FIELDS:
+            for i, (_field_name, field_type) in enumerate(STRUCT_FIELDS[typ]):
+                h = self.emit_map_hash_value(builder, builder.extract_value(value, i), field_type, h)
+            return h
+        if isinstance(typ, str) and (typ.startswith("*") or typ.startswith("?*")):
+            return self.emit_map_hash_mix(builder, h, value)
+        if typ in ENUM_VARIANTS or typ in INT_TYPES:
+            return self.emit_map_hash_mix(builder, h, value)
+        raise NotImplementedError(f"LLVM backend v1 cannot hash map key {typ}")
+
+    def emit_map_eq_value(self, builder, left, right, typ):
+        if typ == "str":
+            fn = (
+                self.module.globals["__nc_str_eq_ptr"]
+                if "__nc_str_eq_ptr" in self.module.globals else
+                ir.Function(self.module, ir.FunctionType(ir.IntType(32), [STR_TYPE.as_pointer(), STR_TYPE.as_pointer()]), name="__nc_str_eq_ptr")
+            )
+            left_ptr = builder.alloca(STR_TYPE)
+            right_ptr = builder.alloca(STR_TYPE)
+            builder.store(left, left_ptr)
+            builder.store(right, right_ptr)
+            eq = builder.call(fn, [left_ptr, right_ptr])
+            return builder.icmp_signed("!=", eq, ir.Constant(ir.IntType(32), 0))
+        if typ in STRUCT_FIELDS:
+            result = ir.Constant(ir.IntType(1), 1)
+            for i, (_field_name, field_type) in enumerate(STRUCT_FIELDS[typ]):
+                result = builder.and_(
+                    result,
+                    self.emit_map_eq_value(builder, builder.extract_value(left, i), builder.extract_value(right, i), field_type),
+                )
+            return result
+        return builder.icmp_unsigned("==", left, right)
 
     def ensure_printf(self):
         if self.printf is None:
@@ -1890,12 +1979,11 @@ class LLVMCodegen:
             self.cstr_to_str_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [str_ptr, I8PTR]), name="__nc_cstr_to_str_out")
             raw_slice_ptr = RAW_SLICE_TYPE.as_pointer()
             self.os_set_args_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [ir.IntType(32), I8PTR.as_pointer()]), name="__nc_os_set_args")
-            self.map_init_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [MAP_TYPE.as_pointer()]), name="__nc_map_init")
-            nc_val_ptr = NC_VAL_TYPE.as_pointer()
-            self.map_get_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [nc_val_ptr, MAP_TYPE.as_pointer(), nc_val_ptr, ir.IntType(32)]), name="__nc_map_get")
-            self.map_set_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [MAP_TYPE.as_pointer(), nc_val_ptr, nc_val_ptr]), name="__nc_map_set")
-            self.map_has_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [MAP_TYPE.as_pointer(), nc_val_ptr]), name="__nc_map_has")
-            self.map_delete_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [MAP_TYPE.as_pointer(), nc_val_ptr]), name="__nc_map_delete")
+            self.map_init_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [MAP_TYPE.as_pointer(), MAP_DESC_PTR]), name="__nc_map_init")
+            self.map_get_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [I8PTR, MAP_TYPE.as_pointer(), MAP_DESC_PTR, I8PTR]), name="__nc_map_get")
+            self.map_set_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [MAP_TYPE.as_pointer(), MAP_DESC_PTR, I8PTR, I8PTR]), name="__nc_map_set")
+            self.map_has_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [MAP_TYPE.as_pointer(), MAP_DESC_PTR, I8PTR]), name="__nc_map_has")
+            self.map_delete_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [MAP_TYPE.as_pointer(), MAP_DESC_PTR, I8PTR]), name="__nc_map_delete")
             self.map_clear_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [MAP_TYPE.as_pointer()]), name="__nc_map_clear")
             self.slice_copy_fn = ir.Function(
                 self.module,
@@ -1922,6 +2010,9 @@ class LLVMCodegen:
         slot = self.alloca_at_entry(name, typ)
         self.builder.store(value, slot)
         return slot
+
+    def value_to_i8_stack_ptr(self, value, typ, name):
+        return self.builder.bitcast(self.value_to_stack_ptr(value, typ, name), I8PTR)
 
     def malloc_array(self, elem_type: str, count):
         self.ensure_gc_runtime()
@@ -2022,7 +2113,7 @@ class LLVMCodegen:
         if nc_type == "str":
             return 16
         if nc_type == "nc_map" or parse_map_type(nc_type) is not None:
-            return 32
+            return 40
         if isinstance(nc_type, str) and (nc_type.startswith("*") or nc_type.startswith("?*")):
             return 8
         if parse_fn_type(nc_type) is not None:

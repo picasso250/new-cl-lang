@@ -143,7 +143,8 @@ v1 不提供 `os.setenv`、`os.unsetenv`、`os.chdir`。
 ## map 边界
 
 - `map[K,V]` 是内建泛型 map 类型，构造语法为 `map[K,V]()`.
-- v1 只支持标量 key/value：`i8/i16/i32/i64/u8/u16/u32/u64/f32/f64/bool/rune/str`。
+- key 必须是 hash-comparable：非 float 的可比较类型，包括整数、bool、rune、str、enum、指针、nullable pointer，以及字段递归满足该规则的 struct。
+- value 必须是有零值的 sized 类型；`void`、非空指针和递归包含无零值字段的 struct 不可作为 value。
 - `m[k]` 要求 `k: K`，返回 `V`；缺失 key 返回 `V` 的零值。
 - `m[k] = v` 要求 `v: V`；复合赋值按 `V` 类型复用对应运算符规则。
 - `m.has(k)` 要求 `k: K`，返回 `i32`。
@@ -152,6 +153,6 @@ v1 不提供 `os.setenv`、`os.unsetenv`、`os.chdir`。
 
 ## size_of(T)
 
-`size_of(T)` 返回当前 LLVM/ncrt ABI 下类型 `T` 的运行时布局大小：基础标量按实际宽度，`str` 为 16，`[]T` 为 24，`map[K,V]` 为 32，函数值与接口值为 16，指针与 nullable pointer 为 8，enum/rune 为 4，数组按元素 ABI stride 乘长度，struct 按字段偏移、padding 和最终对齐计算。
+`size_of(T)` 返回当前 LLVM/ncrt ABI 下类型 `T` 的运行时布局大小：基础标量按实际宽度，`str` 为 16，`[]T` 为 24，`map[K,V]` 为 40，函数值与接口值为 16，指针与 nullable pointer 为 8，enum/rune 为 4，数组按元素 ABI stride 乘长度，struct 按字段偏移、padding 和最终对齐计算。
 
 `size_of(void)` 非法；命名/限定类型必须存在且遵守跨模块 `_` 私有可见性；嵌套类型组件会递归校验。

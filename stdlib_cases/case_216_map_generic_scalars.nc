@@ -6,7 +6,6 @@ import io
 # STDOUT: 4
 # STDOUT: Z
 # STDOUT: 3.5
-# STDOUT: 1.25
 
 fun main() {
     let ss = map[str,str]()
@@ -34,11 +33,7 @@ fun main() {
     ir[1] = 'Z'
     io.println(ir[1])
 
-    let ff = map[f32,f64]()
-    ff[1.5f32] = 3.5
-    io.println(ff[1.5f32])
-
-    let fi = map[f64,f32]()
-    fi[2.5] = 1.25f32
-    io.println(fi[2.5])
+    let fi = map[i32,f64]()
+    fi[2] = 3.5
+    io.println(fi[2])
 }

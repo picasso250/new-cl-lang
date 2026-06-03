@@ -1,6 +1,6 @@
 struct Box { value: i32 }
-# ERROR: map key type: expected scalar, got Box
+# ERROR: map key type: expected hash-comparable, got []i32
 
 fun main() {
-    let m = map[Box,i32]()
+    let m = map[[]i32,i32]()
 }
