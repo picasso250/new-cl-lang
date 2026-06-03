@@ -242,7 +242,8 @@ class Parser:
                     if self.peek().kind == TokenKind.DOT:
                         self.advance()
                         constraint = f"{constraint}.{self.expect(TokenKind.IDENT).value}"
-                    if constraint not in {"any", "types.Cmp"}:
+                    from compiler.constraints import KNOWN_CONSTRAINTS
+                    if constraint not in KNOWN_CONSTRAINTS:
                         raise ParseError(f"unknown generic constraint {constraint}")
                 params.append(name)
                 constraints[name] = constraint

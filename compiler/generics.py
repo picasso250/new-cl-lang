@@ -120,6 +120,10 @@ def monomorphize(program: Program) -> Program:
         subst = dict(zip(tmpl.type_params, args))
         inst = _substitute_node(copy.deepcopy(tmpl), subst)
         inst.name = _instance_name(base, args)
+        inst._generic_origin_kind = "type"
+        inst._generic_origin_name = base
+        inst._generic_constraints = [(param, arg, tmpl.type_param_constraints.get(param, "any"))
+                                     for param, arg in zip(tmpl.type_params, args)]
         generated.append(inst)
 
     def request_func(base, args):
@@ -141,6 +145,10 @@ def monomorphize(program: Program) -> Program:
         subst = dict(zip(tmpl.type_params, args))
         inst = _substitute_node(copy.deepcopy(tmpl), subst)
         inst.name = _instance_name(base, args)
+        inst._generic_origin_kind = "function"
+        inst._generic_origin_name = base
+        inst._generic_constraints = [(param, arg, tmpl.type_param_constraints.get(param, "any"))
+                                     for param, arg in zip(tmpl.type_params, args)]
         generated.append(inst)
 
     def rewrite_type(t):

@@ -1,7 +1,7 @@
 import io
 import types
 
-fun min2[T types.Cmp](a: T, b: T): T {
+fun min2[T types.Ord](a: T, b: T): T {
     if a < b { a } else { b }
 }
 

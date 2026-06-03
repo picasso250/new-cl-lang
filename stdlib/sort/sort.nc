@@ -1,6 +1,6 @@
 import types
 
-fun sort[T types.Cmp](items: []T) {
+fun sort[T types.Ord](items: []T) {
     for i in 1..len(items) {
         let value = items[i]
         let j = i

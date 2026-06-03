@@ -7,6 +7,7 @@
 import copy
 
 from compiler.builtins import NUMERIC_TYPES, SCALAR_TYPES, STRINGIFIABLE_TYPES, infer_builtin_call
+from compiler.constraints import EQ_CONSTRAINT, HASH_CONSTRAINT, ORD_CONSTRAINT, ZERO_CONSTRAINT
 from compiler.type_ref import (
     ArrayTypeRef, FunctionType, GenericType, NamedType, PointerType, SliceType,
     format_type_ref, parse_fn_type, parse_map_type, parse_slice_type, parse_type_ref,
@@ -478,6 +479,30 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         if err is not None:
             fail(f"comparison: type {err} is not comparable", node)
 
+    def constraint_error_type(t, constraint):
+        if constraint == "any":
+            return None
+        if constraint == EQ_CONSTRAINT:
+            return comparable_error_type(t)
+        if constraint == ORD_CONSTRAINT:
+            return None if t in NUMERIC_TYPES else t
+        if constraint == HASH_CONSTRAINT:
+            return hash_comparable_error_type(t)
+        if constraint == ZERO_CONSTRAINT:
+            return zero_value_error_type(t)
+        return t
+
+    def validate_generic_constraints(stmt):
+        constraints = getattr(stmt, "_generic_constraints", None)
+        if not constraints:
+            return
+        origin_kind = getattr(stmt, "_generic_origin_kind", "function")
+        origin_name = getattr(stmt, "_generic_origin_name", getattr(stmt, "name", "<generic>"))
+        for _param, arg, constraint in constraints:
+            err = constraint_error_type(arg, constraint)
+            if err is not None:
+                fail(f"generic {origin_kind} {origin_name}: type arg {arg} does not satisfy {constraint}", stmt)
+
     def require_public_qualified(name, node=None):
         if isinstance(name, str) and "." in name and name.rsplit(".", 1)[1].startswith("_"):
             fail(f"symbol '{name}' is private", node)
@@ -510,6 +535,10 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         for pname, ptype in fn.params:
             if not is_extern_abi_type(ptype) or ptype == "void":
                 fail(f"extern function {fn.name}: unsupported parameter {pname}: {ptype}", fn)
+
+    for top_stmt in program.statements:
+        if isinstance(top_stmt, (FunctionDeclaration, StructDecl)):
+            validate_generic_constraints(top_stmt)
 
     def is_assignable_type(actual, expected):
         if actual == expected:

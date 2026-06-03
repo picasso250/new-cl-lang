@@ -1,4 +1,4 @@
-# ERROR: generic function sort.sort: type arg Item does not satisfy types.Cmp
+# ERROR: generic function sort.sort: type arg Item does not satisfy types.Ord
 
 import sort
 

@@ -113,17 +113,20 @@ v1 不提供 `os.setenv`、`os.unsetenv`、`os.chdir`。
 
 ### sort
 
-- `sort.sort[T types.Cmp](items: []T)`
+- `sort.sort[T types.Ord](items: []T)`
 - `sort.by[T](items: []T, less: fun(T, T) bool)`
 - `sort.is_sorted_by[T](items: []T, less: fun(T, T) bool): bool`
 
-`sort.sort` 对 `types.Cmp` 类型原地稳定升序排序。`sort.by` 原地稳定排序；`less(a, b)` 返回 `true` 表示 `a` 应排在 `b` 前。
+`sort.sort` 对 `types.Ord` 类型原地稳定升序排序。`sort.by` 原地稳定排序；`less(a, b)` 返回 `true` 表示 `a` 应排在 `b` 前。
 
 ### types
 
-- `types.Cmp`：泛型约束，当前支持有符号整数、无符号整数和浮点类型。
+- `types.Eq`：泛型约束，支持 `==` / `!=` 的类型。
+- `types.Ord`：泛型约束，支持 `<` / `>` / `<=` / `>=` 的类型，当前为数值类型。
+- `types.Hash`：泛型约束，可作为 `map` key 的类型。
+- `types.Zero`：泛型约束，有零值的类型。
 
-`types.Cmp` 是编译器识别的约束名，不是运行时值类型；当前不包含 `str`。
+这些约束是编译器识别的约束名，不是运行时值类型。完整类型属性矩阵见 `docs/generics.md`。
 
 ## 语言级内建
 

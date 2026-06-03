@@ -102,3 +102,7 @@
 - 2026-06-03: 预备实现窄版泛型约束与默认排序：新增编译器识别的 `types.Cmp` 约束，支持 `sort.sort[T types.Cmp]([]T)` 对有序数值类型原地稳定排序，暂不引入完整 type-set 语法，也暂不把 `str` 纳入有序类型。why：sort 默认排序需要比较约束，但当前泛型 v1 只有 any，先以具体 case 推动最小约束能力。
 
 - 2026-06-03: 已实现窄版泛型约束与默认排序：新增 `types.Cmp` 编译器约束模块名，泛型参数支持 `T types.Cmp` 并在单态化时校验类型实参；`types.Cmp` 当前限定为数值类型，`str` 和 struct 明确拒绝。`sort` 新增 `sort.sort[T types.Cmp]` 原地稳定升序排序，保留 `sort.by` 用于自定义比较。同步 design.md/stdlib.md，新增 case_276~279 与泛型约束 case。验证：python tests/test_stdlib.py；python tests/test_language_cases.py；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q。
+
+- 2026-06-03: 预备补齐 types 约束族：将泛型约束从单一 types.Cmp 替换为 types.Eq/types.Ord/types.Hash/types.Zero，并新增泛型类型属性矩阵文档。why：当前 Eq/Ord/Hash/Zero 能力已经在比较、排序、map key/value 语义中分散存在，需要收敛成可复用的标准约束边界。
+
+- 2026-06-03: 已补齐 types 约束族：删除公开 types.Cmp 边界，新增 types.Eq/types.Ord/types.Hash/types.Zero，sort.sort 改用 types.Ord；泛型实例化保留原始约束元数据并在 typecheck 阶段按符号表递归校验 Eq/Hash/Zero，新增 docs/generics.md 记录完整类型属性矩阵。同步 design.md/stdlib.md，新增 case_277~284 覆盖约束族和旧名拒绝。验证：python tests/test_language_cases.py 通过 241/241；python tests/test_stdlib.py 通过 60/60；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q 通过 87 passed, 1 skipped。
