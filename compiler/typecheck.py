@@ -277,6 +277,43 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
     def is_iface_type(t):
         return isinstance(t, str) and t in getattr(symtab, "_ifaces", {})
 
+    def comparable_error_type(t, seen=None):
+        seen = seen or set()
+        if t in seen:
+            return None
+        seen.add(t)
+        if t in NUMERIC_TYPES or t in {"bool", "str", "rune"}:
+            return None
+        if is_pointer_type(t) or is_nullable_pointer_type(t):
+            return None
+        if parse_map_type(t) is not None:
+            return t
+        if parse_fn_type(t) is not None:
+            return t
+        ref = parse_type_ref(t)
+        if isinstance(ref, SliceType) or isinstance(ref, ArrayTypeRef) or isinstance(ref, FunctionType):
+            return t
+        if is_iface_type(t):
+            return t
+        try:
+            sym = symtab.lookup(t)
+        except NameError:
+            return t
+        if sym.nc_type == "enum":
+            return None
+        if sym.nc_type == "struct":
+            for _fname, ftype in symtab.lookup_struct(t).items():
+                err = comparable_error_type(ftype, seen)
+                if err is not None:
+                    return err
+            return None
+        return t
+
+    def require_comparable(t, node=None):
+        err = comparable_error_type(t)
+        if err is not None:
+            fail(f"comparison: type {err} is not comparable", node)
+
     def require_public_qualified(name, node=None):
         if isinstance(name, str) and "." in name and name.rsplit(".", 1)[1].startswith("_"):
             fail(f"symbol '{name}' is private", node)
@@ -451,6 +488,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                     node.type = "bool"
                     return
                 require_type(node.right.type, node.left.type, "comparison", node)
+                require_comparable(node.left.type, node)
                 if is_rune_type(node.left.type) and node.op not in ("==", "!="):
                     fail(f"rune type: operator {node.op} is not allowed", node)
                 node.type = "bool"

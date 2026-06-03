@@ -82,3 +82,7 @@
 - 2026-06-01: 预备补齐标准库实用核心：新增 strconv/math/sort，扩展 strings。why：标准库边界已显式模块化，需要把常用转换、字符串、数学、排序能力从 case 推进到可依赖 API。
 
 - 2026-06-01: 已完成标准库实用核心：新增 strconv/math/sort，扩展 strings，并同步 stdlib/design 文档。验证：tests/test_stdlib.py、tests/test_language_cases.py、pytest test_llvm_backend/test_builtin_boundary/test_type_ref/test_projects 均通过；项目 import 测试改用非保留模块名 calc，以符合标准库模块名保留规则。
+
+- 2026-06-03: 预备实现 struct 值结构相等：同类型 struct 的 `==` / `!=` 按字段递归比较，同时收紧不可比较类型的 typecheck。why：当前前端会放行同类型 struct 比较，但 LLVM 后端没有聚合比较语义，`struct ==` case 需要明确语言能力并避免后端崩溃。
+
+- 2026-06-03: 已实现 struct 值结构相等：typecheck 新增递归可比较性检查，LLVM 后端按字段递归 lowering `==` / `!=`，并明确拒绝 slice、数组、map、函数值、接口值等不可比较类型。已同步 design.md，新增 case_250~257 覆盖正向和错误路径。验证：`python tests/test_language_cases.py` 通过 214/214；`python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py -q` 通过 61 passed, 1 skipped；`python tests/test_stdlib.py` 通过 51/51；`python -m pytest tests/test_projects.py -q` 通过 26/26。

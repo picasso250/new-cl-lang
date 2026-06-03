@@ -1215,6 +1215,11 @@ class LLVMCodegen:
             if node.op == "!=":
                 return self.builder.not_(eq)
             return eq
+        if typ in STRUCT_FIELDS and node.op in ("==", "!="):
+            eq = self.emit_struct_eq(left, right, typ)
+            if node.op == "!=":
+                return self.builder.not_(eq)
+            return eq
         if typ == "str" and node.op == "+":
             return self.emit_str_cat(left, right)
         return self.emit_binary_values(left, node.op, right, typ)
@@ -2155,6 +2160,22 @@ class LLVMCodegen:
         right_ptr = self.value_to_stack_ptr(right, STR_TYPE, "__nc_str_eq_right")
         eq = self.builder.call(fn, [left_ptr, right_ptr], name="str.eq.i32")
         return self.builder.icmp_signed("!=", eq, ir.Constant(ir.IntType(32), 0), name="str.eq")
+
+    def emit_struct_eq(self, left, right, typ):
+        result = ir.Constant(ir.IntType(1), 1)
+        for i, (_field_name, field_type) in enumerate(STRUCT_FIELDS[typ]):
+            left_field = self.builder.extract_value(left, [i], name="struct.eq.left")
+            right_field = self.builder.extract_value(right, [i], name="struct.eq.right")
+            field_eq = self.emit_eq_values(left_field, right_field, field_type)
+            result = self.builder.and_(result, field_eq, name="struct.eq.and")
+        return result
+
+    def emit_eq_values(self, left, right, typ):
+        if typ == "str":
+            return self.emit_str_eq(left, right)
+        if typ in STRUCT_FIELDS:
+            return self.emit_struct_eq(left, right, typ)
+        return self.emit_binary_values(left, "==", right, typ)
 
     def global_c_string(self, text: str, hint: str):
         key = (hint, text)
