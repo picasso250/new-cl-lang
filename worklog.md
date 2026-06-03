@@ -90,3 +90,7 @@
 - 2026-06-03: 预备优化 map 实现：质疑所有 key/value 统一 nc_val 装箱，改为 typed map descriptor；key 收敛为非 float hash-comparable，value 放宽为任意有零值 sized 类型，并补 GC 正确性 case。why：当前装箱 ABI 阻碍 map 扩展与性能，且 float key 语义和语言比较不一致。
 
 - 2026-06-03: 已优化 map 实现：runtime map ABI 从统一 nc_val 装箱改为 typed descriptor + typed bytes；key 改为非 float hash-comparable，支持 struct/enum/pointer/nullable pointer 等；value 放宽为任意有零值 sized 类型，并补充 struct value 与 GC 保活 case。同步 design.md/stdlib.md，map ABI size_of 变为 40。验证：python tests/test_stdlib.py；python tests/test_language_cases.py；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q。
+
+- 2026-06-03: 预备实现显式类型默认参数：支持 fun foo(a: T, b: T = value) 并在调用端补齐尾部默认实参，不改变函数 ABI、函数类型或闭包调用 ABI。why：默认参数是常见函数 ergonomics case，但必须保持 NC 参数显式类型和调用语义可预测。
+
+- 2026-06-03: 已实现显式类型默认参数：函数/方法参数支持 name: T = expr，默认参数必须位于尾部，普通函数/方法调用在 typecheck 阶段补齐缺失尾部实参；默认值按声明处上下文检查，可引用前序参数和可见全局符号；extern、iface、函数表达式/函数类型不支持默认参数，ABI 不变。同步 design.md，新增 case_258~270 覆盖正向、泛型、方法和错误路径。验证：python tests/test_language_cases.py 通过 227/227；python tests/test_stdlib.py 通过 56/56；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q 通过 87 passed, 1 skipped。

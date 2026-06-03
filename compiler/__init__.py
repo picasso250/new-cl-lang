@@ -70,7 +70,8 @@ def _expand_type_aliases_in_module(module: Module):
         if not hasattr(node, "__dict__"):
             return
         if isinstance(node, FunctionDeclaration):
-            node.params = [(n, expand_type(t)) for n, t in node.params]
+            for param in node.params:
+                param.type = expand_type(param.type)
             node.return_type = expand_type(node.return_type)
             node.receiver_type = expand_type(node.receiver_type)
         elif isinstance(node, StructDecl):
@@ -79,7 +80,8 @@ def _expand_type_aliases_in_module(module: Module):
             node.methods = [(n, [(pn, expand_type(pt)) for pn, pt in params], expand_type(rt)) for n, params, rt in node.methods]
             node.embeds = [expand_type(t) for t in node.embeds]
         elif isinstance(node, FunctionExpr):
-            node.params = [(n, expand_type(t)) for n, t in node.params]
+            for param in node.params:
+                param.type = expand_type(param.type)
             node.return_type = expand_type(node.return_type)
         elif isinstance(node, StructLiteral):
             node.name = expand_type(node.name)
@@ -192,7 +194,8 @@ def _rewrite_module_names(module: Module, entry: bool):
             if not node.receiver_name:
                 node.name = q(node.name)
             node.return_type = _qual_type(node.return_type, module.name, local_names)
-            node.params = [(n, _qual_type(t, module.name, local_names)) for n, t in node.params]
+            for param in node.params:
+                param.type = _qual_type(param.type, module.name, local_names)
             node.receiver_type = _qual_type(node.receiver_type, module.name, local_names)
         elif isinstance(node, StructDecl):
             node.name = q(node.name)
@@ -211,7 +214,12 @@ def _rewrite_module_names(module: Module, entry: bool):
             for fn in node.functions:
                 fn.name = q(fn.name)
                 fn.return_type = _qual_type(fn.return_type, module.name, local_names)
-                fn.params = [(n, _qual_type(t, module.name, local_names)) for n, t in fn.params]
+                for param in fn.params:
+                    param.type = _qual_type(param.type, module.name, local_names)
+        elif isinstance(node, FunctionExpr):
+            node.return_type = _qual_type(node.return_type, module.name, local_names)
+            for param in node.params:
+                param.type = _qual_type(param.type, module.name, local_names)
         elif isinstance(node, FunctionCall):
             node.name = q(node.name)
         elif isinstance(node, SizeOfType):

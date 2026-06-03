@@ -58,7 +58,8 @@ def _walk_values(node, fn):
 def _substitute_node(node, subst: dict[str, str]):
     def apply(n):
         if isinstance(n, FunctionDeclaration):
-            n.params = [(name, _sub_type(t, subst)) for name, t in n.params]
+            for param in n.params:
+                param.type = _sub_type(param.type, subst)
             n.return_type = _sub_type(n.return_type, subst)
             n.receiver_type = _sub_type(n.receiver_type, subst)
             n.type_params = []
@@ -154,7 +155,8 @@ def monomorphize(program: Program) -> Program:
 
     def rewrite_node(n):
         if isinstance(n, FunctionDeclaration):
-            n.params = [(name, rewrite_type(t)) for name, t in n.params]
+            for param in n.params:
+                param.type = rewrite_type(param.type)
             n.return_type = rewrite_type(n.return_type)
             n.receiver_type = rewrite_type(n.receiver_type)
         elif isinstance(n, StructDecl):

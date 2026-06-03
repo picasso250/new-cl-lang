@@ -246,6 +246,29 @@ class Parser:
         self.expect(TokenKind.RBRACKET)
         return params
 
+    def _parse_param(self, *, allow_default: bool) -> Param:
+        pname = self.expect(TokenKind.IDENT).value
+        self.expect(TokenKind.COLON)
+        ptype = self._parse_type()
+        default = None
+        if self.peek().kind == TokenKind.EQ:
+            if not allow_default:
+                raise ParseError("default parameters are not supported here")
+            self.advance()
+            default = self.parse_expression()
+        return Param(pname, ptype, default)
+
+    def _parse_param_list(self, *, allow_default: bool) -> list[Param]:
+        params = []
+        if self.peek().kind != TokenKind.RPAREN:
+            params.append(self._parse_param(allow_default=allow_default))
+            while self.peek().kind == TokenKind.COMMA:
+                self.advance()
+                if not allow_default and self.peek().kind in (TokenKind.DOT, TokenKind.DOTDOT):
+                    raise ParseError("extern v1 does not support varargs")
+                params.append(self._parse_param(allow_default=allow_default))
+        return params
+
     def _parse_function(self):
         self.advance()  # 吃 fun
         # 方法接收者？
@@ -262,18 +285,7 @@ class Parser:
         name = self.expect(TokenKind.IDENT).value
         type_params = self._parse_type_params()
         self.expect(TokenKind.LPAREN)
-        params = []
-        if self.peek().kind != TokenKind.RPAREN:
-            pname = self.expect(TokenKind.IDENT).value
-            self.expect(TokenKind.COLON)
-            ptype = self._parse_type()
-            params.append((pname, ptype))
-            while self.peek().kind == TokenKind.COMMA:
-                self.advance()
-                pname = self.expect(TokenKind.IDENT).value
-                self.expect(TokenKind.COLON)
-                ptype = self._parse_type()
-                params.append((pname, ptype))
+        params = self._parse_param_list(allow_default=True)
         self.expect(TokenKind.RPAREN)
         return_type = None
         return_type_explicit = False
@@ -295,20 +307,7 @@ class Parser:
         if type_params:
             raise ParseError("generic extern functions are not supported")
         self.expect(TokenKind.LPAREN)
-        params = []
-        if self.peek().kind != TokenKind.RPAREN:
-            pname = self.expect(TokenKind.IDENT).value
-            self.expect(TokenKind.COLON)
-            ptype = self._parse_type()
-            params.append((pname, ptype))
-            while self.peek().kind == TokenKind.COMMA:
-                self.advance()
-                if self.peek().kind in (TokenKind.DOT, TokenKind.DOTDOT):
-                    raise ParseError("extern v1 does not support varargs")
-                pname = self.expect(TokenKind.IDENT).value
-                self.expect(TokenKind.COLON)
-                ptype = self._parse_type()
-                params.append((pname, ptype))
+        params = self._parse_param_list(allow_default=False)
         self.expect(TokenKind.RPAREN)
         return_type = None
         return_type_explicit = False
@@ -329,18 +328,7 @@ class Parser:
 
     def _parse_function_expr(self, start):
         self.expect(TokenKind.LPAREN)
-        params = []
-        if self.peek().kind != TokenKind.RPAREN:
-            pname = self.expect(TokenKind.IDENT).value
-            self.expect(TokenKind.COLON)
-            ptype = self._parse_type()
-            params.append((pname, ptype))
-            while self.peek().kind == TokenKind.COMMA:
-                self.advance()
-                pname = self.expect(TokenKind.IDENT).value
-                self.expect(TokenKind.COLON)
-                ptype = self._parse_type()
-                params.append((pname, ptype))
+        params = self._parse_param_list(allow_default=False)
         self.expect(TokenKind.RPAREN)
         return_type = None
         return_type_explicit = False
@@ -449,18 +437,7 @@ class Parser:
                     raise ParseError("iface methods cannot have receivers")
                 mname = self.expect(TokenKind.IDENT).value
                 self.expect(TokenKind.LPAREN)
-                params = []
-                if self.peek().kind != TokenKind.RPAREN:
-                    pname = self.expect(TokenKind.IDENT).value
-                    self.expect(TokenKind.COLON)
-                    ptype = self._parse_type()
-                    params.append((pname, ptype))
-                    while self.peek().kind == TokenKind.COMMA:
-                        self.advance()
-                        pname = self.expect(TokenKind.IDENT).value
-                        self.expect(TokenKind.COLON)
-                        ptype = self._parse_type()
-                        params.append((pname, ptype))
+                params = self._parse_param_list(allow_default=False)
                 self.expect(TokenKind.RPAREN)
                 ret = "void"
                 if self.peek().kind == TokenKind.COLON:

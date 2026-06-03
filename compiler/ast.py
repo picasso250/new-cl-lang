@@ -154,6 +154,22 @@ class ExternBlock(Node):
         return f"Extern({lib}, {self.functions})"
 
 
+class Param(Node):
+    """Function parameter with optional default expression."""
+    def __init__(self, name: str, type_name: str, default=None):
+        self.name = name
+        self.type = type_name
+        self.default = default
+
+    def __iter__(self):
+        yield self.name
+        yield self.type
+
+    def __repr__(self):
+        default = f" = {self.default}" if self.default is not None else ""
+        return f"{self.name}: {self.type}{default}"
+
+
 class EnumDecl(Node):
     """enum Name { A, B, C } —— 纯标签，无变体数据。"""
     def __init__(self, name: str, variants: list[str]):
@@ -294,7 +310,7 @@ class FunctionDeclaration(Node):
                  return_type_explicit: bool = False, type_params: list[str] | None = None):
         self.name = name
         self.extern_symbol = None
-        self.params = params   # [(name, type), ...]
+        self.params = params   # [Param, ...]
         self.return_type = return_type
         self.return_type_explicit = return_type_explicit
         self.body = body
@@ -303,7 +319,7 @@ class FunctionDeclaration(Node):
         self.type_params = type_params or []
 
     def __repr__(self):
-        p = ', '.join(f'{n}: {t}' for n, t in self.params)
+        p = ', '.join(str(param) for param in self.params)
         r = f': {self.return_type}' if self.return_type else ''
         if self.receiver_name:
             return f"Method({self.receiver_type}.{self.name}({p}){r})"
@@ -321,7 +337,7 @@ class FunctionExpr(Node):
         self.captures = []  # [(name, type), ...] filled by typecheck
 
     def __repr__(self):
-        p = ', '.join(f'{n}: {t}' for n, t in self.params)
+        p = ', '.join(str(param) for param in self.params)
         r = f': {self.return_type}' if self.return_type else ''
         return f"FunExpr({p}{r} {self.body})"
 
