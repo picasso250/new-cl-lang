@@ -1,15 +1,23 @@
 # NC (New C)
 
-NC 是一个“更好的 C”实验编译器：以 LLVM 为唯一后端，自带构建系统和运行时库，使用 GC 管理内存，追求显式、简单、可预测的语言边界。
+NC 是一个“更好的 C”实验编译器：以 LLVM 为后端，自带构建系统和运行时库，使用 GC 管理内存，追求显式、简单、可预测的语言边界。
 
 ## 当前状态
 
 - 项目按 case 驱动演进：每个语言能力都由具体 case 推动。
-- 编译器当前是 LLVM-only；旧 C 后端和 `--backend` 入口已删除。
+- 编译器当前是 LLVM-only。
 - 模块系统采用“目录即模块”：同目录 `.nc` 文件自动互见，跨模块必须显式 `import` 并限定访问。
 - 标准库通过显式模块导入使用；标准库 API 见 [docs/stdlib.md](docs/stdlib.md)。
 - 构建目标支持 `windows-x64` 和 `linux-x64`。
-- 不向前兼容未进入当前设计的旧语法或旧 API。
+- 不向前兼容旧语法或旧 API。
+
+## 语言表面很小
+
+NC 刻意控制关键字数量，让语言表面保持小而直接。当前保留词只有：
+
+```text
+let if else fun ret err is struct iface enum match for in break new defer nil import extern type true false
+```
 
 ## 快速开始
 

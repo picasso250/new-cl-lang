@@ -144,3 +144,7 @@
 - 2026-06-18: 预备添加 README 并整理标准库文档位置：新增中文快速入口 README，将标准库 API 文档移入 docs/stdlib.md 并同步当前引用。why：仓库缺少首次打开时的项目入口，标准库文档也应和 generics/archive 等专题文档归入 docs。
 
 - 2026-06-18: 已添加 README 并整理标准库文档位置：新增中文快速入口 README，覆盖项目定位、快速开始、CLI、回归命令、目录结构和开发规则；stdlib.md 已移至 docs/stdlib.md，并同步 design.md 与文档内部链接。语言设计边界不变。验证：python nc.py run test_cases/case_013_fun.nc；python nc.py run -c "import io fun main() { io.println(42) }"；python tests/test_language_cases.py 通过 249/249；python tests/test_stdlib.py 通过 58/58；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_type_ref.py -q 通过 86 passed, 1 skipped。
+
+- 2026-06-18: 预备更新 README 关键字亮点：补充 NC 关键字少的说明和完整保留词列表，并修正 README 兼容性句子。why：关键字少是当前语言表面小的直接信号，适合作为 README 的项目亮点。
+
+- 2026-06-18: 已更新 README 关键字亮点：新增“语言表面很小”小节，列出当前 lexer 保留词，并修正“不向前兼容旧语法或旧 API”表述。design.md 无需更新。验证：README 关键字表与 compiler/lexer.py KEYWORDS 一致；python nc.py run test_cases/case_013_fun.nc 输出 42。
