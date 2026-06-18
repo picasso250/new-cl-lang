@@ -14,10 +14,6 @@
 #include <unistd.h>
 #endif
 
-struct nc_entry {
-    unsigned char data[];
-};
-
 typedef struct __nc_gc_block {
     struct __nc_gc_block* next;
     size_t size;

@@ -132,3 +132,7 @@
 - 2026-06-18: 预备删除旧边界与缓存噪音：清理仓库内 Python 缓存产物、旧语法/旧 API 专门拒绝 case、旧函数类型迁移诊断、stdlib 旧 API 黑名单文档，以及 LLVM-only 后遗留的 v1/Lite 文案。why：不向前兼容旧边界，减少 case 驱动判断中的历史噪音。
 
 - 2026-06-18: 已删除旧边界与缓存噪音：删除 compiler/__pycache__ 缓存产物并加入忽略规则，删除旧函数类型/types.Cmp/map_has/裸 gc_collect 专门拒绝 case，移除旧函数类型迁移诊断，stdlib 文档不再列旧 API 黑名单，LLVM 后端文案去除 v1/Lite。design.md 无需更新。验证：python tests/test_language_cases.py 通过 249/249；python tests/test_stdlib.py 通过 58/58；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q 通过 86 passed, 1 skipped。
+
+- 2026-06-18: 预备修复 Linux ncrt C 合法性问题：删除 runtime 中仅含 flexible array member 的 nc_entry 实体定义，保留头文件前向声明和 map entry 字节块 ABI。why：Ubuntu GCC 拒绝无 named member 的 flexible array struct，导致 Linux CI 在编译 ncrt 时失败；本修复不改变语言或 runtime API 边界。
+
+- 2026-06-18: 已修复 Linux ncrt C 合法性问题：runtime 不再定义仅含 flexible array member 的 nc_entry，map entry 仍通过前向声明和字节 offset ABI 使用。design.md 无需更新。验证：gcc -c runtime/ncrt.c -o %TEMP%/ncrt-ci-fix-sentinel.o；python tests/test_language_cases.py 通过 249/249；python tests/test_stdlib.py 通过 58/58；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_type_ref.py -q 通过 86 passed, 1 skipped。
