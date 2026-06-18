@@ -122,3 +122,9 @@
 - 2026-06-18: 预备实现 Go 式 struct 嵌入和窄版 struct 运算符重载：支持 `struct B { A }` 的字段/方法提升与 `__add__` 等特殊方法。why：需要用组合形式覆盖 Go-like “继承” case，同时保持 `==`/map/hash 语义稳定。
 
 - 2026-06-18: 已实现 Go 式 struct 嵌入和窄版 struct 运算符重载：匿名字段作为真实字段保存并支持 `b.A`、字段/方法提升、通过提升方法满足 iface；方法 receiver 支持跨模块限定类型；struct 的 `+ - * / % < <= > >=` 可通过 `__add__` 等指针 receiver 特殊方法重载，`==`/`!=` 仍走结构相等。同步 design.md，新增 case_292~298 与跨模块扩展方法项目测试。验证：python tests/test_language_cases.py 通过 251/251；python tests/test_stdlib.py 通过 60/60；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q 通过 87 passed, 1 skipped。
+
+- 2026-06-18: 预备修正文档与实现不和谐点：删除 design/worklog 对不存在 c-interop.md 的有效依赖，补齐位运算与复合赋值设计边界，并彻底删除 `--backend` 旧参数专门拒绝入口。why：当前能力应以已落地 case 为准，同时不保留旧兼容入口。
+
+- 2026-06-18: 已修正文档与实现不和谐点：design.md 不再引用不存在的 c-interop.md，位运算 `& | ^ ~ << >>` 与复合赋值 `+= -= *= /= %= &= |= ^= <<= >>=` 已进入当前设计边界；nc.py 删除 `--backend` 专门拒绝逻辑，项目测试不再承诺旧参数友好诊断。验证：待本轮回归执行。
+
+- 2026-06-18: 验证文档与实现不和谐点修正：python tests/test_language_cases.py 通过 251/251；python tests/test_stdlib.py 通过 60/60；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q 通过 86 passed, 1 skipped；python nc.py build --backend c test_cases\case_170_generics_identity.nc 现按普通路径失败为“文件不存在: --backend”。rg 仍命中 worklog 历史与本轮追加说明中的 c-interop 字符串，未回写历史条目以遵守 append-only。

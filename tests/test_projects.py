@@ -239,14 +239,6 @@ def test_import_same_public_names_do_not_conflict():
         assert result.returncode == 0, result.stderr
         assert result.stdout.strip() == "6"
 
-
-def test_backend_option_is_removed():
-    result = run_nc("build", "--backend", "c", os.path.join("test_cases", "case_170_generics_identity.nc"))
-    assert result.returncode != 0
-    assert "C backend 已删除" in result.stderr
-    assert "LLVM 是唯一后端" in result.stderr
-
-
 def test_import_private_symbol_error():
     with tempfile.TemporaryDirectory() as tmp:
         main = os.path.join(tmp, "main")

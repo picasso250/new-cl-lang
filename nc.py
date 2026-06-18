@@ -18,23 +18,6 @@ from compiler import (
 from compiler.target import get_target
 
 
-def _reject_backend(args: list[str]) -> list[str]:
-    """Reject the removed backend selector."""
-    rest = []
-    i = 0
-    while i < len(args):
-        arg = args[i]
-        if arg == "--backend":
-            print("C backend 已删除；LLVM 是唯一后端，不能再使用 --backend。", file=sys.stderr)
-            sys.exit(1)
-        if arg.startswith("--backend="):
-            print("C backend 已删除；LLVM 是唯一后端，不能再使用 --backend。", file=sys.stderr)
-            sys.exit(1)
-        rest.append(arg)
-        i += 1
-    return rest
-
-
 def _parse_target(args: list[str]) -> tuple[str, list[str]]:
     rest = []
     target = None
@@ -90,7 +73,6 @@ def _read_sources(args: list[str]) -> list[tuple[str, str]]:
 
 def cmd_run(args: list[str]):
     """编译并运行。"""
-    args = _reject_backend(args)
     target_name, args = _parse_target(args)
     sources = _read_sources(args)
     llvm_ir, link_libs, support_c_sources = compile_nc_sources_with_libs(sources, target_name=target_name)
@@ -104,7 +86,6 @@ def cmd_run(args: list[str]):
 
 def cmd_compile(args: list[str]):
     """仅输出后端代码。"""
-    args = _reject_backend(args)
     target_name, args = _parse_target(args)
     sources = _read_sources(args)
     print(compile_nc_sources_to_llvm_ir(sources, target_name=target_name))
@@ -112,7 +93,6 @@ def cmd_compile(args: list[str]):
 
 def cmd_build(args: list[str]):
     """生成 build/main.* 和 build/main.exe。"""
-    args = _reject_backend(args)
     target_name, args = _parse_target(args)
     sources = _read_sources(args)
     llvm_ir, link_libs, support_c_sources = compile_nc_sources_with_libs(sources, target_name=target_name)
