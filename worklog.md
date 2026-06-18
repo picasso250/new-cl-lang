@@ -118,3 +118,7 @@
 - 2026-06-18: 预备清理测试噪音：删除明确重复的 case，旧 throw/try/catch 命名测试改为 err 命名并保留覆盖，同时精简 LLVM-only 后重复的项目级测试。why：当前错误模型已迁移到 err，测试名和重复 case 会干扰后续 case 驱动判断，但不应降低回归覆盖。
 
 - 2026-06-18: 已完成测试噪音清理：删除 4 个重复/弱覆盖 language case，旧 throw 命名 case 改为 err 命名并保留覆盖，LLVM-only 后重复的项目级聚合测试已删除，相关 Python 测试函数改为 err 命名。design.md 无需更新。验证：python tests/test_language_cases.py 通过 244/244；python tests/test_stdlib.py 通过 60/60；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q 通过 86 passed, 1 skipped；rg -n "throw|try|catch|throws" test_cases stdlib_cases tests 仅剩 Python 语法 try 和非异常语义函数名命中。
+
+- 2026-06-18: 预备实现 Go 式 struct 嵌入和窄版 struct 运算符重载：支持 `struct B { A }` 的字段/方法提升与 `__add__` 等特殊方法。why：需要用组合形式覆盖 Go-like “继承” case，同时保持 `==`/map/hash 语义稳定。
+
+- 2026-06-18: 已实现 Go 式 struct 嵌入和窄版 struct 运算符重载：匿名字段作为真实字段保存并支持 `b.A`、字段/方法提升、通过提升方法满足 iface；方法 receiver 支持跨模块限定类型；struct 的 `+ - * / % < <= > >=` 可通过 `__add__` 等指针 receiver 特殊方法重载，`==`/`!=` 仍走结构相等。同步 design.md，新增 case_292~298 与跨模块扩展方法项目测试。验证：python tests/test_language_cases.py 通过 251/251；python tests/test_stdlib.py 通过 60/60；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q 通过 87 passed, 1 skipped。

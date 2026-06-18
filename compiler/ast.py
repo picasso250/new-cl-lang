@@ -111,14 +111,16 @@ class ForIn(Node):
 class StructDecl(Node):
     """struct Name { field: type, ... }"""
     def __init__(self, name: str, fields: list, type_params: list[str] | None = None,
-                 type_param_constraints: dict[str, str] | None = None):
+                 type_param_constraints: dict[str, str] | None = None,
+                 embedded_fields: set[str] | None = None):
         self.name = name
         self.fields = fields  # [(name, type), ...]
+        self.embedded_fields = embedded_fields or set()
         self.type_params = type_params or []
         self.type_param_constraints = type_param_constraints or {}
 
     def __repr__(self):
-        fs = ', '.join(f'{n}: {t}' for n, t in self.fields)
+        fs = ', '.join(t if n in self.embedded_fields else f'{n}: {t}' for n, t in self.fields)
         return f"Struct({self.name} {{ {fs} }})"
 
 

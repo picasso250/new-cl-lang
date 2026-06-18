@@ -76,6 +76,7 @@ def _expand_type_aliases_in_module(module: Module):
             node.receiver_type = expand_type(node.receiver_type)
         elif isinstance(node, StructDecl):
             node.fields = [(n, expand_type(t)) for n, t in node.fields]
+            node.embedded_fields = set(getattr(node, "embedded_fields", set()))
         elif isinstance(node, IfaceDecl):
             node.methods = [(n, [(pn, expand_type(pt)) for pn, pt in params], expand_type(rt)) for n, params, rt in node.methods]
             node.embeds = [expand_type(t) for t in node.embeds]
@@ -200,6 +201,7 @@ def _rewrite_module_names(module: Module, entry: bool):
         elif isinstance(node, StructDecl):
             node.name = q(node.name)
             node.fields = [(n, _qual_type(t, module.name, local_names)) for n, t in node.fields]
+            node.embedded_fields = set(getattr(node, "embedded_fields", set()))
         elif isinstance(node, IfaceDecl):
             node.name = q(node.name)
             node.methods = [

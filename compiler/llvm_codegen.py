@@ -55,6 +55,7 @@ RAW_SLICE_TYPE = ir.LiteralStructType([I8PTR, ir.IntType(64), ir.IntType(64)])
 STRUCT_TYPES: dict[str, ir.LiteralStructType] = {}
 STRUCT_FIELDS: dict[str, list[tuple[str, str]]] = {}
 STRUCT_FIELD_INDEX: dict[str, dict[str, int]] = {}
+STRUCT_EMBEDS: dict[str, dict[str, str]] = {}
 ENUM_VARIANTS: dict[str, dict[str, int]] = {}
 IFACE_METHODS: dict[str, list[tuple[str, list[str], str]]] = {}
 IFACE_TYPES: dict[str, ir.LiteralStructType] = {}
@@ -356,8 +357,14 @@ class LLVMCodegen:
         STRUCT_TYPES.clear()
         STRUCT_FIELDS.clear()
         STRUCT_FIELD_INDEX.clear()
+        STRUCT_EMBEDS.clear()
         for struct in structs:
             STRUCT_FIELDS[struct.name] = list(struct.fields)
+            STRUCT_EMBEDS[struct.name] = {
+                field_name: field_type
+                for field_name, field_type in struct.fields
+                if field_name in getattr(struct, "embedded_fields", set())
+            }
             STRUCT_FIELD_INDEX[struct.name] = {
                 field_name: i for i, (field_name, _field_type) in enumerate(struct.fields)
             }
@@ -714,8 +721,13 @@ class LLVMCodegen:
                 self.emit_map_set(stmt.target.obj, stmt.target.index, stmt.expr, stmt.op)
                 return
             ptr, target_type = self.emit_lvalue(stmt.target)
-            rhs = self.emit_coerced_expr(stmt.expr, target_type)
-            if stmt.op != "=":
+            if stmt.op != "=" and getattr(stmt, "overload_method", None):
+                old = self.builder.load(ptr, name="assign.old")
+                rhs = self.emit_operator_method_value(old, target_type, stmt.overload_method, stmt.expr,
+                                                      getattr(stmt, "overload_receiver_base", target_type))
+            else:
+                rhs = self.emit_coerced_expr(stmt.expr, target_type)
+            if stmt.op != "=" and not getattr(stmt, "overload_method", None):
                 old = self.builder.load(ptr, name="assign.old")
                 rhs = self.emit_binary_values(old, stmt.op[:-1], rhs, target_type)
             self.builder.store(rhs, ptr)
@@ -1227,6 +1239,12 @@ class LLVMCodegen:
         raise NotImplementedError(f"LLVM backend v1 cannot take lvalue of {type(node).__name__}")
 
     def emit_binary(self, node: BinaryOp):
+        if getattr(node, "overload_method", None):
+            receiver_expr = node.left
+            for field in getattr(node, "overload_receiver_path", []):
+                receiver_expr = FieldAccess(receiver_expr, field)
+            return self.emit_operator_method_call(receiver_expr, node.overload_method, node.right,
+                                                  getattr(node, "overload_receiver_base", node.left.type))
         left = self.emit_expr(node.left)
         right = self.emit_expr(node.right)
         typ = node.left.type
@@ -1301,6 +1319,38 @@ class LLVMCodegen:
             pred = {"==": "==", "!=": "!=", "<": "<", "<=": "<=", ">": ">", ">=": ">="}[op]
             return self.builder.fcmp_ordered(pred, left, right)
         raise NotImplementedError(f"LLVM backend v1 does not support float operator {op}")
+
+    def emit_receiver_arg(self, obj, receiver_base: str):
+        obj_type = obj.type
+        if obj_type == f"*{receiver_base}":
+            return self.emit_expr(obj)
+        if obj_type == receiver_base:
+            if isinstance(obj, (Identifier, FieldAccess, IndexAccess)):
+                ptr, _typ = self.emit_lvalue(obj)
+                return ptr
+            value = self.emit_expr(obj)
+            slot = self.alloca_at_entry("__nc_receiver_tmp", llvm_type(receiver_base))
+            self.builder.store(value, slot)
+            return slot
+        value = self.emit_expr(obj)
+        slot = self.alloca_at_entry("__nc_receiver_tmp", llvm_type(receiver_base))
+        self.builder.store(value, slot)
+        return slot
+
+    def emit_operator_method_call(self, receiver_expr, method_name: str, rhs, receiver_base: str):
+        name = safe_user_ident(f"{receiver_base}_{method_name}")
+        fn = self.module.globals[name]
+        fn_decl = self.fn_decls[name]
+        args = [self.emit_receiver_arg(receiver_expr, receiver_base), self.emit_coerced_expr(rhs, receiver_base)]
+        return self.builder.call(fn, args)
+
+    def emit_operator_method_value(self, value, value_type: str, method_name: str, rhs, receiver_base: str):
+        name = safe_user_ident(f"{receiver_base}_{method_name}")
+        fn = self.module.globals[name]
+        slot = self.alloca_at_entry("__nc_operator_receiver", llvm_type(value_type))
+        self.builder.store(value, slot)
+        args = [slot, self.emit_coerced_expr(rhs, value_type)]
+        return self.builder.call(fn, args)
 
     def emit_if_expr(self, node: IfExpr):
         cond = self.bool_value(self.emit_expr(node.condition))
@@ -1612,7 +1662,7 @@ class LLVMCodegen:
         fn_decl = self.fn_decls[name]
         if getattr(fn_decl, "fallible", False):
             raise RuntimeError(f"fallible method call {receiver_base}.{node.method} must be lowered through a fallible operator")
-        args = [self.emit_expr(node.obj)] + [
+        args = [self.emit_receiver_arg(node.obj, receiver_base)] + [
             self.emit_coerced_expr(arg, ptype)
             for arg, (_pname, ptype) in zip(node.args, fn_decl.params)
         ]
@@ -1639,7 +1689,7 @@ class LLVMCodegen:
         if value_slot is not None:
             args.append(value_slot)
         args.append(error_slot)
-        args.append(self.emit_expr(node.obj))
+        args.append(self.emit_receiver_arg(node.obj, receiver_base))
         args.extend([
             self.emit_coerced_expr(arg, ptype)
             for arg, (_pname, ptype) in zip(node.args, fn_decl.params)
@@ -2459,9 +2509,17 @@ class LLVMCodegen:
         block = thunk.append_basic_block("entry")
         saved_builder, saved_func = self.builder, self.func
         self.builder, self.func = ir.IRBuilder(block), thunk
-        method_sym = safe_user_ident(f"{concrete}_{method_name}")
+        receiver_base, path = self.resolve_concrete_method(concrete, method_name)
+        method_sym = safe_user_ident(f"{receiver_base}_{method_name}")
         method_fn = self.module.globals[method_sym]
         receiver = self.builder.bitcast(thunk.args[0], llvm_type(f"*{concrete}"), name="iface.receiver")
+        current_type = concrete
+        for field_name in path:
+            field_index = STRUCT_FIELD_INDEX[current_type][field_name]
+            zero = ir.Constant(ir.IntType(32), 0)
+            receiver = self.builder.gep(receiver, [zero, ir.Constant(ir.IntType(32), field_index)], inbounds=True, name="iface.embed.receiver")
+            current_type = STRUCT_FIELDS[current_type][field_index][1]
+        receiver = self.builder.bitcast(receiver, llvm_type(f"*{receiver_base}"), name="iface.receiver.cast")
         args = [receiver] + list(thunk.args[1:])
         result = self.builder.call(method_fn, args)
         if ret_type == "void":
@@ -2470,6 +2528,20 @@ class LLVMCodegen:
             self.builder.ret(result)
         self.builder, self.func = saved_builder, saved_func
         return thunk
+
+    def resolve_concrete_method(self, concrete, method_name):
+        if safe_user_ident(f"{concrete}_{method_name}") in self.module.globals:
+            return concrete, []
+        for field_name, field_type in STRUCT_EMBEDS.get(concrete, {}).items():
+            embed_base = field_type[1:] if field_type.startswith("*") else field_type
+            if safe_user_ident(f"{embed_base}_{method_name}") in self.module.globals:
+                return embed_base, [field_name]
+            try:
+                nested_base, nested_path = self.resolve_concrete_method(embed_base, method_name)
+                return nested_base, [field_name] + nested_path
+            except KeyError:
+                pass
+        raise KeyError(safe_user_ident(f"{concrete}_{method_name}"))
 
     def cast_numeric(self, value, from_type, to_type):
         target = llvm_type(to_type)

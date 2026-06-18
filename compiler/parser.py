@@ -283,7 +283,7 @@ class Parser:
             self.advance()
             rname = self.expect(TokenKind.IDENT).value
             self.expect(TokenKind.STAR)
-            rtype = self.expect(TokenKind.IDENT).value
+            rtype = self._parse_type()
             self.expect(TokenKind.RPAREN)
             receiver_name = rname
             receiver_type = "*" + rtype
@@ -404,21 +404,32 @@ class Parser:
         type_params, type_param_constraints = self._parse_type_params()
         self.expect(TokenKind.LBRACE)
         fields = []
+        embedded_fields = set()
         if self.peek().kind != TokenKind.RBRACE:
-            fname = self.expect(TokenKind.IDENT).value
-            self.expect(TokenKind.COLON)
-            ftype = self._parse_type()
+            fname, ftype, embedded = self._parse_struct_field()
             fields.append((fname, ftype))
+            if embedded:
+                embedded_fields.add(fname)
             while self.peek().kind == TokenKind.COMMA:
                 self.advance()
-                fname = self.expect(TokenKind.IDENT).value
-                self.expect(TokenKind.COLON)
-                ftype = self._parse_type()
+                fname, ftype, embedded = self._parse_struct_field()
                 fields.append((fname, ftype))
+                if embedded:
+                    embedded_fields.add(fname)
         self.expect(TokenKind.RBRACE)
-        stmt = StructDecl(name, fields, type_params, type_param_constraints)
+        stmt = StructDecl(name, fields, type_params, type_param_constraints, embedded_fields)
         self.match(TokenKind.SEMI)
         return stmt
+
+    def _parse_struct_field(self):
+        name_or_type = self._parse_type()
+        if self.peek().kind == TokenKind.COLON:
+            self.advance()
+            return name_or_type, self._parse_type(), False
+        if not isinstance(name_or_type, str):
+            raise ParseError("embedded struct field must be a named type")
+        field_name = name_or_type.split(".")[-1]
+        return field_name, name_or_type, True
 
     def _parse_iface(self):
         self.advance()

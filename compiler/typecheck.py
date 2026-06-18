@@ -38,6 +38,18 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
     current_callable = None
     fallible_op_depth = 0
     defer_depth = 0
+    OPERATOR_METHODS = {
+        "+": "__add__",
+        "-": "__sub__",
+        "*": "__mul__",
+        "/": "__div__",
+        "%": "__mod__",
+        "<": "__lt__",
+        "<=": "__le__",
+        ">": "__gt__",
+        ">=": "__ge__",
+    }
+    ORDER_OPERATOR_METHODS = {"__lt__", "__le__", "__gt__", "__ge__"}
 
     def line_col(text: str | None, pos: int) -> tuple[int, int]:
         if text is None:
@@ -71,6 +83,115 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             fail(f"symbol '{name}' is private", node)
 
     type_rules = TypeRules(symtab, fail, require_public_qualified)
+
+    def embedded_structs(type_name: str):
+        return getattr(symtab, "_struct_embeds", {}).get(type_name, {})
+
+    def promoted_field(type_name: str, field: str, seen=None):
+        seen = seen or set()
+        if type_name in seen:
+            return None
+        seen.add(type_name)
+        matches = []
+        for embed_name, embed_type in embedded_structs(type_name).items():
+            embed_base = embed_type[1:] if embed_type.startswith("*") else embed_type
+            try:
+                fields = symtab.lookup_struct(embed_base)
+            except NameError:
+                continue
+            if field in fields:
+                matches.append(([embed_name], fields[field]))
+            nested = promoted_field(embed_base, field, seen.copy())
+            if nested is not None:
+                path, ftype = nested
+                matches.append(([embed_name] + path, ftype))
+        if len(matches) > 1:
+            fail(f"{type_name}: ambiguous promoted field {field}")
+        return matches[0] if matches else None
+
+    def build_promoted_access(obj, path: list[str]):
+        current = obj
+        current_type = obj.type
+        for field in path:
+            access = FieldAccess(current, field)
+            base = current_type[1:] if isinstance(current_type, str) and current_type.startswith("*") else current_type
+            ftype = symtab.lookup_struct(base)[field]
+            access.type = ftype
+            current = access
+            current_type = ftype
+        return current
+
+    def promoted_method(type_name: str, method: str, seen=None):
+        seen = seen or set()
+        if type_name in seen:
+            return None
+        seen.add(type_name)
+        matches = []
+        methods = getattr(symtab, "_methods", {})
+        for embed_name, embed_type in embedded_structs(type_name).items():
+            embed_base = embed_type[1:] if embed_type.startswith("*") else embed_type
+            if embed_base in methods and method in methods[embed_base]:
+                matches.append(([embed_name], embed_base, methods[embed_base][method]))
+            nested = promoted_method(embed_base, method, seen.copy())
+            if nested is not None:
+                path, receiver_base, sig = nested
+                matches.append(([embed_name] + path, receiver_base, sig))
+        if len(matches) > 1:
+            fail(f"{type_name}: ambiguous promoted method {method}")
+        return matches[0] if matches else None
+
+    def resolve_method_call(node, obj_type, method_name):
+        methods = getattr(symtab, "_methods", {})
+        if obj_type in methods and method_name in methods[obj_type]:
+            return [], obj_type, methods[obj_type][method_name]
+        promoted = promoted_method(obj_type, method_name)
+        if promoted is not None:
+            return promoted
+        return None
+
+    def validate_operator_method(type_name: str, method_name: str, node):
+        resolved = resolve_method_call(node, type_name, method_name)
+        if resolved is None:
+            return None
+        path, receiver_base, (ret_type, params) = resolved
+        if len(params) != 1:
+            fail(f"operator method {receiver_base}.{method_name}: expected one parameter", node)
+        _pname, ptype = params[0]
+        require_type(ptype, type_name, f"operator method {receiver_base}.{method_name} parameter", node)
+        expected_ret = "bool" if method_name in ORDER_OPERATOR_METHODS else type_name
+        if ret_type is None:
+            ret_type = resolve_method_return(receiver_base, method_name, node)
+        require_type(ret_type, expected_ret, f"operator method {receiver_base}.{method_name} return", node)
+        return path, receiver_base, ret_type
+
+    def validate_struct_embedding(stmt):
+        fields = stmt.fields
+        seen_fields = set()
+        for fname, _ftype in fields:
+            if fname in seen_fields:
+                fail(f"struct {stmt.name}: duplicate field {fname}", stmt)
+            seen_fields.add(fname)
+        direct_fields = {fname for fname, _ftype in fields if fname not in getattr(stmt, "embedded_fields", set())}
+        promoted_fields = {}
+        promoted_methods = {}
+        for embed_name, embed_type in getattr(symtab, "_struct_embeds", {}).get(stmt.name, {}).items():
+            embed_base = embed_type[1:] if embed_type.startswith("*") else embed_type
+            try:
+                embed_fields = symtab.lookup_struct(embed_base)
+            except NameError:
+                fail(f"struct {stmt.name}: embedded struct {embed_type} not found", stmt)
+            for fname in embed_fields:
+                if fname in direct_fields:
+                    fail(f"struct {stmt.name}: promoted field {fname} conflicts with direct field", stmt)
+                if fname in promoted_fields:
+                    fail(f"struct {stmt.name}: promoted field {fname} conflicts with embedded field {promoted_fields[fname]}", stmt)
+                promoted_fields[fname] = embed_name
+            for mname in getattr(symtab, "_methods", {}).get(embed_base, {}):
+                if stmt.name in getattr(symtab, "_methods", {}) and mname in symtab._methods[stmt.name]:
+                    fail(f"struct {stmt.name}: promoted method {mname} conflicts with direct method", stmt)
+                if mname in promoted_methods:
+                    fail(f"struct {stmt.name}: promoted method {mname} conflicts with embedded method {promoted_methods[mname]}", stmt)
+                promoted_methods[mname] = embed_name
 
     def mark_current_fallible(node=None):
         if current_callable is None:
@@ -174,6 +295,8 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         if isinstance(top_stmt, FunctionDeclaration):
             if top_stmt.receiver_name:
                 type_name = top_stmt.receiver_type.lstrip("*")
+                if (type_name, top_stmt.name) in method_decls:
+                    fail(f"{type_name}: duplicate method {top_stmt.name}", top_stmt)
                 method_decls[(type_name, top_stmt.name)] = top_stmt
             else:
                 function_decls[top_stmt.name] = top_stmt
@@ -389,13 +512,13 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         if not is_pointer_type(actual) or is_nullable_pointer_type(actual):
             return False
         type_name = actual[1:]
-        methods = getattr(symtab, "_methods", {}).get(type_name, {})
         for mname, (param_types, ret_type) in iface_method_set(iface_name).items():
-            if mname not in methods:
+            resolved = resolve_method_call(None, type_name, mname)
+            if resolved is None:
                 return False
-            actual_ret, actual_params = methods[mname]
+            _path, receiver_base, (actual_ret, actual_params) = resolved
             if actual_ret is None:
-                actual_ret = resolve_method_return(type_name, mname)
+                actual_ret = resolve_method_return(receiver_base, mname)
             if (actual_ret or "void") != (ret_type or "void"):
                 return False
             if [ptype for _pname, ptype in actual_params] != param_types:
@@ -502,6 +625,16 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                         or is_nullable_pointer_type(node.left.type) or is_nullable_pointer_type(node.right.type)):
                     fail(f"pointer type {node.left.type}: operator {node.op} is not allowed", node)
                 if not (is_numeric_type(node.left.type) and is_numeric_type(node.right.type)):
+                    if node.left.type in getattr(symtab, "_structs", {}) and node.right.type == node.left.type:
+                        method_name = OPERATOR_METHODS[node.op]
+                        overload = validate_operator_method(node.left.type, method_name, node)
+                        if overload is not None:
+                            path, receiver_base, _ret_type = overload
+                            node.overload_method = method_name
+                            node.overload_receiver_path = path
+                            node.overload_receiver_base = receiver_base
+                            node.type = "bool"
+                            return
                     fail(f"comparison: expected numeric operands, got {node.left.type} and {node.right.type}", node)
                 require_type(node.right.type, node.left.type, "comparison", node)
                 node.type = "bool"
@@ -513,9 +646,29 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 fail(f"rune type: operator {node.op} is not allowed", node)
             if node.op in ("+", "-", "*", "/"):
                 if not (is_numeric_type(node.left.type) and is_numeric_type(node.right.type)):
+                    if node.left.type in getattr(symtab, "_structs", {}) and node.right.type == node.left.type:
+                        method_name = OPERATOR_METHODS[node.op]
+                        overload = validate_operator_method(node.left.type, method_name, node)
+                        if overload is not None:
+                            path, receiver_base, ret_type = overload
+                            node.overload_method = method_name
+                            node.overload_receiver_path = path
+                            node.overload_receiver_base = receiver_base
+                            node.type = ret_type
+                            return
                     fail(f"binary operator {node.op}: expected numeric operands, got {node.left.type} and {node.right.type}", node)
             if node.op == "%":
                 if not (is_integer_type(node.left.type) and is_integer_type(node.right.type)):
+                    if node.left.type in getattr(symtab, "_structs", {}) and node.right.type == node.left.type:
+                        method_name = OPERATOR_METHODS[node.op]
+                        overload = validate_operator_method(node.left.type, method_name, node)
+                        if overload is not None:
+                            path, receiver_base, ret_type = overload
+                            node.overload_method = method_name
+                            node.overload_receiver_path = path
+                            node.overload_receiver_base = receiver_base
+                            node.type = ret_type
+                            return
                     fail(f"binary operator %: expected integer operands, got {node.left.type} and {node.right.type}", node)
             if node.op in ("&", "|", "^", "<<", ">>"):
                 if not (is_integer_type(node.left.type) and is_integer_type(node.right.type)):
@@ -676,7 +829,15 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 obj_type = obj_type[1:]
             fields = symtab.lookup_struct(obj_type)
             if node.field not in fields:
-                fail(f"{obj_type}: unknown field {node.field}", node)
+                promoted = promoted_field(obj_type, node.field)
+                if promoted is None:
+                    fail(f"{obj_type}: unknown field {node.field}", node)
+                path, ftype = promoted
+                original_field = node.field
+                node.obj = build_promoted_access(node.obj, path)
+                node.field = original_field
+                node.type = ftype
+                return
             node.type = fields[node.field]
         elif isinstance(node, MethodCall):
             walk_expr(node.obj)
@@ -710,19 +871,22 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 return
             if obj_type.startswith("*"):
                 obj_type = obj_type[1:]
-            methods = getattr(symtab, "_methods", {})
-            if obj_type in methods and node.method in methods[obj_type]:
-                ret_type, params = methods[obj_type][node.method]
+            resolved = resolve_method_call(node, obj_type, node.method)
+            if resolved is not None:
+                path, receiver_base, (ret_type, params) = resolved
+                if path:
+                    node.obj = build_promoted_access(node.obj, path)
+                    node.promoted_receiver_base = receiver_base
                 if ret_type is None:
-                    ret_type = resolve_method_return(obj_type, node.method, node)
+                    ret_type = resolve_method_return(receiver_base, node.method, node)
                 apply_default_args(node.args, params, f"method {node.method}", node)
                 for arg, (pname, ptype) in zip(node.args, params):
                     require_type(arg.type, ptype, f"argument {pname} to method {node.method}", arg)
                 node.type = ret_type
-                fn_node = method_decls.get((obj_type, node.method))
+                fn_node = method_decls.get((receiver_base, node.method))
                 node.fallible = bool(getattr(fn_node, "fallible", False))
                 if node.fallible and fallible_op_depth <= 0:
-                    fail(f"fallible call {obj_type}.{node.method} must be handled with ??, !!, or is err", node)
+                    fail(f"fallible call {receiver_base}.{node.method} must be handled with ??, !!, or is err", node)
             else:
                 fail(f"{obj_type}: method {node.method} not found", node)
         elif isinstance(node, ArrayLiteral):
@@ -814,11 +978,31 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                             fail(f"binary operator {compound_op}: expected integer operands, got {stmt.target.type} and {stmt.expr.type}", stmt)
                     elif compound_op == "%":
                         if not (is_integer_type(stmt.target.type) and is_integer_type(stmt.expr.type)):
+                            if stmt.target.type in getattr(symtab, "_structs", {}) and stmt.expr.type == stmt.target.type:
+                                method_name = OPERATOR_METHODS[compound_op]
+                                overload = validate_operator_method(stmt.target.type, method_name, stmt)
+                                if overload is not None:
+                                    path, receiver_base, ret_type = overload
+                                    stmt.overload_method = method_name
+                                    stmt.overload_receiver_path = path
+                                    stmt.overload_receiver_base = receiver_base
+                                    require_type(ret_type, stmt.target.type, f"binary operator {compound_op}", stmt)
+                                    continue
                             fail(f"binary operator %: expected integer operands, got {stmt.target.type} and {stmt.expr.type}", stmt)
                     elif compound_op == "+" and stmt.target.type == "str":
                         require_type(stmt.expr.type, "str", "string concatenation", stmt.expr)
                     elif compound_op in ("+", "-", "*", "/"):
                         if not (is_numeric_type(stmt.target.type) and is_numeric_type(stmt.expr.type)):
+                            if stmt.target.type in getattr(symtab, "_structs", {}) and stmt.expr.type == stmt.target.type:
+                                method_name = OPERATOR_METHODS[compound_op]
+                                overload = validate_operator_method(stmt.target.type, method_name, stmt)
+                                if overload is not None:
+                                    path, receiver_base, ret_type = overload
+                                    stmt.overload_method = method_name
+                                    stmt.overload_receiver_path = path
+                                    stmt.overload_receiver_base = receiver_base
+                                    require_type(ret_type, stmt.target.type, f"binary operator {compound_op}", stmt)
+                                    continue
                             fail(f"binary operator {compound_op}: expected numeric operands, got {stmt.target.type} and {stmt.expr.type}", stmt)
                     else:
                         fail(f"unsupported assignment operator {stmt.op}", stmt)
@@ -898,8 +1082,14 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 require_error_type(stmt.expr.type, "err", stmt)
                 mark_current_fallible(stmt)
             elif isinstance(stmt, StructDecl):
+                validate_struct_embedding(stmt)
                 for _fname, _ftype in stmt.fields:
+                    require_public_qualified(_ftype, stmt)
                     validate_map_type(_ftype, stmt)
+                for embed_name in getattr(stmt, "embedded_fields", set()):
+                    embed_type = dict(stmt.fields)[embed_name]
+                    if embed_type not in getattr(symtab, "_structs", {}):
+                        fail(f"struct {stmt.name}: embedded struct {embed_type} not found", stmt)
             elif isinstance(stmt, IfaceDecl):
                 iface_method_set(stmt.name)
             elif isinstance(stmt, EnumDecl):

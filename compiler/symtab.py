@@ -37,6 +37,7 @@ class SymbolTable:
         self._scopes: list[dict[str, Symbol]] = [{}]
         self._level = 0
         self._structs: dict[str, dict[str, str]] = {}  # struct名 → {字段: 类型}
+        self._struct_embeds: dict[str, dict[str, str]] = {}
         self._enums: dict[str, set[str]] = {}  # enum名 → variants
         self._ifaces: dict[str, dict] = {}
 
@@ -67,8 +68,9 @@ class SymbolTable:
                 return scope[name]
         raise NameError(f"Variable '{name}' not found")
 
-    def declare_struct(self, name: str, fields: list[tuple[str, str]]):
+    def declare_struct(self, name: str, fields: list[tuple[str, str]], embedded_fields: set[str] | None = None):
         self._structs[name] = {fname: ftype for fname, ftype in fields}
+        self._struct_embeds[name] = {fname: ftype for fname, ftype in fields if fname in (embedded_fields or set())}
 
     def lookup_struct(self, name: str) -> dict[str, str]:
         if name not in self._structs:
@@ -111,6 +113,7 @@ def build_symbol_table(program: "Program") -> SymbolTable:
     table._methods = {}  # {type_name: {method_name: (ret_type, [(param, type)])}}
     table._functions = {}  # {function_name: (ret_type, [(param, type)])}
     table._extern_functions = set()
+    table._struct_embeds = {}
 
     def walk_stmts(stmts: list):
         for stmt in stmts:
@@ -128,6 +131,8 @@ def build_symbol_table(program: "Program") -> SymbolTable:
                     table.declare(mangled, stmt.return_type or "void")
                     if type_name not in table._methods:
                         table._methods[type_name] = {}
+                    if stmt.name in table._methods[type_name]:
+                        raise NameError(f"{type_name}: duplicate method {stmt.name}")
                     table._methods[type_name][stmt.name] = (stmt.return_type, stmt.params)
                     table.push_scope()
                     table.declare(stmt.receiver_name, rtype)
@@ -145,7 +150,7 @@ def build_symbol_table(program: "Program") -> SymbolTable:
                     table.pop_scope()
             elif isinstance(stmt, StructDecl):
                 table.declare_global(stmt.name, "struct")
-                table.declare_struct(stmt.name, stmt.fields)
+                table.declare_struct(stmt.name, stmt.fields, getattr(stmt, "embedded_fields", set()))
             elif isinstance(stmt, IfaceDecl):
                 table.declare_global(stmt.name, "iface")
                 table.declare_iface(stmt.name, stmt.methods, stmt.embeds)

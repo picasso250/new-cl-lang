@@ -67,6 +67,7 @@ def _substitute_node(node, subst: dict[str, str]):
             n.type_param_constraints = {}
         elif isinstance(n, StructDecl):
             n.fields = [(name, _sub_type(t, subst)) for name, t in n.fields]
+            n.embedded_fields = set(getattr(n, "embedded_fields", set()))
             n.type_params = []
             n.type_param_constraints = {}
         elif isinstance(n, StructLiteral):
@@ -180,6 +181,7 @@ def monomorphize(program: Program) -> Program:
             n.receiver_type = rewrite_type(n.receiver_type)
         elif isinstance(n, StructDecl):
             n.fields = [(name, rewrite_type(t)) for name, t in n.fields]
+            n.embedded_fields = set(getattr(n, "embedded_fields", set()))
         elif isinstance(n, StructLiteral):
             n.name = rewrite_type(n.name)
         elif isinstance(n, FunctionCall):

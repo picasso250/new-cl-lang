@@ -119,6 +119,28 @@ fun main() {
         assert result.stdout.strip() == "7"
 
 
+def test_import_type_extension_method_run():
+    with tempfile.TemporaryDirectory() as tmp:
+        main = os.path.join(tmp, "main")
+        model = os.path.join(tmp, "model")
+        os.mkdir(main)
+        os.mkdir(model)
+        write_file(os.path.join(model, "model.nc"), "struct User { age: i32 }\n")
+        write_file(os.path.join(main, "main.nc"), """import io
+import model
+fun (u *model.User) score(): i32 { u.age + 1 }
+fun main() {
+  let u = model.User { age: 6 }
+  io.println(u.score())
+}
+""")
+
+        result = run_nc("run", main)
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "7"
+
+
 def test_import_generic_function_and_struct_run():
     with tempfile.TemporaryDirectory() as tmp:
         main = os.path.join(tmp, "main")
