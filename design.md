@@ -1,6 +1,6 @@
 # NC (New C) — 语言设计
 
-> 本文件只记录“我们要什么”和 why。标准库 API 见 `stdlib.md`；实现过程见 `worklog.md`。
+> 本文件只记录“我们要什么”和 why。标准库 API 见 `docs/stdlib.md`；实现过程见 `worklog.md`。
 
 ## 目标
 
@@ -343,7 +343,7 @@ why：
 
 我们要显式 import 的标准库模块。
 
-当前标准库边界见 `stdlib.md`，包括：
+当前标准库边界见 `docs/stdlib.md`，包括：
 
 - `io`
 - `fs`

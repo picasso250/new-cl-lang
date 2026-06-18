@@ -140,3 +140,7 @@
 - 2026-06-18: 预备更新 Linux CI action 版本：将 checkout/setup-python 升到当前 Node 24 action 主版本，消除 GitHub Actions Node.js 20 deprecated annotation。why：CI 已通过但仍有 runner annotation，属于维护性噪音，不改变语言或编译器行为。
 
 - 2026-06-18: 已更新 Linux CI action 版本：actions/checkout 升至 v7，actions/setup-python 升至 v6。design.md 无需更新。验证：待 push 后 GitHub Actions Linux run 确认。
+
+- 2026-06-18: 预备添加 README 并整理标准库文档位置：新增中文快速入口 README，将标准库 API 文档移入 docs/stdlib.md 并同步当前引用。why：仓库缺少首次打开时的项目入口，标准库文档也应和 generics/archive 等专题文档归入 docs。
+
+- 2026-06-18: 已添加 README 并整理标准库文档位置：新增中文快速入口 README，覆盖项目定位、快速开始、CLI、回归命令、目录结构和开发规则；stdlib.md 已移至 docs/stdlib.md，并同步 design.md 与文档内部链接。语言设计边界不变。验证：python nc.py run test_cases/case_013_fun.nc；python nc.py run -c "import io fun main() { io.println(42) }"；python tests/test_language_cases.py 通过 249/249；python tests/test_stdlib.py 通过 58/58；python -m pytest tests/test_projects.py tests/test_builtin_boundary.py tests/test_llvm_backend.py tests/test_type_ref.py -q 通过 86 passed, 1 skipped。

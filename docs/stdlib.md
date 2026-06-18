@@ -126,7 +126,7 @@ v1 不提供 `os.setenv`、`os.unsetenv`、`os.chdir`。
 - `types.Hash`：泛型约束，可作为 `map` key 的类型。
 - `types.Zero`：泛型约束，有零值的类型。
 
-这些约束是编译器识别的约束名，不是运行时值类型。完整类型属性矩阵见 `docs/generics.md`。
+这些约束是编译器识别的约束名，不是运行时值类型。完整类型属性矩阵见 `generics.md`。
 
 ## 语言级内建
 
