@@ -6,12 +6,9 @@
 
 import copy
 
-from compiler.builtins import NUMERIC_TYPES, SCALAR_TYPES, STRINGIFIABLE_TYPES, infer_builtin_call
-from compiler.constraints import EQ_CONSTRAINT, HASH_CONSTRAINT, ORD_CONSTRAINT, ZERO_CONSTRAINT
-from compiler.type_ref import (
-    ArrayTypeRef, FunctionType, GenericType, NamedType, PointerType, SliceType,
-    format_type_ref, parse_fn_type, parse_map_type, parse_slice_type, parse_type_ref,
-)
+from compiler.builtins import SCALAR_TYPES, STRINGIFIABLE_TYPES, infer_builtin_call
+from compiler.type_ref import parse_fn_type, parse_map_type, parse_slice_type
+from compiler.type_rules import TypeRules
 
 
 class TypeCheckError(Exception):
@@ -30,7 +27,6 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         ArrayLiteral, SliceLiteral, IndexAccess, SliceExpr, MethodCall, Defer, Break, FallibleOp
     )
 
-    FLOAT_TYPES = {"f32", "f64"}
     current_return_type = "void"
     break_depth = 0
     closure_stack = []
@@ -69,6 +65,12 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
     def require_error_type(actual, context, node=None):
         if actual not in {"error", "str"}:
             fail(f"{context}: expected error, got {actual}", node)
+
+    def require_public_qualified(name, node=None):
+        if isinstance(name, str) and "." in name and name.rsplit(".", 1)[1].startswith("_"):
+            fail(f"symbol '{name}' is private", node)
+
+    type_rules = TypeRules(symtab, fail, require_public_qualified)
 
     def mark_current_fallible(node=None):
         if current_callable is None:
@@ -284,256 +286,43 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             fail(f"invalid assignment target: {type(target).__name__}", target)
 
     def is_pointer_type(t):
-        return isinstance(t, str) and t.startswith("*")
+        return type_rules.is_pointer_type(t)
 
     def is_nullable_pointer_type(t):
-        return isinstance(t, str) and t.startswith("?*")
+        return type_rules.is_nullable_pointer_type(t)
 
     def nonnullable_pointer_type(t):
-        return "*" + t[2:] if is_nullable_pointer_type(t) else t
+        return type_rules.nonnullable_pointer_type(t)
 
     def is_nil_type(t):
-        return t == "__nil"
+        return type_rules.is_nil_type(t)
 
     def is_numeric_type(t):
-        return t in NUMERIC_TYPES
-
-    def hash_comparable_error_type(t, seen=None):
-        seen = seen or set()
-        if t in seen:
-            return None
-        seen.add(t)
-        if t in FLOAT_TYPES:
-            return t
-        if t in NUMERIC_TYPES or t in {"bool", "str", "rune", "error"}:
-            return None
-        if is_pointer_type(t) or is_nullable_pointer_type(t):
-            return None
-        if parse_map_type(t) is not None:
-            return t
-        if parse_fn_type(t) is not None:
-            return t
-        ref = parse_type_ref(t)
-        if isinstance(ref, SliceType) or isinstance(ref, ArrayTypeRef) or isinstance(ref, FunctionType):
-            return t
-        if is_iface_type(t):
-            return t
-        try:
-            sym = symtab.lookup(t)
-        except NameError:
-            return t
-        if sym.nc_type == "enum":
-            return None
-        if sym.nc_type == "struct":
-            for _fname, ftype in symtab.lookup_struct(t).items():
-                err = hash_comparable_error_type(ftype, seen)
-                if err is not None:
-                    return err
-            return None
-        return t
-
-    def require_hash_comparable(t, node=None):
-        err = hash_comparable_error_type(t)
-        if err is not None:
-            fail(f"map key type: expected hash-comparable, got {err}", node)
-
-    def zero_value_error_type(t, seen=None):
-        seen = seen or set()
-        if t in seen:
-            return None
-        seen.add(t)
-        if t == "void":
-            return t
-        if t in NUMERIC_TYPES or t in {"bool", "str", "rune"}:
-            return None
-        if is_pointer_type(t):
-            return t
-        if is_nullable_pointer_type(t):
-            return None
-        if parse_map_type(t) is not None:
-            return None
-        if parse_fn_type(t) is not None:
-            return None
-        ref = parse_type_ref(t)
-        if isinstance(ref, SliceType):
-            return None
-        if isinstance(ref, ArrayTypeRef):
-            return zero_value_error_type(format_type_ref(ref.elem), seen)
-        if isinstance(ref, FunctionType):
-            return None
-        if is_iface_type(t):
-            return None
-        try:
-            sym = symtab.lookup(t)
-        except NameError:
-            return t
-        if sym.nc_type == "enum":
-            return None
-        if sym.nc_type == "struct":
-            for _fname, ftype in symtab.lookup_struct(t).items():
-                err = zero_value_error_type(ftype, seen)
-                if err is not None:
-                    return err
-            return None
-        return t
-
-    def require_zero_value_type(t, node=None):
-        err = zero_value_error_type(t)
-        if err is not None:
-            fail(f"map value type: expected zero-value type, got {err}", node)
+        return type_rules.is_numeric_type(t)
 
     def validate_map_type(t, node=None):
-        map_args = parse_map_type(t)
-        if map_args is None:
-            return None
-        if len(map_args) != 2:
-            fail(f"map: expected 2 type args, got {len(map_args)}", node)
-        key_type, value_type = map_args
-        require_hash_comparable(key_type, node)
-        validate_sized_type(value_type, node)
-        require_zero_value_type(value_type, node)
-        return key_type, value_type
+        return type_rules.validate_map_type(t, node)
 
     def validate_sized_type(t, node=None, *, allow_void=False):
-        if t == "void":
-            if allow_void:
-                return
-            fail("size_of: void has no size", node)
-        ref = parse_type_ref(t)
-
-        def walk(r, *, allow_void_here=False):
-            if isinstance(r, NamedType):
-                name = r.name
-                if name == "void":
-                    if allow_void_here:
-                        return
-                    fail("size_of: void has no size", node)
-                require_public_qualified(name, node)
-                if name in NUMERIC_TYPES or name in {"bool", "str", "rune", "error"}:
-                    return
-                if name == "map":
-                    fail("size_of: map requires type arguments", node)
-                try:
-                    sym = symtab.lookup(name)
-                except NameError:
-                    fail(f"size_of: unknown type {name}", node)
-                if sym.nc_type not in {"struct", "enum", "iface"}:
-                    fail(f"size_of: unknown type {name}", node)
-                return
-            if isinstance(r, PointerType):
-                walk(r.inner, allow_void_here=True)
-                return
-            if isinstance(r, SliceType):
-                walk(r.elem)
-                return
-            if isinstance(r, ArrayTypeRef):
-                walk(r.elem)
-                return
-            if isinstance(r, FunctionType):
-                for p in r.params:
-                    walk(p)
-                walk(r.ret, allow_void_here=True)
-                return
-            if isinstance(r, GenericType):
-                if not isinstance(r.base, NamedType):
-                    fail(f"size_of: unsupported type {t}", node)
-                base = r.base.name
-                if base != "map":
-                    fail(f"size_of: unknown type {base}", node)
-                if len(r.args) != 2:
-                    fail(f"map: expected 2 type args, got {len(r.args)}", node)
-                for arg in r.args:
-                    walk(arg)
-                key_type, value_type = validate_map_type(t, node)
-                return
-            fail(f"size_of: unsupported type {t}", node)
-
-        walk(ref, allow_void_here=allow_void)
+        return type_rules.validate_sized_type(t, node, allow_void=allow_void)
 
     def is_rune_type(t):
-        return t == "rune"
+        return type_rules.is_rune_type(t)
 
     def is_iface_type(t):
-        return isinstance(t, str) and t in getattr(symtab, "_ifaces", {})
-
-    def comparable_error_type(t, seen=None):
-        seen = seen or set()
-        if t in seen:
-            return None
-        seen.add(t)
-        if t in NUMERIC_TYPES or t in {"bool", "str", "rune", "error"}:
-            return None
-        if is_pointer_type(t) or is_nullable_pointer_type(t):
-            return None
-        if parse_map_type(t) is not None:
-            return t
-        if parse_fn_type(t) is not None:
-            return t
-        ref = parse_type_ref(t)
-        if isinstance(ref, SliceType) or isinstance(ref, ArrayTypeRef) or isinstance(ref, FunctionType):
-            return t
-        if is_iface_type(t):
-            return t
-        try:
-            sym = symtab.lookup(t)
-        except NameError:
-            return t
-        if sym.nc_type == "enum":
-            return None
-        if sym.nc_type == "struct":
-            for _fname, ftype in symtab.lookup_struct(t).items():
-                err = comparable_error_type(ftype, seen)
-                if err is not None:
-                    return err
-            return None
-        return t
+        return type_rules.is_iface_type(t)
 
     def require_comparable(t, node=None):
-        err = comparable_error_type(t)
-        if err is not None:
-            fail(f"comparison: type {err} is not comparable", node)
-
-    def constraint_error_type(t, constraint):
-        if constraint == "any":
-            return None
-        if constraint == EQ_CONSTRAINT:
-            return comparable_error_type(t)
-        if constraint == ORD_CONSTRAINT:
-            return None if t in NUMERIC_TYPES else t
-        if constraint == HASH_CONSTRAINT:
-            return hash_comparable_error_type(t)
-        if constraint == ZERO_CONSTRAINT:
-            return zero_value_error_type(t)
-        return t
+        return type_rules.require_comparable(t, node)
 
     def validate_generic_constraints(stmt):
-        constraints = getattr(stmt, "_generic_constraints", None)
-        if not constraints:
-            return
-        origin_kind = getattr(stmt, "_generic_origin_kind", "function")
-        origin_name = getattr(stmt, "_generic_origin_name", getattr(stmt, "name", "<generic>"))
-        for _param, arg, constraint in constraints:
-            err = constraint_error_type(arg, constraint)
-            if err is not None:
-                fail(f"generic {origin_kind} {origin_name}: type arg {arg} does not satisfy {constraint}", stmt)
-
-    def require_public_qualified(name, node=None):
-        if isinstance(name, str) and "." in name and name.rsplit(".", 1)[1].startswith("_"):
-            fail(f"symbol '{name}' is private", node)
+        return type_rules.validate_generic_constraints(stmt)
 
     def is_integer_type(t):
-        return t in {"i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"}
+        return type_rules.is_integer_type(t)
 
     def is_extern_abi_type(t):
-        if t == "void":
-            return True
-        if t in {"i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "bool"}:
-            return True
-        if isinstance(t, str) and t.startswith("*"):
-            return is_extern_abi_type(t[1:])
-        if isinstance(t, str) and t.startswith("?*"):
-            return is_extern_abi_type(t[2:])
-        return False
+        return type_rules.is_extern_abi_type(t)
 
     def validate_extern_function(fn):
         if fn.type_params:

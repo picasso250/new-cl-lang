@@ -110,3 +110,7 @@
 - 2026-06-18: 预备替换异常模型为 err 错误返回并迁移 ret。why：当前 throw/try/catch 与 defer 的双重异常语义冲突，改为显式可错返回并删除旧 return 关键字，保持 NC 错误路径显式、可预测。
 
 - 2026-06-18: 已替换异常模型为 err 错误返回并迁移 ret：删除源码 throw/try/catch/return 边界，新增内建 error、err、??/!!/is err，普通函数和 struct 方法可错性由函数体推导；可错函数 LLVM ABI 改为状态返回 + 隐藏 out 参数，defer 中禁止 err 和 ??，旧 ncrt setjmp/throw 通道已删除。同步 design.md/stdlib.md，新增 case_285~291 覆盖传播、必须成功、裸调用错误、defer 禁止和方法可错。验证：python tests/test_language_cases.py；python tests/test_stdlib.py；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q。
+
+- 2026-06-18: 预备做 typechecker 第一轮等价重构：从 compiler/typecheck.py 抽出低状态依赖的类型规则到独立模块，保留 infer_types public 入口和现有错误文案，不新增语言能力。why：typecheck 已膨胀为 1300+ 行闭包，比较性、零值、map、size_of、约束和 extern ABI 规则适合作为低风险第一刀。
+
+- 2026-06-18: 已完成 typechecker 第一轮等价重构：新增 compiler/type_rules.py 承接类型谓词、比较/哈希/零值递归规则、map/size_of 校验、泛型约束校验和 extern ABI 判断；compiler/typecheck.py 保留 infer_types 入口与 AST 遍历/作用域/return/fallible 状态逻辑，行为边界不变，design.md 无需更新。验证：python -m py_compile compiler/typecheck.py compiler/type_rules.py；python tests/test_language_cases.py 通过 248/248；python tests/test_stdlib.py 通过 60/60；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q 通过 87 passed, 1 skipped。
