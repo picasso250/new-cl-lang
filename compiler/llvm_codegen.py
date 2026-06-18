@@ -1,4 +1,4 @@
-"""LLVM Lite backend v1.
+"""LLVM backend.
 
 This backend shares the existing frontend and typed AST, then lowers to LLVM IR.
 Unsupported language nodes fail explicitly.
@@ -328,7 +328,7 @@ class LLVMCodegen:
     def generate(self, program) -> str:
         collected = _collect_llvm_inputs(program)
         if collected.top_stmts:
-            raise NotImplementedError("LLVM backend v1 does not support top-level statements")
+            raise NotImplementedError("LLVM backend does not support top-level statements")
         self.register_enums(collected.enums)
         self.register_structs(collected.structs)
         self.register_ifaces(program)
@@ -768,7 +768,7 @@ class LLVMCodegen:
                 raise RuntimeError("break outside loop")
             self.builder.branch(self.break_stack[-1])
             return
-        raise NotImplementedError(f"LLVM backend v1 does not support statement: {type(stmt).__name__}")
+        raise NotImplementedError(f"LLVM backend does not support statement: {type(stmt).__name__}")
 
     def emit_defer(self, stmt: Defer):
         if self.emitting_defer:
@@ -902,7 +902,7 @@ class LLVMCodegen:
     def emit_slice_for_in(self, stmt: ForIn):
         elem_type = parse_slice_type(stmt.iterable.type)
         if elem_type is None or stmt.value is None:
-            raise NotImplementedError("LLVM backend v1 only supports for i, item in slice")
+            raise NotImplementedError("LLVM backend only supports for i, item in slice")
 
         saved_vars = self.vars.copy()
         idx_type = ir.IntType(32)
@@ -942,7 +942,7 @@ class LLVMCodegen:
     def emit_map_for_in(self, stmt: ForIn):
         map_parts = parse_map_type(stmt.iterable.type)
         if map_parts is None or stmt.value is None:
-            raise NotImplementedError("LLVM backend v1 only supports for key, value in map")
+            raise NotImplementedError("LLVM backend only supports for key, value in map")
         key_type, value_type = map_parts
 
         saved_vars = self.vars.copy()
@@ -1048,7 +1048,7 @@ class LLVMCodegen:
                 return self.builder.neg(val)
             if node.op == "~":
                 return self.builder.xor(val, ir.Constant(llvm_type(node.operand.type), -1))
-            raise NotImplementedError(f"LLVM backend v1 does not support unary operator {node.op}")
+            raise NotImplementedError(f"LLVM backend does not support unary operator {node.op}")
         if isinstance(node, BinaryOp):
             return self.emit_binary(node)
         if isinstance(node, IfExpr):
@@ -1067,7 +1067,7 @@ class LLVMCodegen:
             return self.emit_method_call(node)
         if isinstance(node, FunctionExpr):
             return self.emit_function_expr(node)
-        raise NotImplementedError(f"LLVM backend v1 does not support expression: {type(node).__name__}")
+        raise NotImplementedError(f"LLVM backend does not support expression: {type(node).__name__}")
 
     def emit_block_expr(self, node: BlockExpr):
         saved_vars = self.vars.copy()
@@ -1124,7 +1124,7 @@ class LLVMCodegen:
         array_info = parse_array_type(source_type)
         slice_elem_type = parse_slice_type(source_type)
         if array_info is None and slice_elem_type is None:
-            raise NotImplementedError(f"LLVM backend v1 cannot slice {source_type}")
+            raise NotImplementedError(f"LLVM backend cannot slice {source_type}")
         if array_info is not None:
             _array_len, elem_type = array_info
             default_end = ir.Constant(ir.IntType(32), _array_len)
@@ -1230,13 +1230,13 @@ class LLVMCodegen:
             array_ptr, array_type = self.emit_lvalue(node.obj)
             array_info = parse_array_type(array_type)
             if array_info is None:
-                raise NotImplementedError(f"LLVM backend v1 cannot index {array_type}")
+                raise NotImplementedError(f"LLVM backend cannot index {array_type}")
             _length, elem_type = array_info
             idx = self.cast_to(self.emit_expr(node.index), "i32")
             zero = ir.Constant(ir.IntType(32), 0)
             elem_ptr = self.builder.gep(array_ptr, [zero, idx], inbounds=True, name="idx.ptr")
             return elem_ptr, elem_type
-        raise NotImplementedError(f"LLVM backend v1 cannot take lvalue of {type(node).__name__}")
+        raise NotImplementedError(f"LLVM backend cannot take lvalue of {type(node).__name__}")
 
     def emit_binary(self, node: BinaryOp):
         if getattr(node, "overload_method", None):
@@ -1304,7 +1304,7 @@ class LLVMCodegen:
             return self.builder.and_(self.bool_value(left), self.bool_value(right))
         if op == "||":
             return self.builder.or_(self.bool_value(left), self.bool_value(right))
-        raise NotImplementedError(f"LLVM backend v1 does not support binary operator {op}")
+        raise NotImplementedError(f"LLVM backend does not support binary operator {op}")
 
     def emit_float_binary(self, left, op, right):
         if op == "+":
@@ -1318,7 +1318,7 @@ class LLVMCodegen:
         if op in ("==", "!=", "<", "<=", ">", ">="):
             pred = {"==": "==", "!=": "!=", "<": "<", "<=": "<=", ">": ">", ">=": ">="}[op]
             return self.builder.fcmp_ordered(pred, left, right)
-        raise NotImplementedError(f"LLVM backend v1 does not support float operator {op}")
+        raise NotImplementedError(f"LLVM backend does not support float operator {op}")
 
     def emit_receiver_arg(self, obj, receiver_base: str):
         obj_type = obj.type
@@ -1451,12 +1451,12 @@ class LLVMCodegen:
             if parse_map_type(node.args[0].type) is not None:
                 length64 = self.builder.extract_value(arg, 3)
                 return self.builder.trunc(length64, ir.IntType(32))
-            raise NotImplementedError(f"LLVM backend v1 cannot take len of {node.args[0].type}")
+            raise NotImplementedError(f"LLVM backend cannot take len of {node.args[0].type}")
         if node.name == "cap":
             if len(node.args) != 1:
                 raise RuntimeError("cap expects one argument")
             if parse_slice_type(node.args[0].type) is None:
-                raise NotImplementedError(f"LLVM backend v1 cannot take cap of {node.args[0].type}")
+                raise NotImplementedError(f"LLVM backend cannot take cap of {node.args[0].type}")
             arg = self.emit_expr(node.args[0])
             cap64 = self.builder.extract_value(arg, 2)
             return self.builder.trunc(cap64, ir.IntType(32))
@@ -1492,7 +1492,7 @@ class LLVMCodegen:
             slice_type = node.args[0].type
             elem_type = parse_slice_type(slice_type)
             if elem_type is None:
-                raise NotImplementedError(f"LLVM backend v1 cannot append to {slice_type}")
+                raise NotImplementedError(f"LLVM backend cannot append to {slice_type}")
             return self.emit_append(node.args[0], node.args[1], elem_type)
         if node.name == "__nc_str_alloc":
             if len(node.args) != 1:
@@ -1523,7 +1523,7 @@ class LLVMCodegen:
                 return self.cast_to(self.emit_expr(node.args[0]), node.name)
             return self.cast_numeric(self.emit_expr(node.args[0]), node.args[0].type, node.name)
         if node.name not in self.fn_decls:
-            raise NotImplementedError(f"LLVM backend v1 cannot call {node.name}")
+            raise NotImplementedError(f"LLVM backend cannot call {node.name}")
         fn_decl = self.fn_decls[node.name]
         if getattr(fn_decl, "fallible", False):
             raise RuntimeError(f"fallible call {node.name} must be lowered through a fallible operator")
@@ -1657,7 +1657,7 @@ class LLVMCodegen:
             receiver_base = obj_type
         name = safe_user_ident(f"{receiver_base}_{node.method}")
         if name not in self.module.globals:
-            raise NotImplementedError(f"LLVM backend v1 cannot call method {receiver_base}.{node.method}")
+            raise NotImplementedError(f"LLVM backend cannot call method {receiver_base}.{node.method}")
         fn = self.module.globals[name]
         fn_decl = self.fn_decls[name]
         if getattr(fn_decl, "fallible", False):
@@ -1735,7 +1735,7 @@ class LLVMCodegen:
             if val.type.width < 64:
                 val = self.builder.sext(val, ir.IntType(64)) if typ in SIGNED_INT_TYPES else self.builder.zext(val, ir.IntType(64))
             return self.builder.call(self.printf, [fmt, val])
-        raise NotImplementedError(f"LLVM backend v1 cannot print type: {typ}")
+        raise NotImplementedError(f"LLVM backend cannot print type: {typ}")
 
     def emit_to_str(self, arg_expr):
         typ = arg_expr.type
@@ -1759,7 +1759,7 @@ class LLVMCodegen:
             if typ == "f32":
                 value = self.builder.fpext(value, ir.DoubleType())
             return self.emit_f64_value_to_str(value)
-        raise NotImplementedError(f"LLVM backend v1 cannot convert {typ} to str")
+        raise NotImplementedError(f"LLVM backend cannot convert {typ} to str")
 
     def emit_append(self, slice_expr, elem_expr, elem_type: str):
         self.ensure_ncrt_runtime()
@@ -1784,7 +1784,7 @@ class LLVMCodegen:
         self.ensure_ncrt_runtime()
         elem_type = parse_slice_type(dst_expr.type)
         if elem_type is None:
-            raise NotImplementedError(f"LLVM backend v1 cannot copy into {dst_expr.type}")
+            raise NotImplementedError(f"LLVM backend cannot copy into {dst_expr.type}")
         slice_type = llvm_type(dst_expr.type)
         dst = self.emit_expr(dst_expr)
         src = self.emit_expr(src_expr)
@@ -1817,7 +1817,7 @@ class LLVMCodegen:
         if parse_map_type(expr.type) is not None:
             self.builder.call(self.map_clear_fn, [self.map_pointer_for_expr(expr)])
             return ir.Constant(ir.IntType(1), 0)
-        raise NotImplementedError(f"LLVM backend v1 cannot clear {expr.type}")
+        raise NotImplementedError(f"LLVM backend cannot clear {expr.type}")
 
     def emit_min_max(self, name: str, left_expr, right_expr):
         typ = left_expr.type
@@ -1914,7 +1914,7 @@ class LLVMCodegen:
         map_ptr, map_type = self.emit_lvalue(map_expr)
         map_args = parse_map_type(map_type)
         if map_args is None:
-            raise NotImplementedError(f"LLVM backend v1 cannot map-set {map_type}")
+            raise NotImplementedError(f"LLVM backend cannot map-set {map_type}")
         _key_type, value_type = map_args
         key = self.emit_expr(key_expr)
         key_ptr = self.value_to_i8_stack_ptr(key, llvm_type(key_expr.type), "__nc_map_key")
@@ -2036,7 +2036,7 @@ class LLVMCodegen:
             return self.emit_map_hash_mix(builder, h, value)
         if typ in ENUM_VARIANTS or typ in INT_TYPES:
             return self.emit_map_hash_mix(builder, h, value)
-        raise NotImplementedError(f"LLVM backend v1 cannot hash map key {typ}")
+        raise NotImplementedError(f"LLVM backend cannot hash map key {typ}")
 
     def emit_map_eq_value(self, builder, left, right, typ):
         if typ == "str":
@@ -2254,7 +2254,7 @@ class LLVMCodegen:
 
     def sizeof_type(self, nc_type: str) -> int:
         if nc_type == "void":
-            raise NotImplementedError("LLVM backend v1 cannot sizeof void")
+            raise NotImplementedError("LLVM backend cannot sizeof void")
         if nc_type in ("i8", "u8", "bool"):
             return 1
         if nc_type in ("i16", "u16"):
@@ -2281,11 +2281,11 @@ class LLVMCodegen:
             return length * self.aligned_sizeof_type(elem_type)
         if nc_type in STRUCT_FIELDS:
             return self.sizeof_fields([field_type for _field_name, field_type in STRUCT_FIELDS[nc_type]])
-        raise NotImplementedError(f"LLVM backend v1 cannot sizeof {nc_type}")
+        raise NotImplementedError(f"LLVM backend cannot sizeof {nc_type}")
 
     def alignof_type(self, nc_type: str) -> int:
         if nc_type == "void":
-            raise NotImplementedError("LLVM backend v1 cannot alignof void")
+            raise NotImplementedError("LLVM backend cannot alignof void")
         if nc_type in ("i8", "u8", "bool"):
             return 1
         if nc_type in ("i16", "u16"):
@@ -2307,7 +2307,7 @@ class LLVMCodegen:
         if nc_type in STRUCT_FIELDS:
             aligns = [self.alignof_type(field_type) for _field_name, field_type in STRUCT_FIELDS[nc_type]]
             return max(aligns, default=1)
-        raise NotImplementedError(f"LLVM backend v1 cannot alignof {nc_type}")
+        raise NotImplementedError(f"LLVM backend cannot alignof {nc_type}")
 
     def align_to(self, value: int, alignment: int) -> int:
         return ((value + alignment - 1) // alignment) * alignment
@@ -2562,7 +2562,7 @@ class LLVMCodegen:
                 return self.builder.fpext(value, target)
             if from_type == "f64" and to_type == "f32":
                 return self.builder.fptrunc(value, target)
-        raise NotImplementedError(f"LLVM backend v1 cannot cast {from_type} to {to_type}")
+        raise NotImplementedError(f"LLVM backend cannot cast {from_type} to {to_type}")
 
 
 def generate_llvm_ir(program, target_name: str | None = None) -> str:

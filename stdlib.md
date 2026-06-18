@@ -6,7 +6,7 @@
 
 - 标准库模块必须显式 `import` 后用限定名访问，例如 `import io` 后调用 `io.println(...)`。
 - 语言级 builtin 不需要 `import`，属于语法或类型系统边界。
-- 不向前兼容旧裸 API；例如裸 `print(...)`、`read_file(...)`、`gc_collect()` 都不是当前语言边界。
+- 不向前兼容未进入当前设计的旧 API。
 
 ## import 规则
 
@@ -63,7 +63,7 @@ v1 不提供 `os.setenv`、`os.unsetenv`、`os.chdir`。
 - `runtime.gc_collect()`
 - `runtime.gc_live(): i32`
 
-这是当前唯一公开的运行时调试 API。裸 `gc_collect()` / `gc_live()` 不是 builtin。
+这是当前唯一公开的运行时调试 API。
 
 ### strings
 
@@ -160,7 +160,6 @@ v1 不提供 `os.setenv`、`os.unsetenv`、`os.chdir`。
 - 遍历使用 `for key, value in m {}`；遍历顺序不保证稳定。
 - `m.has(k)` 要求 `k: K`，返回 `i32`。
 - `len(m)` 返回 map 当前条目数，类型为 `i32`。
-- `map_new()`、`map_has()`、裸 `nc_map` 和旧字符串专用 map helper 不是语言边界。
 
 ## size_of(T)
 

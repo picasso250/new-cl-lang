@@ -128,3 +128,7 @@
 - 2026-06-18: 已修正文档与实现不和谐点：design.md 不再引用不存在的 c-interop.md，位运算 `& | ^ ~ << >>` 与复合赋值 `+= -= *= /= %= &= |= ^= <<= >>=` 已进入当前设计边界；nc.py 删除 `--backend` 专门拒绝逻辑，项目测试不再承诺旧参数友好诊断。验证：待本轮回归执行。
 
 - 2026-06-18: 验证文档与实现不和谐点修正：python tests/test_language_cases.py 通过 251/251；python tests/test_stdlib.py 通过 60/60；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q 通过 86 passed, 1 skipped；python nc.py build --backend c test_cases\case_170_generics_identity.nc 现按普通路径失败为“文件不存在: --backend”。rg 仍命中 worklog 历史与本轮追加说明中的 c-interop 字符串，未回写历史条目以遵守 append-only。
+
+- 2026-06-18: 预备删除旧边界与缓存噪音：清理仓库内 Python 缓存产物、旧语法/旧 API 专门拒绝 case、旧函数类型迁移诊断、stdlib 旧 API 黑名单文档，以及 LLVM-only 后遗留的 v1/Lite 文案。why：不向前兼容旧边界，减少 case 驱动判断中的历史噪音。
+
+- 2026-06-18: 已删除旧边界与缓存噪音：删除 compiler/__pycache__ 缓存产物并加入忽略规则，删除旧函数类型/types.Cmp/map_has/裸 gc_collect 专门拒绝 case，移除旧函数类型迁移诊断，stdlib 文档不再列旧 API 黑名单，LLVM 后端文案去除 v1/Lite。design.md 无需更新。验证：python tests/test_language_cases.py 通过 249/249；python tests/test_stdlib.py 通过 58/58；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q 通过 86 passed, 1 skipped。

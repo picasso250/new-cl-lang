@@ -189,8 +189,6 @@ class Parser:
             self.expect(TokenKind.RPAREN)
             ret = self._parse_type()
             return f"fn({','.join(params)})->{ret}"
-        if self.peek().kind == TokenKind.LPAREN:
-            raise ParseError("old function type syntax is not supported; use fun(T) R")
         if self.peek().kind == TokenKind.STAR:
             self.advance()
             return "*" + self._parse_type()
