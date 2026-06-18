@@ -148,3 +148,5 @@
 - 2026-06-18: 预备更新 README 关键字亮点：补充 NC 关键字少的说明和完整保留词列表，并修正 README 兼容性句子。why：关键字少是当前语言表面小的直接信号，适合作为 README 的项目亮点。
 
 - 2026-06-18: 已更新 README 关键字亮点：新增“语言表面很小”小节，列出当前 lexer 保留词，并修正“不向前兼容旧语法或旧 API”表述。design.md 无需更新。验证：README 关键字表与 compiler/lexer.py KEYWORDS 一致；python nc.py run test_cases/case_013_fun.nc 输出 42。
+
+- 2026-06-18: 已删除旧 review 辅助服务 server.js。why：当前仓库没有使用该 Node 服务的入口或引用，只剩归档历史提及；design.md 无需更新。验证：rg -n "server\\.js|node server|npm start|http\\.createServer|require\\('http'\\)" . 仅剩 worklog 当前记录与归档历史命中。
