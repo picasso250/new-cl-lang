@@ -114,3 +114,7 @@
 - 2026-06-18: 预备做 typechecker 第一轮等价重构：从 compiler/typecheck.py 抽出低状态依赖的类型规则到独立模块，保留 infer_types public 入口和现有错误文案，不新增语言能力。why：typecheck 已膨胀为 1300+ 行闭包，比较性、零值、map、size_of、约束和 extern ABI 规则适合作为低风险第一刀。
 
 - 2026-06-18: 已完成 typechecker 第一轮等价重构：新增 compiler/type_rules.py 承接类型谓词、比较/哈希/零值递归规则、map/size_of 校验、泛型约束校验和 extern ABI 判断；compiler/typecheck.py 保留 infer_types 入口与 AST 遍历/作用域/return/fallible 状态逻辑，行为边界不变，design.md 无需更新。验证：python -m py_compile compiler/typecheck.py compiler/type_rules.py；python tests/test_language_cases.py 通过 248/248；python tests/test_stdlib.py 通过 60/60；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q 通过 87 passed, 1 skipped。
+
+- 2026-06-18: 预备清理测试噪音：删除明确重复的 case，旧 throw/try/catch 命名测试改为 err 命名并保留覆盖，同时精简 LLVM-only 后重复的项目级测试。why：当前错误模型已迁移到 err，测试名和重复 case 会干扰后续 case 驱动判断，但不应降低回归覆盖。
+
+- 2026-06-18: 已完成测试噪音清理：删除 4 个重复/弱覆盖 language case，旧 throw 命名 case 改为 err 命名并保留覆盖，LLVM-only 后重复的项目级聚合测试已删除，相关 Python 测试函数改为 err 命名。design.md 无需更新。验证：python tests/test_language_cases.py 通过 244/244；python tests/test_stdlib.py 通过 60/60；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q 通过 86 passed, 1 skipped；rg -n "throw|try|catch|throws" test_cases stdlib_cases tests 仅剩 Python 语法 try 和非异常语义函数名命中。

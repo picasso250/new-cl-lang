@@ -434,7 +434,7 @@ fun main() {{
     assert (stdout.strip(), stderr.strip(), rc) == ("hello", "", 0)
 
 
-def test_llvm_fs_read_failure_throws(tmp_path):
+def test_llvm_fs_read_failure_is_err(tmp_path):
     path = str(tmp_path / "missing.txt").replace("\\", "/")
     source = f"""import fs
 import io
@@ -532,7 +532,7 @@ fun main() {
     assert "__nc_map_get" in llvm_ir
 
 
-def test_llvm_throw_try_catch_and_uncaught():
+def test_llvm_err_is_err_and_uncaught():
     source = """import io
 fun risky(path: str): str {
     if path == "" {
@@ -555,7 +555,7 @@ fun main() {
     assert (stdout.strip(), stderr.strip(), rc) == ("", "error: boom", 1)
 
 
-def test_llvm_defer_lifo_return_and_throw():
+def test_llvm_defer_lifo_return_and_err():
     source = """import io
 fun main(): i32 {
     defer { io.println(1) }

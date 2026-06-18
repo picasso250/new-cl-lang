@@ -6,7 +6,7 @@
 - **先通后优**。链路未通之前不优化，链路一旦通，即刻自省。
 - **多 pass，各司其职，不跨界**。每个 pass 只做一件事。可有多 pass，不可有一 pass 做两事。
 - 动手或者做计划之前，要先阅读 `design.md` `worklog.md`
-- 更新 worklog 的时机：工作时，仅用 append 方式写: 1. 我预备做什么; 2. 成功与否。
+- 更新 worklog 的时机：工作时，仅用 append 方式写: 1. 我做什么; 2. 成功与否。
 - 更新 design.md 的时机：我预备做什么新 feature（design.md中没有的）；做完之后，检查一遍 design.md 是否和实现一致
-- 新 feature 完成之后，git 提交。
+- 新 feature / bug fix / refactor 完成之后，git 提交 并 push。
 - 马斯克五步工作法。（第一步：质疑需求；第二步：删掉所有可能的部件；第三步：简化与优化；第四步：加速周转；第五步：自动化）
