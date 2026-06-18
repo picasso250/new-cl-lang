@@ -5,15 +5,13 @@ import io
 fun main() {
     let a = "__nc_case_240_a.txt"
     let b = "__nc_case_240_b.txt"
-    if fs.exists(a) { fs.remove(a) }
-    if fs.exists(b) { fs.remove(b) }
-    fs.write_file(a, "a")
-    fs.write_file(b, "b")
-    try {
-        fs.rename(a, b)
-    } catch e {
-        io.println(e)
+    if fs.exists(a) { fs.remove(a)!! }
+    if fs.exists(b) { fs.remove(b)!! }
+    fs.write_file(a, "a")!!
+    fs.write_file(b, "b")!!
+    if fs.rename(a, b) is err {
+        io.println("fs.rename failed")
     }
-    fs.remove(a)
-    fs.remove(b)
+    fs.remove(a)!!
+    fs.remove(b)!!
 }

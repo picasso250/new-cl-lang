@@ -4,7 +4,7 @@ import io
 
 fun make(): str {
     defer { runtime.gc_collect() }
-    return str(1)
+    ret str(1)
 }
 
 fun main() {

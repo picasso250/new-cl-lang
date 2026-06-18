@@ -17,5 +17,5 @@ fun main() {
     io.println(strlen("abcd"[1:3].c_str()))
     io.println(strlen("x={1}".c_str()))
     io.println(strlen(os.getenv("__NC_CASE_248_MISSING").c_str()))
-    io.println(strlen(os.cwd().c_str()) > 0u64)
+    io.println(strlen((os.cwd()!!).c_str()) > 0u64)
 }

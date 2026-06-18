@@ -1,14 +1,14 @@
 fun is_digit_byte(b: i32): bool {
-    return b >= 48 && b <= 57
+    ret b >= 48 && b <= 57
 }
 
 fun digit_byte(b: i32): i32 {
-    return b - 48
+    ret b - 48
 }
 
 fun parse_i32(s: str): i32 {
     if len(s) == 0 {
-        throw "strconv.parse_i32 failed"
+        err "strconv.parse_i32 failed"
     }
 
     let i = 0
@@ -20,7 +20,7 @@ fun parse_i32(s: str): i32 {
         i = 1
     }
     if i == len(s) {
-        throw "strconv.parse_i32 failed"
+        err "strconv.parse_i32 failed"
     }
 
     let limit = 2147483647i64
@@ -31,36 +31,36 @@ fun parse_i32(s: str): i32 {
     for i < len(s) {
         let b = s[i]
         if !is_digit_byte(b) {
-            throw "strconv.parse_i32 failed"
+            err "strconv.parse_i32 failed"
         }
         let d = i64(digit_byte(b))
         if value > (limit - d) / 10i64 {
-            throw "strconv.parse_i32 failed"
+            err "strconv.parse_i32 failed"
         }
         value = value * 10i64 + d
         i = i + 1
     }
     if neg {
-        return i32(0i64 - value)
+        ret i32(0i64 - value)
     }
-    return i32(value)
+    ret i32(value)
 }
 
 fun atoi(s: str): i32 {
-    return parse_i32(s)
+    ret parse_i32(s)??
 }
 
 fun itoa(n: i32): str {
-    return str(n)
+    ret str(n)
 }
 
 fun format_i32(n: i32): str {
-    return str(n)
+    ret str(n)
 }
 
 fun parse_f64(s: str): f64 {
     if len(s) == 0 {
-        throw "strconv.parse_f64 failed"
+        err "strconv.parse_f64 failed"
     }
 
     let i = 0
@@ -72,7 +72,7 @@ fun parse_f64(s: str): f64 {
         i = 1
     }
     if i == len(s) {
-        throw "strconv.parse_f64 failed"
+        err "strconv.parse_f64 failed"
     }
 
     let value = 0.0
@@ -93,14 +93,14 @@ fun parse_f64(s: str): f64 {
         }
     }
     if digits == 0 || i != len(s) {
-        throw "strconv.parse_f64 failed"
+        err "strconv.parse_f64 failed"
     }
     if neg {
-        return 0.0 - value
+        ret 0.0 - value
     }
-    return value
+    ret value
 }
 
 fun format_f64(n: f64): str {
-    return str(n)
+    ret str(n)
 }

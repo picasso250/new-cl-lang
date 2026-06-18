@@ -17,7 +17,9 @@ class TokenKind(Enum):
     ELSE = auto()
     TYPE = auto()
     FUN = auto()
-    RETURN = auto()
+    RET = auto()
+    ERR = auto()
+    IS = auto()
     STRUCT = auto()
     IFACE = auto()
     ENUM = auto()
@@ -26,9 +28,6 @@ class TokenKind(Enum):
     IN = auto()
     BREAK = auto()
     NEW = auto()
-    TRY = auto()
-    CATCH = auto()
-    THROW = auto()
     DEFER = auto()
     NIL = auto()
     IMPORT = auto()
@@ -68,6 +67,8 @@ class TokenKind(Enum):
     OR = auto()
     NOT = auto()
     QUESTION = auto()
+    QUESTIONQUESTION = auto()
+    NOTNOT = auto()
     # 分隔符
     LPAREN = auto()
     RPAREN = auto()
@@ -97,7 +98,9 @@ KEYWORDS = {
     "if": TokenKind.IF,
     "else": TokenKind.ELSE,
     "fun": TokenKind.FUN,
-    "return": TokenKind.RETURN,
+    "ret": TokenKind.RET,
+    "err": TokenKind.ERR,
+    "is": TokenKind.IS,
     "struct": TokenKind.STRUCT,
     "iface": TokenKind.IFACE,
     "enum": TokenKind.ENUM,
@@ -106,9 +109,6 @@ KEYWORDS = {
     "in": TokenKind.IN,
     "break": TokenKind.BREAK,
     "new": TokenKind.NEW,
-    "try": TokenKind.TRY,
-    "catch": TokenKind.CATCH,
-    "throw": TokenKind.THROW,
     "defer": TokenKind.DEFER,
     "nil": TokenKind.NIL,
     "import": TokenKind.IMPORT,
@@ -359,6 +359,8 @@ def lex(source: str):
                 yield Token(TokenKind.EQEQ, "==", i); i += 2; continue
             if two == "!=":
                 yield Token(TokenKind.NE, "!=", i); i += 2; continue
+            if two == "!!":
+                yield Token(TokenKind.NOTNOT, "!!", i); i += 2; continue
             if two == "&&":
                 yield Token(TokenKind.AND, "&&", i); i += 2; continue
             if two == "||":
@@ -367,6 +369,8 @@ def lex(source: str):
                 yield Token(TokenKind.COLONCOLON, "::", i); i += 2; continue
             if two == "->":
                 yield Token(TokenKind.ARROW, "->", i); i += 2; continue
+            if two == "??":
+                yield Token(TokenKind.QUESTIONQUESTION, "??", i); i += 2; continue
 
         # 单字符符号
         if ch == "+":

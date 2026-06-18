@@ -3,16 +3,13 @@ import io
 
 fun risky(path: str): str {
     if path == "" {
-        throw "bad path"
+        err "bad path"
     }
-    return "ok"
+    ret "ok"
 }
 
 fun main() {
-    try {
-        let s = risky("")
-        io.println(s)
-    } catch e {
-        io.println("error: " + e)
+    if risky("") is err {
+        io.println("error: bad path")
     }
 }

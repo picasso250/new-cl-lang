@@ -7,7 +7,7 @@ import io
 
 struct User { name: str }
 
-fun inc(x: i32): i32 { return x + 1 }
+fun inc(x: i32): i32 { ret x + 1 }
 
 fun main() {
     let name = "NC"

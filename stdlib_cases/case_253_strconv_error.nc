@@ -2,10 +2,8 @@ import io
 import strconv
 
 fun main() {
-    try {
-        strconv.parse_i32("12x")
-    } catch e {
-        io.println(e)
+    if strconv.parse_i32("12x") is err {
+        io.println("strconv.parse_i32 failed")
     }
 }
 

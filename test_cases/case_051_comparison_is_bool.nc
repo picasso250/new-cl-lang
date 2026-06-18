@@ -1,7 +1,7 @@
 import io
 # STDOUT: 1
 fun is_big(x: i32): bool {
-    return x > 10
+    ret x > 10
 }
 
 fun main() {

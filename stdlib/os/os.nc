@@ -12,24 +12,24 @@ fun args(): []str {
     for i in 0..n {
         out = append(out, str(nc_argv(i)))
     }
-    return out
+    ret out
 }
 
 fun getenv(name: str): str {
-    return str(c_getenv(name.c_str()))
+    ret str(c_getenv(name.c_str()))
 }
 
 fun has_env(name: str): bool {
-    return c_getenv(name.c_str()) != nil
+    ret c_getenv(name.c_str()) != nil
 }
 
 fun cwd(): str {
     let buf = __nc_bytes_alloc(65536u64)
     let ptr = c_getcwd(buf.ptr, 65536)
     if ptr == nil {
-        throw "os.cwd failed"
+        err "os.cwd failed"
     }
-    return str(ptr)
+    ret str(ptr)
 }
 
 fun exit(code: i32) {

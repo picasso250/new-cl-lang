@@ -31,8 +31,8 @@ fun by[T](items: []T, less: fun(T, T) bool) {
 fun is_sorted_by[T](items: []T, less: fun(T, T) bool): bool {
     for i in 1..len(items) {
         if less(items[i], items[i - 1]) {
-            return false
+            ret false
         }
     }
-    return true
+    ret true
 }

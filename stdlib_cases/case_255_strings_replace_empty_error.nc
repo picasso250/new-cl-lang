@@ -2,10 +2,8 @@ import io
 import strings
 
 fun main() {
-    try {
-        strings.replace_all("abc", "", "x")
-    } catch e {
-        io.println(e)
+    if strings.replace_all("abc", "", "x") is err {
+        io.println("strings.replace_all empty old")
     }
 }
 

@@ -53,7 +53,7 @@ fun main() {
 
 def test_llvm_println_and_control_flow():
     source = """import io
-fun add(x: i32, y: i32): i32 { return x + y }
+fun add(x: i32, y: i32): i32 { ret x + y }
 fun main() {
     let x: i32 = add(1, 2)
     if x == 3 { io.println(x) } else { io.println(0) }
@@ -171,7 +171,7 @@ fun main() {
 def test_llvm_struct_param_and_return():
     source = """import io
 struct Pair { a: i32, b: i32 }
-fun make_pair(): Pair { return Pair { a: 2, b: 5 } }
+fun make_pair(): Pair { ret Pair { a: 2, b: 5 } }
 fun move(p: Pair, delta: i32): Pair { Pair { a: p.a + delta, b: p.b } }
 fun sum(p: Pair): i32 { p.a + p.b }
 fun main() {
@@ -188,7 +188,7 @@ def test_llvm_heap_struct_method_call():
     source = """import io
 struct Point { x: i32, y: i32 }
 fun (p *Point) sum(delta: i32): i32 {
-    return p.x + p.y + delta
+    ret p.x + p.y + delta
 }
 fun main() {
     let p = new Point { x: 20, y: 21 }
@@ -424,8 +424,8 @@ def test_llvm_file_io(tmp_path):
     source = f"""import fs
 import io
 fun main() {{
-    fs.write_file("{path}", "hello")
-    let content = fs.read_file("{path}")
+    fs.write_file("{path}", "hello")!!
+    let content = fs.read_file("{path}")!!
     io.println(content)
 }}
 """
@@ -439,10 +439,8 @@ def test_llvm_fs_read_failure_throws(tmp_path):
     source = f"""import fs
 import io
 fun main() {{
-    try {{
-        io.println(fs.read_file("{path}"))
-    }} catch e {{
-        io.println(e)
+    if fs.read_file("{path}") is err {{
+        io.println("fs.read_file failed")
     }}
 }}
 """
@@ -538,16 +536,13 @@ def test_llvm_throw_try_catch_and_uncaught():
     source = """import io
 fun risky(path: str): str {
     if path == "" {
-        throw "bad path"
+        err "bad path"
     }
-    return "ok"
+    ret "ok"
 }
 fun main() {
-    try {
-        let s = risky("")
-        io.println(s)
-    } catch e {
-        io.println("error: " + e)
+    if risky("") is err {
+        io.println("error: bad path")
     }
 }
 """
@@ -555,9 +550,9 @@ fun main() {
     stdout, stderr, rc = run_llvm_ir(llvm_ir)
     assert (stdout.strip(), stderr.strip(), rc) == ("error: bad path", "", 0)
 
-    llvm_ir = compile_nc_to_llvm_ir('fun main() { throw "boom" }')
+    llvm_ir = compile_nc_to_llvm_ir('fun main() { err "boom" }')
     stdout, stderr, rc = run_llvm_ir(llvm_ir)
-    assert (stdout.strip(), stderr.strip(), rc) == ("", "uncaught: boom", 1)
+    assert (stdout.strip(), stderr.strip(), rc) == ("", "error: boom", 1)
 
 
 def test_llvm_defer_lifo_return_and_throw():
@@ -566,7 +561,7 @@ fun main(): i32 {
     defer { io.println(1) }
     defer { io.println(2) }
     io.println(3)
-    return 7
+    ret 7
 }
 """
     llvm_ir = compile_nc_to_llvm_ir(source)
@@ -577,14 +572,12 @@ fun main(): i32 {
 import runtime
 fun fail() {
     defer { runtime.gc_collect() }
-    throw str(1)
+    err str(1)
 }
 fun main() {
-    try {
-        fail()
-    } catch e {
+    if fail() is err {
         runtime.gc_collect()
-        io.println(e)
+        io.println(1)
     }
 }
 """
@@ -728,7 +721,7 @@ def test_llvm_build_writes_ir_obj_and_exe(tmp_path):
 def test_llvm_build_links_fs_support_when_stdlib_fs_is_imported(tmp_path):
     data_path = str(tmp_path / "data.txt").replace("\\", "/")
     llvm_ir, link_libs, support_c_sources = compile_nc_sources_with_libs([
-        ("<memory>", f'import fs\nfun main() {{ fs.write_file("{data_path}", "ok") }}')
+        ("<memory>", f'import fs\nfun main() {{ fs.write_file("{data_path}", "ok")!! }}')
     ])
     _ll_path, _obj_path, exe_path = build_llvm_ir(llvm_ir, str(tmp_path / "build"), "main", link_libs, support_c_sources)
     ext = ".obj" if sys.platform.startswith("win") else ".o"
@@ -770,7 +763,7 @@ def test_linux_stdlib_syscalls():
 fun main() {
     let pid = linux.getpid()
     if pid <= 0 {
-        throw "bad pid"
+        err "bad pid"
     }
     let n = linux.write_str(1, "A\\n")
 }

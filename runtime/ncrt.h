@@ -1,7 +1,6 @@
 #ifndef NCRT_H
 #define NCRT_H
 
-#include <setjmp.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -39,14 +38,6 @@ typedef struct {
     uint64_t len;
     uint64_t cap;
 } nc_slice_raw;
-
-typedef struct __nc_ex_frame {
-    jmp_buf jb;
-    struct __nc_ex_frame* prev;
-    str ex;
-} __nc_ex_frame_t;
-
-extern __nc_ex_frame_t* __nc_ex_top;
 
 void __nc_gc_init(void);
 void* __nc_gc_alloc(size_t sz);
@@ -93,7 +84,5 @@ int __nc_map_has(nc_map* m, nc_map_desc* desc, const void* key);
 void __nc_map_delete(nc_map* m, nc_map_desc* desc, const void* key);
 void __nc_map_clear(nc_map* m);
 int64_t __nc_map_next(nc_map* m, int64_t start, void* key_out, void* value_out);
-
-void __nc_throw(str ex);
 
 #endif

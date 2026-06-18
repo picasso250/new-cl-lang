@@ -5,7 +5,7 @@
 # STDOUT: 65
 import io
 
-fun id(r: rune): rune { return r }
+fun id(r: rune): rune { ret r }
 
 fun main() {
     let a = 'A'

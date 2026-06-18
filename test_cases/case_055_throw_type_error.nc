@@ -1,4 +1,4 @@
-# ERROR: throw: expected str, got i32
+# ERROR: err: expected error, got i32
 fun main() {
-    throw 123
+    err 123
 }

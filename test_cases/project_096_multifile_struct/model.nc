@@ -4,5 +4,5 @@ struct Point {
 }
 
 fun sum(p: Point): i32 {
-    return p.x + p.y
+    ret p.x + p.y
 }

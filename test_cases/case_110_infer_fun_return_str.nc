@@ -2,7 +2,7 @@ import io
 # STDOUT: hello
 
 fun greet() {
-    return "hello"
+    ret "hello"
 }
 
 fun main() {

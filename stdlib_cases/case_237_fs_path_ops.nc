@@ -11,21 +11,21 @@ fun main() {
     let file = "__nc_case_237_dir/file.txt"
     let renamed = "__nc_case_237_dir/renamed.txt"
 
-    if fs.exists(renamed) { fs.remove(renamed) }
-    if fs.exists(file) { fs.remove(file) }
-    if fs.exists(dir) { fs.remove(dir) }
+    if fs.exists(renamed) { fs.remove(renamed)!! }
+    if fs.exists(file) { fs.remove(file)!! }
+    if fs.exists(dir) { fs.remove(dir)!! }
 
-    fs.mkdir(dir)
+    fs.mkdir(dir)!!
     io.println(fs.exists(dir))
 
-    fs.write_file(file, "x")
+    fs.write_file(file, "x")!!
     io.println(fs.exists(file))
 
-    fs.rename(file, renamed)
+    fs.rename(file, renamed)!!
     io.println(fs.exists(file))
-    io.println(fs.read_file(renamed))
+    io.println(fs.read_file(renamed)!!)
 
-    fs.remove(renamed)
-    fs.remove(dir)
+    fs.remove(renamed)!!
+    fs.remove(dir)!!
     io.println(fs.exists(renamed))
 }

@@ -5,5 +5,5 @@ fun main(): i32 {
     defer {
         io.println(9)
     }
-    return 7
+    ret 7
 }

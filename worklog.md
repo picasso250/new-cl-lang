@@ -106,3 +106,7 @@
 - 2026-06-03: 预备补齐 types 约束族：将泛型约束从单一 types.Cmp 替换为 types.Eq/types.Ord/types.Hash/types.Zero，并新增泛型类型属性矩阵文档。why：当前 Eq/Ord/Hash/Zero 能力已经在比较、排序、map key/value 语义中分散存在，需要收敛成可复用的标准约束边界。
 
 - 2026-06-03: 已补齐 types 约束族：删除公开 types.Cmp 边界，新增 types.Eq/types.Ord/types.Hash/types.Zero，sort.sort 改用 types.Ord；泛型实例化保留原始约束元数据并在 typecheck 阶段按符号表递归校验 Eq/Hash/Zero，新增 docs/generics.md 记录完整类型属性矩阵。同步 design.md/stdlib.md，新增 case_277~284 覆盖约束族和旧名拒绝。验证：python tests/test_language_cases.py 通过 241/241；python tests/test_stdlib.py 通过 60/60；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q 通过 87 passed, 1 skipped。
+
+- 2026-06-18: 预备替换异常模型为 err 错误返回并迁移 ret。why：当前 throw/try/catch 与 defer 的双重异常语义冲突，改为显式可错返回并删除旧 return 关键字，保持 NC 错误路径显式、可预测。
+
+- 2026-06-18: 已替换异常模型为 err 错误返回并迁移 ret：删除源码 throw/try/catch/return 边界，新增内建 error、err、??/!!/is err，普通函数和 struct 方法可错性由函数体推导；可错函数 LLVM ABI 改为状态返回 + 隐藏 out 参数，defer 中禁止 err 和 ??，旧 ncrt setjmp/throw 通道已删除。同步 design.md/stdlib.md，新增 case_285~291 覆盖传播、必须成功、裸调用错误、defer 禁止和方法可错。验证：python tests/test_language_cases.py；python tests/test_stdlib.py；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q。

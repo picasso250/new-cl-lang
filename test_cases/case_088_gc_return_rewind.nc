@@ -4,7 +4,7 @@ import runtime
 fun helper(): i32 {
     let s = str(1)
     s = str(2)
-    return 7
+    ret 7
 }
 
 fun main() {

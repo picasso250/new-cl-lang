@@ -30,7 +30,6 @@ static size_t __nc_gc_live_count = 0;
 static void*** __nc_gc_roots = NULL;
 static size_t __nc_gc_root_count = 0;
 static size_t __nc_gc_root_cap = 0;
-__nc_ex_frame_t* __nc_ex_top = NULL;
 static int __nc_saved_argc = 0;
 static char** __nc_saved_argv = NULL;
 
@@ -57,7 +56,6 @@ void __nc_gc_init(void) {
     __nc_gc_blocks = NULL;
     __nc_gc_live_count = 0;
     __nc_gc_root_count = 0;
-    __nc_ex_top = NULL;
 }
 
 void* __nc_gc_alloc(size_t sz) {
@@ -502,13 +500,4 @@ int64_t __nc_map_next(nc_map* m, int64_t start, void* key_out, void* value_out) 
         }
     }
     return -1;
-}
-
-void __nc_throw(str ex) {
-    if (__nc_ex_top) {
-        __nc_ex_top->ex = ex;
-        longjmp(__nc_ex_top->jb, 1);
-    }
-    fprintf(stderr, "uncaught: %.*s\n", (int)ex.len, ex.ptr);
-    exit(1);
 }

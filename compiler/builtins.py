@@ -9,7 +9,7 @@ from compiler.type_ref import parse_map_type
 
 NUMERIC_TYPES = {"i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64"}
 SIGNED_NUMERIC_TYPES = {"i8", "i16", "i32", "i64", "f32", "f64"}
-SCALAR_TYPES = NUMERIC_TYPES | {"str", "bool", "rune"}
+SCALAR_TYPES = NUMERIC_TYPES | {"str", "bool", "rune", "error"}
 STRINGIFIABLE_TYPES = SCALAR_TYPES
 
 

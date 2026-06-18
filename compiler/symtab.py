@@ -101,10 +101,10 @@ def build_symbol_table(program: "Program") -> SymbolTable:
     """
     from compiler.ast import (
         Program, VariableDeclaration, ExpressionStatement,
-        Assignment, Update, Block, ForCondition, FunctionDeclaration, Return,
+        Assignment, Update, Block, ForCondition, FunctionDeclaration, Return, ErrReturn,
         StructDecl, IfaceDecl, EnumDecl, ForIn, ImportDecl, ExternBlock,
         IfExpr, BlockExpr, MatchExpr, BinaryOp, UnaryOp, FunctionCall, FunctionExpr,
-        ArrayLiteral, IndexAccess, MethodCall, FieldAccess, StructLiteral, TryCatch, Throw, Defer
+        ArrayLiteral, IndexAccess, MethodCall, FieldAccess, StructLiteral, Defer, FallibleOp
     )
     table = SymbolTable()
 
@@ -161,7 +161,7 @@ def build_symbol_table(program: "Program") -> SymbolTable:
                     table.declare(fn.name, fn.return_type or "void", allow_runtime_name=True)
                     table._functions[fn.name] = (fn.return_type or "void", fn.params)
                     table._extern_functions.add(fn.name)
-            elif isinstance(stmt, (ForCondition, Block, ForIn, TryCatch)):
+            elif isinstance(stmt, (ForCondition, Block, ForIn)):
                 _descend_stmt(stmt)
             elif isinstance(stmt, ExpressionStatement):
                 _walk_expr(stmt.expr)
@@ -173,7 +173,7 @@ def build_symbol_table(program: "Program") -> SymbolTable:
             elif isinstance(stmt, Return):
                 if stmt.expr:
                     _walk_expr(stmt.expr)
-            elif isinstance(stmt, Throw):
+            elif isinstance(stmt, ErrReturn):
                 _walk_expr(stmt.expr)
             elif isinstance(stmt, Defer):
                 walk_stmts(stmt.body.statements)
@@ -190,14 +190,6 @@ def build_symbol_table(program: "Program") -> SymbolTable:
                 table.declare(stmt.value, "i32")
                 _walk_expr(stmt.iterable)
             walk_stmts(stmt.body.statements)
-            table.pop_scope()
-        elif isinstance(stmt, TryCatch):
-            table.push_scope()
-            walk_stmts(stmt.try_block.statements)
-            table.pop_scope()
-            table.push_scope()
-            table.declare(stmt.error_name, "str")
-            walk_stmts(stmt.catch_block.statements)
             table.pop_scope()
         elif isinstance(stmt, ForCondition):
             _walk_expr(stmt.condition)
@@ -218,6 +210,8 @@ def build_symbol_table(program: "Program") -> SymbolTable:
         elif isinstance(node, FunctionCall):
             for arg in node.args:
                 _walk_expr(arg)
+        elif isinstance(node, FallibleOp):
+            _walk_expr(node.expr)
         elif isinstance(node, FunctionExpr):
             table.push_scope()
             for pname, ptype in node.params:

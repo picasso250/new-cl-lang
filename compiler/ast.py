@@ -275,24 +275,13 @@ class SliceExpr(Node):
         return f"Slice({self.array}[{s}:{e}])"
 
 
-class TryCatch(Node):
-    """try { block } catch e { block }"""
-    def __init__(self, try_block: Block, error_name: str, catch_block: Block):
-        self.try_block = try_block
-        self.error_name = error_name
-        self.catch_block = catch_block
-
-    def __repr__(self):
-        return f"Try({self.try_block}) catch {self.error_name} {{ {self.catch_block} }}"
-
-
-class Throw(Node):
-    """throw expr"""
+class ErrReturn(Node):
+    """err expr"""
     def __init__(self, expr):
         self.expr = expr
 
     def __repr__(self):
-        return f"Throw({self.expr})"
+        return f"Err({self.expr})"
 
 
 class Defer(Node):
@@ -347,12 +336,22 @@ class FunctionExpr(Node):
 
 
 class Return(Node):
-    """return expr;"""
+    """ret expr;"""
     def __init__(self, expr = None):
         self.expr = expr
 
     def __repr__(self):
         return f"Return({self.expr})"
+
+
+class FallibleOp(Node):
+    """expr??, expr!!, expr is err"""
+    def __init__(self, expr, op: str):
+        self.expr = expr
+        self.op = op
+
+    def __repr__(self):
+        return f"FallibleOp({self.expr} {self.op})"
 
 
 # ===== 表达式 =====

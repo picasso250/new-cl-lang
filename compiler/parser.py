@@ -76,7 +76,7 @@ class Parser:
             return stmt
         if t.kind == TokenKind.FUN and self._is_function_declaration_start():
             return self._parse_function()
-        if t.kind == TokenKind.RETURN:
+        if t.kind == TokenKind.RET:
             return self._parse_return()
         if t.kind == TokenKind.STRUCT:
             return self._parse_struct()
@@ -86,10 +86,8 @@ class Parser:
             raise ParseError("iface is only allowed at top level")
         if t.kind == TokenKind.FOR:
             return self._parse_for()
-        if t.kind == TokenKind.TRY:
-            return self._parse_try()
-        if t.kind == TokenKind.THROW:
-            return self._parse_throw()
+        if t.kind == TokenKind.ERR:
+            return self._parse_err_return()
         if t.kind == TokenKind.DEFER:
             return self._parse_defer()
         if t.kind == TokenKind.TYPE:
@@ -356,19 +354,11 @@ class Parser:
         self.match(TokenKind.SEMI)
         return stmt
 
-    def _parse_try(self):
-        self.advance()
-        body = self._parse_block()
-        self.expect(TokenKind.CATCH)
-        error_name = self.expect(TokenKind.IDENT).value
-        catch_body = self._parse_block()
-        return TryCatch(body, error_name, catch_body)
-
-    def _parse_throw(self):
+    def _parse_err_return(self):
         start = self.advance()
         expr = self.parse_expression()
         self.match(TokenKind.SEMI)
-        return self.span(Throw(expr), start)
+        return self.span(ErrReturn(expr), start)
 
     def _parse_defer(self):
         start = self.advance()
@@ -672,6 +662,16 @@ class Parser:
                 else:
                     self.expect(TokenKind.RBRACKET)
                     expr = IndexAccess(expr, first)
+            elif self.peek().kind == TokenKind.QUESTIONQUESTION:
+                self.advance()
+                expr = FallibleOp(expr, "??")
+            elif self.peek().kind == TokenKind.NOTNOT:
+                self.advance()
+                expr = FallibleOp(expr, "!!")
+            elif self.peek().kind == TokenKind.IS:
+                self.advance()
+                self.expect(TokenKind.ERR)
+                expr = FallibleOp(expr, "is_err")
             else:
                 break
         return expr

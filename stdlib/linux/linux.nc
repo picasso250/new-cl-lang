@@ -5,13 +5,13 @@ extern {
 }
 
 fun getpid(): i32 {
-    return c_getpid()
+    ret c_getpid()
 }
 
 fun write(fd: i32, data: []u8): i64 {
-    return c_write_bytes(fd, data.ptr, data.len)
+    ret c_write_bytes(fd, data.ptr, data.len)
 }
 
 fun write_str(fd: i32, data: str): i64 {
-    return c_write_str(fd, data.ptr, data.len)
+    ret c_write_str(fd, data.ptr, data.len)
 }

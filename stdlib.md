@@ -34,7 +34,7 @@
 - `fs.rename(old_path, new_path)`
 - `fs.mkdir(path)`
 
-`exists` 对不存在返回 `false`；其他操作失败会 `throw` 字符串错误。`mkdir` 只创建单级目录，`rename` 在目标已存在时失败。
+`exists` 对不存在返回 `false`；其他操作失败会 `err` 字符串错误。`mkdir` 只创建单级目录，`rename` 在目标已存在时失败。
 
 当前 `fs` 的公开 API 由编译器随附的 `stdlib/fs/fs.nc` 实现。`read_bytes` 返回原始字节；`read_file` 是文本便利层，等价于 `str(fs.read_bytes(path))`。需要平台或 C runtime 差异隔离的路径操作通过同目录 `stdlib/fs/fs.c` 暴露的私有 shim 实现；用户只写普通 `extern { ... }`，不需要在 NC 源码里声明对象文件或库路径。
 
@@ -43,7 +43,7 @@
 - `os.args(): []str`：返回包含程序自身路径的参数列表。
 - `os.getenv(name): str`：环境变量不存在时返回 `""`。
 - `os.has_env(name): bool`：区分变量不存在和值为空字符串。
-- `os.cwd(): str`：失败时 `throw "os.cwd failed"`。
+- `os.cwd(): str`：失败时 `err "os.cwd failed"`。
 - `os.exit(code)`：立即退出进程，不运行 NC `defer`。
 
 v1 不提供 `os.setenv`、`os.unsetenv`、`os.chdir`。
@@ -79,7 +79,7 @@ v1 不提供 `os.setenv`、`os.unsetenv`、`os.chdir`。
 - `strings.trim_suffix(s, suffix): str`
 - `strings.trim_space(s): str`
 
-这些函数是字节级字符串 API，参数均为 `str`。`index` 返回首个匹配的 UTF-8 字节下标，`last_index` 返回最后一个匹配的 UTF-8 字节下标，未找到返回 `-1`。空子串规则为 contains/starts_with/ends_with 返回 `true`，index 返回 `0`，last_index 返回 `len(s)`，count 返回 `len(s)+1`。`replace_all` 的 `old` 为空时会 `throw "strings.replace_all empty old"`。
+这些函数是字节级字符串 API，参数均为 `str`。`index` 返回首个匹配的 UTF-8 字节下标，`last_index` 返回最后一个匹配的 UTF-8 字节下标，未找到返回 `-1`。空子串规则为 contains/starts_with/ends_with 返回 `true`，index 返回 `0`，last_index 返回 `len(s)`，count 返回 `len(s)+1`。`replace_all` 的 `old` 为空时会 `err "strings.replace_all empty old"`。
 
 当前 `strings` 的公开 API 由编译器随附的 `stdlib/strings/strings.nc` 以纯 NC 实现。
 
@@ -92,7 +92,7 @@ v1 不提供 `os.setenv`、`os.unsetenv`、`os.chdir`。
 - `strconv.format_i32(n): str`
 - `strconv.format_f64(n): str`
 
-`parse_i32` 支持可选 `+`/`-` 和十进制数字；空串、只有符号、非数字字符和溢出都会 `throw "strconv.parse_i32 failed"`。`parse_f64` 支持可选符号、整数部分和小数部分，至少需要一个数字；v1 不支持 exponent，非法输入会 `throw "strconv.parse_f64 failed"`。
+`parse_i32` 支持可选 `+`/`-` 和十进制数字；空串、只有符号、非数字字符和溢出都会 `err "strconv.parse_i32 failed"`。`parse_f64` 支持可选符号、整数部分和小数部分，至少需要一个数字；v1 不支持 exponent，非法输入会 `err "strconv.parse_f64 failed"`。
 
 ### math
 

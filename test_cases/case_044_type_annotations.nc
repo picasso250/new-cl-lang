@@ -1,7 +1,7 @@
 import io
 # STDOUT: 7
 fun add(x: i32, y: i32): i32 {
-    return x + y
+    ret x + y
 }
 
 fun main() {

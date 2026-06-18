@@ -22,12 +22,12 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
     """Pass 2: 标注 Program 中所有表达式和语句的类型。"""
     from compiler.ast import (
         Program, VariableDeclaration, ExpressionStatement,
-        Assignment, Update, Block, ForCondition, FunctionDeclaration, Return, ImportDecl,
+        Assignment, Update, Block, ForCondition, FunctionDeclaration, Return, ErrReturn, ImportDecl,
         StructDecl, IfaceDecl, StructLiteral, FieldAccess,
         EnumDecl, EnumRef, ForIn,
         IfExpr, BlockExpr, MatchExpr, IntegerLiteral, FloatLiteral, StringLiteral, InterpolatedString, RuneLiteral, BoolLiteral, NilLiteral, BinaryOp, UnaryOp, FunctionCall, SizeOfType, Identifier,
         ExternBlock, FunctionExpr,
-        ArrayLiteral, SliceLiteral, IndexAccess, SliceExpr, MethodCall, TryCatch, Throw, Defer, Break
+        ArrayLiteral, SliceLiteral, IndexAccess, SliceExpr, MethodCall, Defer, Break, FallibleOp
     )
 
     FLOAT_TYPES = {"f32", "f64"}
@@ -39,6 +39,9 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
     function_decls = {}
     method_decls = {}
     resolving_returns = []
+    current_callable = None
+    fallible_op_depth = 0
+    defer_depth = 0
 
     def line_col(text: str | None, pos: int) -> tuple[int, int]:
         if text is None:
@@ -62,6 +65,17 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
     def require_type(actual, expected, context, node=None):
         if not is_assignable_type(actual, expected):
             fail(f"{context}: expected {expected}, got {actual}", node)
+
+    def require_error_type(actual, context, node=None):
+        if actual not in {"error", "str"}:
+            fail(f"{context}: expected error, got {actual}", node)
+
+    def mark_current_fallible(node=None):
+        if current_callable is None:
+            fail("err is only allowed inside functions", node)
+        if isinstance(current_callable, FunctionExpr):
+            fail("function expressions cannot be fallible in v1", node)
+        current_callable.fallible = True
 
     def require_arg_count(args, expected, context, node=None):
         if len(args) != expected:
@@ -137,7 +151,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         return f"fn({','.join(params)})->{ret_type}"
 
     def ends_with_return(stmts):
-        return bool(stmts) and isinstance(stmts[-1], Return)
+        return bool(stmts) and isinstance(stmts[-1], (Return, ErrReturn))
 
     def block_tail_expr(block):
         if not block.statements:
@@ -291,7 +305,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         seen.add(t)
         if t in FLOAT_TYPES:
             return t
-        if t in NUMERIC_TYPES or t in {"bool", "str", "rune"}:
+        if t in NUMERIC_TYPES or t in {"bool", "str", "rune", "error"}:
             return None
         if is_pointer_type(t) or is_nullable_pointer_type(t):
             return None
@@ -395,7 +409,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                         return
                     fail("size_of: void has no size", node)
                 require_public_qualified(name, node)
-                if name in NUMERIC_TYPES or name in {"bool", "str", "rune"}:
+                if name in NUMERIC_TYPES or name in {"bool", "str", "rune", "error"}:
                     return
                 if name == "map":
                     fail("size_of: map requires type arguments", node)
@@ -447,7 +461,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         if t in seen:
             return None
         seen.add(t)
-        if t in NUMERIC_TYPES or t in {"bool", "str", "rune"}:
+        if t in NUMERIC_TYPES or t in {"bool", "str", "rune", "error"}:
             return None
         if is_pointer_type(t) or is_nullable_pointer_type(t):
             return None
@@ -531,7 +545,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             return
         ret = fn.return_type or "void"
         if not is_extern_abi_type(ret):
-            fail(f"extern function {fn.name}: unsupported return type {ret}", fn)
+            fail(f"extern function {fn.name}: unsupported ret type {ret}", fn)
         for pname, ptype in fn.params:
             if not is_extern_abi_type(ptype) or ptype == "void":
                 fail(f"extern function {fn.name}: unsupported parameter {pname}: {ptype}", fn)
@@ -542,6 +556,8 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
 
     def is_assignable_type(actual, expected):
         if actual == expected:
+            return True
+        if actual == "str" and expected == "error":
             return True
         if is_iface_type(expected):
             return pointer_implements_iface(actual, expected)
@@ -622,6 +638,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         return any(name in scope for scope in narrowed_assign_forbidden)
 
     def walk_expr(node):
+        nonlocal current_return_type, fallible_op_depth
         if isinstance(node, IntegerLiteral):
             node.type = node.suffix_type or "i32"
         elif isinstance(node, FloatLiteral):
@@ -738,6 +755,10 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                     require_type(arg.type, ptype, f"argument {pname} to {node.name}", arg)
                 node.type = ret_type
                 node.is_closure_call = False
+                fn_node = function_decls.get(node.name)
+                node.fallible = bool(getattr(fn_node, "fallible", False))
+                if node.fallible and fallible_op_depth <= 0:
+                    fail(f"fallible call {node.name} must be handled with ??, !!, or is err", node)
             else:
                 try:
                     sym = symtab.lookup(node.name)
@@ -753,11 +774,28 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 node.type = ret_type
                 node.is_closure_call = True
                 node.closure_param_types = param_types
+                node.fallible = False
+        elif isinstance(node, FallibleOp):
+            if node.op == "??" and defer_depth > 0:
+                fail("defer cannot propagate fallible calls with ??", node)
+            fallible_op_depth += 1
+            walk_expr(node.expr)
+            fallible_op_depth -= 1
+            if not getattr(node.expr, "fallible", False):
+                fail(f"{node.op if node.op != 'is_err' else 'is err'} requires a fallible call", node)
+            if node.op == "??":
+                mark_current_fallible(node)
+                node.type = node.expr.type
+            elif node.op == "!!":
+                node.type = node.expr.type
+            elif node.op == "is_err":
+                node.type = "bool"
+            else:
+                fail(f"unknown fallible operator {node.op}", node)
         elif isinstance(node, SizeOfType):
             validate_sized_type(node.type_name, node)
             node.type = "u64"
         elif isinstance(node, FunctionExpr):
-            nonlocal current_return_type
             require_default_param_shape(node.params, "function expression", node)
             for param in node.params:
                 if param.default is not None:
@@ -778,7 +816,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 if node.body.statements and isinstance(node.body.statements[-1], ExpressionStatement):
                     require_type(node.body.statements[-1].expr.type, current_return_type, "function expression tail expression", node.body.statements[-1].expr)
                 else:
-                    fail(f"function expression: missing return {current_return_type}", node)
+                    fail(f"function expression: missing ret {current_return_type}", node)
             node.captures = list(ctx["captures"].items())
             node.type = fn_type([ptype for _pname, ptype in node.params], current_return_type)
             current_return_type = prev_return_type
@@ -892,6 +930,10 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 for arg, (pname, ptype) in zip(node.args, params):
                     require_type(arg.type, ptype, f"argument {pname} to method {node.method}", arg)
                 node.type = ret_type
+                fn_node = method_decls.get((obj_type, node.method))
+                node.fallible = bool(getattr(fn_node, "fallible", False))
+                if node.fallible and fallible_op_depth <= 0:
+                    fail(f"fallible call {obj_type}.{node.method} must be handled with ??, !!, or is err", node)
             else:
                 fail(f"{obj_type}: method {node.method} not found", node)
         elif isinstance(node, ArrayLiteral):
@@ -948,7 +990,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 node.type = node.array.type
 
     def walk_stmts(stmts: list):
-        nonlocal current_return_type, break_depth, inferred_void_return
+        nonlocal current_return_type, break_depth, inferred_void_return, current_callable, defer_depth
         for stmt in stmts:
             if isinstance(stmt, VariableDeclaration):
                 if stmt.annotation:
@@ -1024,12 +1066,14 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                     validate_map_type(_ptype, stmt)
                 symtab.push_scope()
                 prev_return_type = current_return_type
+                prev_callable = current_callable
                 if not stmt.return_type_explicit:
                     if stmt.receiver_name:
                         resolve_method_return(stmt.receiver_type.lstrip("*"), stmt.name, stmt)
                     else:
                         resolve_function_return(stmt.name, stmt)
                 current_return_type = stmt.return_type or "void"
+                current_callable = stmt
                 if stmt.receiver_name:
                     symtab.declare(stmt.receiver_name, stmt.receiver_type)
                 for param in stmt.params:
@@ -1042,8 +1086,9 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                     if stmt.body.statements and isinstance(stmt.body.statements[-1], ExpressionStatement):
                         require_type(stmt.body.statements[-1].expr.type, current_return_type, f"function {stmt.name} tail expression", stmt.body.statements[-1].expr)
                     else:
-                        fail(f"function {stmt.name}: missing return {current_return_type}", stmt)
+                        fail(f"function {stmt.name}: missing ret {current_return_type}", stmt)
                 current_return_type = prev_return_type
+                current_callable = prev_callable
                 symtab.pop_scope()
             elif isinstance(stmt, Return):
                 if stmt.expr:
@@ -1051,12 +1096,18 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                     if current_return_type is None:
                         inferred_return_values.append((stmt.expr.type, stmt))
                     else:
-                        require_type(stmt.expr.type, current_return_type, "return", stmt)
+                        require_type(stmt.expr.type, current_return_type, "ret", stmt)
                 elif current_return_type != "void":
                     if current_return_type is None:
                         inferred_void_return = True
                     else:
-                        fail(f"return: expected {current_return_type}, got void", stmt)
+                        fail(f"ret: expected {current_return_type}, got void", stmt)
+            elif isinstance(stmt, ErrReturn):
+                if defer_depth > 0:
+                    fail("defer cannot return errors", stmt)
+                walk_expr(stmt.expr)
+                require_error_type(stmt.expr.type, "err", stmt)
+                mark_current_fallible(stmt)
             elif isinstance(stmt, StructDecl):
                 for _fname, _ftype in stmt.fields:
                     validate_map_type(_ftype, stmt)
@@ -1098,17 +1149,10 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 walk_stmts(stmt.body.statements)
                 break_depth -= 1
                 symtab.pop_scope()
-            elif isinstance(stmt, TryCatch):
-                walk_stmts(stmt.try_block.statements)
-                symtab.push_scope()
-                symtab.declare(stmt.error_name, "str")
-                walk_stmts(stmt.catch_block.statements)
-                symtab.pop_scope()
-            elif isinstance(stmt, Throw):
-                walk_expr(stmt.expr)
-                require_type(stmt.expr.type, "str", "throw", stmt)
             elif isinstance(stmt, Defer):
+                defer_depth += 1
                 walk_stmts(stmt.body.statements)
+                defer_depth -= 1
             elif isinstance(stmt, Break):
                 if break_depth <= 0:
                     fail("break outside loop", stmt)
@@ -1125,13 +1169,15 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 symtab.pop_scope()
 
     def infer_return_from_body(fn_node, display_name):
-        nonlocal current_return_type, inferred_return_values, inferred_void_return
+        nonlocal current_return_type, inferred_return_values, inferred_void_return, current_callable
         prev_return_type = current_return_type
         prev_values = inferred_return_values
         prev_void = inferred_void_return
+        prev_callable = current_callable
         current_return_type = None
         inferred_return_values = []
         inferred_void_return = False
+        current_callable = fn_node
 
         symtab.push_scope()
         if isinstance(fn_node, FunctionDeclaration) and fn_node.receiver_name:
@@ -1156,14 +1202,15 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         current_return_type = prev_return_type
         inferred_return_values = prev_values
         inferred_void_return = prev_void
+        current_callable = prev_callable
 
         if values and saw_void:
-            fail(f"{display_name}: cannot mix value return and void return", values[0][1])
+            fail(f"{display_name}: cannot mix value ret and void ret", values[0][1])
         if not values:
             return "void"
         first_type = values[0][0]
         for ret_type, ret_node in values[1:]:
-            require_type(ret_type, first_type, f"{display_name} return type", ret_node)
+            require_type(ret_type, first_type, f"{display_name} ret type", ret_node)
         return first_type
 
     def update_function_signature(name, ret_type):
@@ -1189,7 +1236,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             return fn_node.return_type
         key = ("function", name)
         if key in resolving_returns:
-            fail(f"function {name}: return type inference cycle; add explicit return type", node or fn_node)
+            fail(f"function {name}: ret type inference cycle; add explicit ret type", node or fn_node)
         resolving_returns.append(key)
         ret_type = infer_return_from_body(fn_node, f"function {name}")
         resolving_returns.pop()
@@ -1210,7 +1257,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             return fn_node.return_type
         key = ("method", type_name, method_name)
         if key in resolving_returns:
-            fail(f"function {method_name}: return type inference cycle; add explicit return type", node or fn_node)
+            fail(f"function {method_name}: ret type inference cycle; add explicit ret type", node or fn_node)
         resolving_returns.append(key)
         ret_type = infer_return_from_body(fn_node, f"function {method_name}")
         resolving_returns.pop()
@@ -1226,6 +1273,64 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
     for top_stmt in program.statements:
         if isinstance(top_stmt, FunctionDeclaration):
             validate_function_defaults(top_stmt)
+
+    def mark_direct_fallible(node):
+        if isinstance(node, ErrReturn):
+            return True
+        if isinstance(node, FallibleOp):
+            return node.op == "??" or mark_direct_fallible(node.expr)
+        if isinstance(node, FunctionExpr):
+            return False
+        if isinstance(node, Block):
+            return any(mark_direct_fallible(stmt) for stmt in node.statements)
+        if isinstance(node, FunctionDeclaration):
+            return mark_direct_fallible(node.body)
+        if isinstance(node, (ForCondition, ForIn, Defer)):
+            return mark_direct_fallible(node.body)
+        if isinstance(node, ExpressionStatement):
+            return mark_direct_fallible(node.expr)
+        if isinstance(node, VariableDeclaration):
+            return mark_direct_fallible(node.initializer)
+        if isinstance(node, Assignment):
+            return mark_direct_fallible(node.target) or mark_direct_fallible(node.expr)
+        if isinstance(node, Update):
+            return mark_direct_fallible(node.target)
+        if isinstance(node, Return):
+            return bool(node.expr and mark_direct_fallible(node.expr))
+        if isinstance(node, IfExpr):
+            return (mark_direct_fallible(node.condition)
+                    or mark_direct_fallible(node.then_block)
+                    or bool(node.else_block and mark_direct_fallible(node.else_block)))
+        if isinstance(node, BlockExpr):
+            return mark_direct_fallible(node.block)
+        if isinstance(node, MatchExpr):
+            return (mark_direct_fallible(node.scrutinee)
+                    or any((p is not None and mark_direct_fallible(p)) or mark_direct_fallible(b) for p, b in node.arms))
+        if isinstance(node, BinaryOp):
+            return mark_direct_fallible(node.left) or mark_direct_fallible(node.right)
+        if isinstance(node, UnaryOp):
+            return mark_direct_fallible(node.operand)
+        if isinstance(node, FunctionCall):
+            return any(mark_direct_fallible(arg) for arg in node.args)
+        if isinstance(node, MethodCall):
+            return mark_direct_fallible(node.obj) or any(mark_direct_fallible(arg) for arg in node.args)
+        if isinstance(node, (ArrayLiteral, SliceLiteral)):
+            return any(mark_direct_fallible(elem) for elem in node.elements)
+        if isinstance(node, IndexAccess):
+            return mark_direct_fallible(node.obj) or mark_direct_fallible(node.index)
+        if isinstance(node, SliceExpr):
+            return (mark_direct_fallible(node.array)
+                    or bool(node.start and mark_direct_fallible(node.start))
+                    or bool(node.end and mark_direct_fallible(node.end)))
+        if isinstance(node, FieldAccess):
+            return mark_direct_fallible(node.obj)
+        if isinstance(node, StructLiteral):
+            return any(mark_direct_fallible(v) for _n, v in node.fields)
+        return False
+
+    for top_stmt in program.statements:
+        if isinstance(top_stmt, FunctionDeclaration) and mark_direct_fallible(top_stmt):
+            top_stmt.fallible = True
 
     for top_stmt in program.statements:
         if isinstance(top_stmt, FunctionDeclaration):

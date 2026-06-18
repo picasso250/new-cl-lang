@@ -156,7 +156,7 @@ why：
 
 - 关键字使用 `fun`。
 - 单返回值。
-- 支持显式 `return`。
+- 支持显式 `ret`。
 - 支持尾表达式返回。
 - 支持闭包和函数值。
 
@@ -265,32 +265,44 @@ why：
 
 ## 错误处理
 
-我们要 `throw`、`try/catch` 和 `defer`：
+我们要 Go 风格的显式错误返回，但不采用源码双返回：
 
 ```nc
 fun load(path: str): str {
-    if path == "" { throw "empty path" }
-    return fs.read_file(path)
+    if path == "" { err "empty path" }
+    ret fs.read_file(path)??
 }
 
-try {
-    load("config.nc")
-} catch e {
-    io.println(e)
+fun main() {
+    if load("config.nc") is err {
+        io.println("load failed")
+    }
 }
 ```
 
 核心规则：
 
-- `throw` 不标注异常类型。
-- `defer` 按 LIFO 执行。
-- `return`、`throw` 和函数正常退出都必须执行已登记 defer。
+- `error` 是内建错误类型；v1 允许 `str` 在 `err` 位置隐式转为 `error`。
+- `err expr` 立即结束当前函数，执行已登记 defer，并把错误返回给调用者。
+- 函数是否可错由函数体推导；源码签名不标注可错。
+- 可错调用不能裸用，必须写 `??`、`!!` 或 `is err`。
+- `call()??` 成功时产生成功值，出错时从当前函数继续 `err` 传播。
+- `call()!!` 成功时产生成功值，出错时打印错误并退出进程。
+- `call() is err` 只产生 bool，不绑定错误对象。
+- `defer` 按 LIFO 执行；`ret`、`err` 和函数正常退出都必须执行已登记 defer。
+- `defer` 中禁止 `err` 和 `??`，避免清理路径产生双重错误出口。
+
+当前边界：
+
+- v1 可错 callable 只覆盖普通函数和 struct 方法。
+- extern、iface 方法、函数值和闭包不支持可错。
+- 不提供 `throw`、`try/catch`、panic 或 recover。
 
 why：
 
-- v1 需要比错误码更直接的错误传播。
-- `defer` 解决资源清理路径分裂问题。
-- 不引入 checked exception 或 effect system。
+- 错误路径必须在调用点显式可见。
+- `defer` 解决资源清理路径分裂问题，但不承担错误捕获职责。
+- 不引入栈搜索异常，避免双重 exception 语义和隐藏控制流。
 
 ## 内存管理
 

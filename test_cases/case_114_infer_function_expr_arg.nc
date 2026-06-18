@@ -2,7 +2,7 @@ import io
 # STDOUT: 10
 
 fun apply(x: i32, f: fun(i32) i32): i32 {
-    return f(x)
+    ret f(x)
 }
 
 fun main() {

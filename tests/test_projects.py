@@ -84,8 +84,8 @@ def test_import_function_and_multifile_module_run():
         os.mkdir(main)
         os.mkdir(math)
         write_file(os.path.join(main, "main.nc"), "import io\nimport calc\nfun main() { io.println(calc.add_twice(2, 3)) }\n")
-        write_file(os.path.join(math, "a.nc"), "fun add_twice(a: i32, b: i32): i32 { return add(a, b) }\n")
-        write_file(os.path.join(math, "b.nc"), "fun add(a: i32, b: i32): i32 { return a + b }\n")
+        write_file(os.path.join(math, "a.nc"), "fun add_twice(a: i32, b: i32): i32 { ret add(a, b) }\n")
+        write_file(os.path.join(math, "b.nc"), "fun add(a: i32, b: i32): i32 { ret a + b }\n")
 
         result = run_nc("run", main)
 
@@ -111,7 +111,7 @@ fun main() {
 }
 """)
         write_file(os.path.join(model, "model.nc"), "struct User { age: i32 }\n")
-        write_file(os.path.join(color, "color.nc"), "enum Color { Red, Blue }\nfun pick(): Color { return Color::Red }\n")
+        write_file(os.path.join(color, "color.nc"), "enum Color { Red, Blue }\nfun pick(): Color { ret Color::Red }\n")
 
         result = run_nc("run", main)
 
@@ -208,9 +208,9 @@ def test_import_same_public_names_do_not_conflict():
         os.mkdir(main)
         os.mkdir(a)
         os.mkdir(b)
-        write_file(os.path.join(main, "main.nc"), "import io\nimport a\nimport b\nfun value(): i32 { return 1 }\nfun main() { io.println(value() + a.value() + b.value()) }\n")
-        write_file(os.path.join(a, "a.nc"), "fun value(): i32 { return 2 }\n")
-        write_file(os.path.join(b, "b.nc"), "fun value(): i32 { return 3 }\n")
+        write_file(os.path.join(main, "main.nc"), "import io\nimport a\nimport b\nfun value(): i32 { ret 1 }\nfun main() { io.println(value() + a.value() + b.value()) }\n")
+        write_file(os.path.join(a, "a.nc"), "fun value(): i32 { ret 2 }\n")
+        write_file(os.path.join(b, "b.nc"), "fun value(): i32 { ret 3 }\n")
 
         result = run_nc("run", main)
 
@@ -225,8 +225,8 @@ def test_llvm_import_projects_run():
         os.mkdir(main)
         os.mkdir(math)
         write_file(os.path.join(main, "main.nc"), "import io\nimport calc\nfun main() { io.println(calc.add_twice(2, 3)) }\n")
-        write_file(os.path.join(math, "a.nc"), "fun add_twice(a: i32, b: i32): i32 { return add(a, b) }\n")
-        write_file(os.path.join(math, "b.nc"), "fun add(a: i32, b: i32): i32 { return a + b }\n")
+        write_file(os.path.join(math, "a.nc"), "fun add_twice(a: i32, b: i32): i32 { ret add(a, b) }\n")
+        write_file(os.path.join(math, "b.nc"), "fun add(a: i32, b: i32): i32 { ret a + b }\n")
         result = run_nc("run", main)
         assert result.returncode == 0, result.stderr
         assert result.stdout.strip() == "5"
@@ -248,7 +248,7 @@ fun main() {
 }
 """)
         write_file(os.path.join(model, "model.nc"), "struct User { age: i32 }\n")
-        write_file(os.path.join(color, "color.nc"), "enum Color { Red, Blue }\nfun pick(): Color { return Color::Red }\n")
+        write_file(os.path.join(color, "color.nc"), "enum Color { Red, Blue }\nfun pick(): Color { ret Color::Red }\n")
         result = run_nc("run", main)
         assert result.returncode == 0, result.stderr
         assert result.stdout.strip() == "7"
@@ -260,9 +260,9 @@ fun main() {
         os.mkdir(main)
         os.mkdir(a)
         os.mkdir(b)
-        write_file(os.path.join(main, "main.nc"), "import io\nimport a\nimport b\nfun value(): i32 { return 1 }\nfun main() { io.println(value() + a.value() + b.value()) }\n")
-        write_file(os.path.join(a, "a.nc"), "fun value(): i32 { return 2 }\n")
-        write_file(os.path.join(b, "b.nc"), "fun value(): i32 { return 3 }\n")
+        write_file(os.path.join(main, "main.nc"), "import io\nimport a\nimport b\nfun value(): i32 { ret 1 }\nfun main() { io.println(value() + a.value() + b.value()) }\n")
+        write_file(os.path.join(a, "a.nc"), "fun value(): i32 { ret 2 }\n")
+        write_file(os.path.join(b, "b.nc"), "fun value(): i32 { ret 3 }\n")
         result = run_nc("run", main)
         assert result.returncode == 0, result.stderr
         assert result.stdout.strip() == "6"
@@ -303,7 +303,7 @@ def test_import_private_symbol_error():
         os.mkdir(main)
         os.mkdir(foo)
         write_file(os.path.join(main, "main.nc"), "import io\nimport foo\nfun main() { io.println(foo._helper()) }\n")
-        write_file(os.path.join(foo, "foo.nc"), "fun _helper(): i32 { return 1 }\n")
+        write_file(os.path.join(foo, "foo.nc"), "fun _helper(): i32 { ret 1 }\n")
 
         result = run_nc("compile", main)
 
@@ -347,7 +347,7 @@ def test_import_not_visible_without_namespace_and_not_allowed_in_block():
         foo = os.path.join(tmp, "foo")
         os.mkdir(main)
         os.mkdir(foo)
-        write_file(os.path.join(foo, "foo.nc"), "fun add(): i32 { return 1 }\n")
+        write_file(os.path.join(foo, "foo.nc"), "fun add(): i32 { ret 1 }\n")
         write_file(os.path.join(main, "main.nc"), "import io\nimport foo\nfun main() { io.println(add()) }\n")
         result = run_nc("compile", main)
         assert result.returncode != 0
@@ -411,8 +411,8 @@ def test_builtin_fs_module_preempts_sibling_directory():
         write_file(os.path.join(main, "main.nc"), f"""import fs
 import io
 fun main() {{
-    fs.write_file("{data_path}", "ok")
-    io.println(fs.read_file("{data_path}"))
+    fs.write_file("{data_path}", "ok")!!
+    io.println(fs.read_file("{data_path}")!!)
 }}
 """)
         write_file(os.path.join(fs_dir, "fs.nc"), "fun read_file(path: str): str { bad() }\n")
@@ -430,11 +430,11 @@ def test_builtin_fs_extern_names_do_not_leak_to_entry_namespace():
         data_path = os.path.join(tmp, "data.txt").replace("\\", "/")
         write_file(os.path.join(main, "main.nc"), f"""import fs
 import io
-fun c_fopen(): i32 {{ return 7 }}
+fun c_fopen(): i32 {{ ret 7 }}
 fun main() {{
-    fs.write_file("{data_path}", "ok")
+    fs.write_file("{data_path}", "ok")!!
     io.println(c_fopen())
-    io.println(fs.read_file("{data_path}"))
+    io.println(fs.read_file("{data_path}")!!)
 }}
 """)
 

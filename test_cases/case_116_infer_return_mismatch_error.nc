@@ -1,8 +1,8 @@
-# ERROR: function bad return type: expected i32, got str
+# ERROR: function bad ret type: expected i32, got str
 
 fun bad() {
-    if true { return 1 }
-    return "x"
+    if true { ret 1 }
+    ret "x"
 }
 
 fun main() {
