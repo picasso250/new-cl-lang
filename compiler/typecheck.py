@@ -80,6 +80,10 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
 
     def require_public_qualified(name, node=None):
         if isinstance(name, str) and "." in name and name.rsplit(".", 1)[1].startswith("_"):
+            callable_name = getattr(current_callable, "name", None)
+            if isinstance(callable_name, str) and "." in callable_name:
+                if callable_name.rsplit(".", 1)[0] == name.rsplit(".", 1)[0]:
+                    return
             fail(f"symbol '{name}' is private", node)
 
     type_rules = TypeRules(symtab, fail, require_public_qualified)

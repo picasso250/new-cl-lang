@@ -117,7 +117,7 @@ v1 不提供 `os.setenv`、`os.unsetenv`、`os.chdir`。
 - `sort.by[T](items: []T, less: fun(T, T) bool)`
 - `sort.is_sorted_by[T](items: []T, less: fun(T, T) bool): bool`
 
-`sort.sort` 对 `types.Ord` 类型原地稳定升序排序。`sort.by` 原地稳定排序；`less(a, b)` 返回 `true` 表示 `a` 应排在 `b` 前。
+`sort.sort` 对 `types.Ord` 类型原地不稳定升序排序。`sort.by` 原地不稳定排序；`less(a, b)` 返回 `true` 表示 `a` 应排在 `b` 前。相等元素的原相对顺序不保证保留。
 
 ### types
 

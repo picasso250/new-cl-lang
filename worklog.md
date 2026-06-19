@@ -150,3 +150,7 @@
 - 2026-06-18: 已更新 README 关键字亮点：新增“语言表面很小”小节，列出当前 lexer 保留词，并修正“不向前兼容旧语法或旧 API”表述。design.md 无需更新。验证：README 关键字表与 compiler/lexer.py KEYWORDS 一致；python nc.py run test_cases/case_013_fun.nc 输出 42。
 
 - 2026-06-18: 已删除旧 review 辅助服务 server.js。why：当前仓库没有使用该 Node 服务的入口或引用，只剩归档历史提及；design.md 无需更新。验证：rg -n "server\\.js|node server|npm start|http\\.createServer|require\\('http'\\)" . 仅剩 worklog 当前记录与归档历史命中。
+
+- 2026-06-19: 预备将标准库 sort 从稳定插入排序改为不稳定 intro sort，并删除新增 sorted API 计划。why：排序默认能力应更接近标准库级复杂度保证，同时用 NC 源码验证递归、分区和堆排序实现便利性。
+
+- 2026-06-19: 已将标准库 sort 改为不稳定 intro sort：默认排序和自定义比较排序使用三数取中快排主路径、深度耗尽堆排序兜底、小分区插入排序收尾；未新增 sorted/is_sorted API，并修复同模块私有符号访问检查以保持 sort helper 私有。同步 docs/stdlib.md，新增 sort 边界与私有 helper case。验证：python tests/test_stdlib.py 通过 60/60；python tests/test_language_cases.py 通过 249/249；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q 通过 86 passed, 1 skipped。
