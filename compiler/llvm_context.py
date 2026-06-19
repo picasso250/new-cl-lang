@@ -13,6 +13,8 @@ class CodegenContext(Protocol):
     vars: dict[str, tuple[Any, str]]
     fn_decls: dict[str, Any]
     closure_env_types: dict[int, ir.LiteralStructType]
+    iface_vtables: dict[tuple[str, str], ir.GlobalVariable]
+    iface_thunks: dict[tuple[str, str, str], ir.Function]
     function_value_thunks: dict[str, ir.Function]
     defer_sites: list[Any]
     defer_stack_slot: Any

@@ -20,7 +20,7 @@ from compiler.ast import (
     StructLiteral, UnaryOp, VariableDeclaration, ForCondition,
 )
 from compiler.llvm_layout import (
-    ENUM_VARIANTS, FLOAT_TYPES, I8PTR, IFACE_METHODS, IFACE_TYPES, INT_TYPES,
+    ENUM_VARIANTS, FLOAT_TYPES, I8PTR, IFACE_METHODS, INT_TYPES,
     LLVMLayout, MAP_DESC_PTR, MAP_TYPE, RAW_SLICE_TYPE, SIGNED_INT_TYPES,
     STR_TYPE, STRUCT_EMBEDS, STRUCT_FIELDS, STRUCT_FIELD_INDEX, STRUCT_TYPES,
     UNSIGNED_INT_TYPES, llvm_type,
@@ -28,6 +28,7 @@ from compiler.llvm_layout import (
 from compiler.names import safe_user_ident
 from compiler.ncrt import build_ncrt_obj, build_support_c_objs
 from compiler.llvm_function import FunctionEmitter
+from compiler.llvm_iface import IfaceEmitter
 from compiler.llvm_map import MapEmitter
 from compiler.llvm_string import StringEmitter
 from compiler.target import TargetSpec, get_target
@@ -249,6 +250,7 @@ class LLVMCodegen:
         self.iface_thunks: dict[tuple[str, str, str], ir.Function] = {}
         self.function_value_thunks: dict[str, ir.Function] = {}
         self.function_emitter = FunctionEmitter(self)
+        self.iface_emitter = IfaceEmitter(self)
         self.string_emitter = StringEmitter(self)
         self.map_emitter = MapEmitter(self, STRUCT_FIELDS, ENUM_VARIANTS, llvm_type)
 
@@ -301,38 +303,7 @@ class LLVMCodegen:
             ])
 
     def register_ifaces(self, program):
-        IFACE_METHODS.clear()
-        IFACE_TYPES.clear()
-        raw = {}
-        for stmt in program.statements:
-            if isinstance(stmt, IfaceDecl):
-                raw[stmt.name] = stmt
-
-        def resolve(name, stack=None):
-            stack = stack or []
-            if name in IFACE_METHODS:
-                return IFACE_METHODS[name]
-            if name in stack:
-                raise RuntimeError(f"iface {name}: embedded iface cycle")
-            stmt = raw[name]
-            methods = {}
-            order = []
-            def add(mname, params, ret):
-                sig = ([ptype for _pname, ptype in params], ret or "void")
-                if mname not in methods:
-                    order.append(mname)
-                methods[mname] = sig
-            for embed in stmt.embeds:
-                for mname, param_types, ret in resolve(embed, stack + [name]):
-                    add(mname, [(f"arg{i}", t) for i, t in enumerate(param_types)], ret)
-            for mname, params, ret in stmt.methods:
-                add(mname, params, ret)
-            IFACE_METHODS[name] = [(mname, methods[mname][0], methods[mname][1]) for mname in order]
-            IFACE_TYPES[name] = ir.LiteralStructType([I8PTR, I8PTR])
-            return IFACE_METHODS[name]
-
-        for name in list(raw):
-            resolve(name)
+        return self.iface_emitter.register_ifaces(program)
 
     def register_closure_envs(self, closures: list[FunctionExpr]):
         return self.function_emitter.register_closure_envs(closures)
@@ -1335,24 +1306,7 @@ class LLVMCodegen:
                 raise RuntimeError("method has expects one argument")
             return self.emit_map_has(node.obj, node.args[0])
         if obj_type in IFACE_METHODS:
-            iface_value = self.emit_expr(node.obj)
-            method_index = next(i for i, (name, _params, _ret) in enumerate(IFACE_METHODS[obj_type]) if name == node.method)
-            _mname, param_types, ret_type = IFACE_METHODS[obj_type][method_index]
-            vt_i8 = self.builder.extract_value(iface_value, 0, name="iface.vtable")
-            data = self.builder.extract_value(iface_value, 1, name="iface.data")
-            fn_type = ir.FunctionType(llvm_type(ret_type), [I8PTR] + [llvm_type(t) for t in param_types]).as_pointer()
-            vt_type = ir.LiteralStructType(self.iface_vtable_function_ptr_types(obj_type)).as_pointer()
-            vt_ptr = self.builder.bitcast(vt_i8, vt_type, name="iface.vtable.ptr")
-            fn_ptr_ptr = self.builder.gep(
-                vt_ptr,
-                [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), method_index)],
-                inbounds=True,
-                name="iface.method.ptr.ptr",
-            )
-            fn_ptr = self.builder.load(fn_ptr_ptr, name="iface.method.ptr")
-            fn_ptr = self.builder.bitcast(fn_ptr, fn_type, name="iface.method.cast")
-            args = [data] + [self.emit_coerced_expr(arg, ptype) for arg, ptype in zip(node.args, param_types)]
-            return self.builder.call(fn_ptr, args)
+            return self.iface_emitter.emit_iface_method_call(node)
         if obj_type.startswith("?*"):
             receiver_base = obj_type[2:]
         elif obj_type.startswith("*"):
@@ -1402,10 +1356,7 @@ class LLVMCodegen:
         return status, value_slot, error_slot, success_type
 
     def iface_vtable_function_ptr_types(self, iface_name):
-        return [
-            ir.FunctionType(llvm_type(ret), [I8PTR] + [llvm_type(t) for t in params]).as_pointer()
-            for _name, params, ret in IFACE_METHODS[iface_name]
-        ]
+        return self.iface_emitter.iface_vtable_function_ptr_types(iface_name)
 
     def emit_print(self, arg, newline: bool):
         self.ensure_printf()
@@ -1892,77 +1843,16 @@ class LLVMCodegen:
         return self.cast_to(value, target_type)
 
     def box_iface(self, value, source_type, iface_name):
-        if not isinstance(source_type, str) or not source_type.startswith("*") or source_type.startswith("?*"):
-            raise RuntimeError(f"cannot box {source_type} as iface {iface_name}")
-        concrete = source_type[1:]
-        vtable = self.get_iface_vtable(iface_name, concrete)
-        iface_type = llvm_type(iface_name)
-        boxed = ir.Constant(iface_type, ir.Undefined)
-        boxed = self.builder.insert_value(boxed, self.builder.bitcast(vtable, I8PTR), [0], name="iface.vtable.ins")
-        boxed = self.builder.insert_value(boxed, self.builder.bitcast(value, I8PTR), [1], name="iface.data.ins")
-        return boxed
+        return self.iface_emitter.box_iface(value, source_type, iface_name)
 
     def get_iface_vtable(self, iface_name, concrete):
-        key = (iface_name, concrete)
-        if key in self.iface_vtables:
-            return self.iface_vtables[key]
-        field_types = self.iface_vtable_function_ptr_types(iface_name)
-        vt_type = ir.LiteralStructType(field_types)
-        values = []
-        for mname, param_types, ret_type in IFACE_METHODS[iface_name]:
-            thunk = self.get_iface_thunk(iface_name, concrete, mname, param_types, ret_type)
-            values.append(thunk.bitcast(field_types[len(values)]))
-        glob = ir.GlobalVariable(self.module, vt_type, name=safe_user_ident(f"__nc_iface_{iface_name}_{concrete}_vtable"))
-        glob.linkage = "internal"
-        glob.global_constant = True
-        glob.initializer = ir.Constant.literal_struct(values)
-        self.iface_vtables[key] = glob
-        return glob
+        return self.iface_emitter.get_iface_vtable(iface_name, concrete)
 
     def get_iface_thunk(self, iface_name, concrete, method_name, param_types, ret_type):
-        key = (iface_name, concrete, method_name)
-        if key in self.iface_thunks:
-            return self.iface_thunks[key]
-        fn_type = ir.FunctionType(llvm_type(ret_type), [I8PTR] + [llvm_type(t) for t in param_types])
-        name = safe_user_ident(f"__nc_iface_{iface_name}_{concrete}_{method_name}_thunk")
-        thunk = ir.Function(self.module, fn_type, name=name)
-        self.iface_thunks[key] = thunk
-        block = thunk.append_basic_block("entry")
-        saved_builder, saved_func = self.builder, self.func
-        self.builder, self.func = ir.IRBuilder(block), thunk
-        receiver_base, path = self.resolve_concrete_method(concrete, method_name)
-        method_sym = safe_user_ident(f"{receiver_base}_{method_name}")
-        method_fn = self.module.globals[method_sym]
-        receiver = self.builder.bitcast(thunk.args[0], llvm_type(f"*{concrete}"), name="iface.receiver")
-        current_type = concrete
-        for field_name in path:
-            field_index = STRUCT_FIELD_INDEX[current_type][field_name]
-            zero = ir.Constant(ir.IntType(32), 0)
-            receiver = self.builder.gep(receiver, [zero, ir.Constant(ir.IntType(32), field_index)], inbounds=True, name="iface.embed.receiver")
-            current_type = STRUCT_FIELDS[current_type][field_index][1]
-        receiver = self.builder.bitcast(receiver, llvm_type(f"*{receiver_base}"), name="iface.receiver.cast")
-        args = [receiver] + list(thunk.args[1:])
-        result = self.builder.call(method_fn, args)
-        if ret_type == "void":
-            self.builder.ret_void()
-        else:
-            self.builder.ret(result)
-        self.builder, self.func = saved_builder, saved_func
-        return thunk
+        return self.iface_emitter.get_iface_thunk(iface_name, concrete, method_name, param_types, ret_type)
 
     def resolve_concrete_method(self, concrete, method_name):
-        if safe_user_ident(f"{concrete}_{method_name}") in self.module.globals:
-            return concrete, []
-        for field_name, field_type in STRUCT_EMBEDS.get(concrete, {}).items():
-            embed_base = field_type[1:] if field_type.startswith("*") else field_type
-            if safe_user_ident(f"{embed_base}_{method_name}") in self.module.globals:
-                return embed_base, [field_name]
-            try:
-                nested_base, nested_path = self.resolve_concrete_method(embed_base, method_name)
-                return nested_base, [field_name] + nested_path
-            except KeyError:
-                pass
-        raise KeyError(safe_user_ident(f"{concrete}_{method_name}"))
+        return self.iface_emitter.resolve_concrete_method(concrete, method_name)
 
     def cast_numeric(self, value, from_type, to_type):
         target = llvm_type(to_type)
