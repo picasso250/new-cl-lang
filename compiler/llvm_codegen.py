@@ -30,6 +30,7 @@ from compiler.ncrt import build_ncrt_obj, build_support_c_objs
 from compiler.llvm_function import FunctionEmitter
 from compiler.llvm_iface import IfaceEmitter
 from compiler.llvm_map import MapEmitter
+from compiler.llvm_method import MethodEmitter
 from compiler.llvm_string import StringEmitter
 from compiler.target import TargetSpec, get_target
 from compiler.type_ref import parse_array_type, parse_fn_type, parse_map_type, parse_slice_type
@@ -251,6 +252,7 @@ class LLVMCodegen:
         self.function_value_thunks: dict[str, ir.Function] = {}
         self.function_emitter = FunctionEmitter(self)
         self.iface_emitter = IfaceEmitter(self)
+        self.method_emitter = MethodEmitter(self)
         self.string_emitter = StringEmitter(self)
         self.map_emitter = MapEmitter(self, STRUCT_FIELDS, ENUM_VARIANTS, llvm_type)
 
@@ -1062,36 +1064,13 @@ class LLVMCodegen:
         raise NotImplementedError(f"LLVM backend does not support float operator {op}")
 
     def emit_receiver_arg(self, obj, receiver_base: str):
-        obj_type = obj.type
-        if obj_type == f"*{receiver_base}":
-            return self.emit_expr(obj)
-        if obj_type == receiver_base:
-            if isinstance(obj, (Identifier, FieldAccess, IndexAccess)):
-                ptr, _typ = self.emit_lvalue(obj)
-                return ptr
-            value = self.emit_expr(obj)
-            slot = self.alloca_at_entry("__nc_receiver_tmp", llvm_type(receiver_base))
-            self.builder.store(value, slot)
-            return slot
-        value = self.emit_expr(obj)
-        slot = self.alloca_at_entry("__nc_receiver_tmp", llvm_type(receiver_base))
-        self.builder.store(value, slot)
-        return slot
+        return self.method_emitter.emit_receiver_arg(obj, receiver_base)
 
     def emit_operator_method_call(self, receiver_expr, method_name: str, rhs, receiver_base: str):
-        name = safe_user_ident(f"{receiver_base}_{method_name}")
-        fn = self.module.globals[name]
-        fn_decl = self.fn_decls[name]
-        args = [self.emit_receiver_arg(receiver_expr, receiver_base), self.emit_coerced_expr(rhs, receiver_base)]
-        return self.builder.call(fn, args)
+        return self.method_emitter.emit_operator_method_call(receiver_expr, method_name, rhs, receiver_base)
 
     def emit_operator_method_value(self, value, value_type: str, method_name: str, rhs, receiver_base: str):
-        name = safe_user_ident(f"{receiver_base}_{method_name}")
-        fn = self.module.globals[name]
-        slot = self.alloca_at_entry("__nc_operator_receiver", llvm_type(value_type))
-        self.builder.store(value, slot)
-        args = [slot, self.emit_coerced_expr(rhs, value_type)]
-        return self.builder.call(fn, args)
+        return self.method_emitter.emit_operator_method_value(value, value_type, method_name, rhs, receiver_base)
 
     def emit_if_expr(self, node: IfExpr):
         cond = self.bool_value(self.emit_expr(node.condition))
@@ -1295,65 +1274,13 @@ class LLVMCodegen:
         return self.function_emitter.emit_closure_env(node)
 
     def emit_method_call(self, node: MethodCall):
-        obj_type = node.obj.type
-        if obj_type == "str" and node.method == "c_str":
-            value = self.emit_expr(node.obj)
-            ptr = self.builder.extract_value(value, 0)
-            is_null = self.builder.icmp_unsigned("==", ptr, ir.Constant(I8PTR, None), name="str.c_str.is_null")
-            return self.builder.select(is_null, self.empty_string_ptr(), ptr, name="str.c_str")
-        if parse_map_type(obj_type) is not None and node.method == "has":
-            if len(node.args) != 1:
-                raise RuntimeError("method has expects one argument")
-            return self.emit_map_has(node.obj, node.args[0])
-        if obj_type in IFACE_METHODS:
-            return self.iface_emitter.emit_iface_method_call(node)
-        if obj_type.startswith("?*"):
-            receiver_base = obj_type[2:]
-        elif obj_type.startswith("*"):
-            receiver_base = obj_type[1:]
-        else:
-            receiver_base = obj_type
-        name = safe_user_ident(f"{receiver_base}_{node.method}")
-        if name not in self.module.globals:
-            raise NotImplementedError(f"LLVM backend cannot call method {receiver_base}.{node.method}")
-        fn = self.module.globals[name]
-        fn_decl = self.fn_decls[name]
-        if getattr(fn_decl, "fallible", False):
-            raise RuntimeError(f"fallible method call {receiver_base}.{node.method} must be lowered through a fallible operator")
-        args = [self.emit_receiver_arg(node.obj, receiver_base)] + [
-            self.emit_coerced_expr(arg, ptype)
-            for arg, (_pname, ptype) in zip(node.args, fn_decl.params)
-        ]
-        return self.builder.call(fn, args)
+        return self.method_emitter.emit_method_call(node)
 
     def emit_fallible_method_call_raw(self, node: MethodCall):
-        obj_type = node.obj.type
-        if obj_type.startswith("?*"):
-            receiver_base = obj_type[2:]
-        elif obj_type.startswith("*"):
-            receiver_base = obj_type[1:]
-        else:
-            receiver_base = obj_type
-        name = safe_user_ident(f"{receiver_base}_{node.method}")
-        if name not in self.module.globals:
-            raise RuntimeError(f"method {receiver_base}.{node.method} is not fallible")
-        fn_decl = self.fn_decls[name]
-        if not getattr(fn_decl, "fallible", False):
-            raise RuntimeError(f"method {receiver_base}.{node.method} is not fallible")
-        fn = self.module.globals[name]
-        success_type = fn_decl.return_type or "void"
-        value_slot, error_slot = self.fallible_out_slots(success_type)
-        args = []
-        if value_slot is not None:
-            args.append(value_slot)
-        args.append(error_slot)
-        args.append(self.emit_receiver_arg(node.obj, receiver_base))
-        args.extend([
-            self.emit_coerced_expr(arg, ptype)
-            for arg, (_pname, ptype) in zip(node.args, fn_decl.params)
-        ])
-        status = self.builder.call(fn, args, name="fallible.method.status")
-        return status, value_slot, error_slot, success_type
+        return self.method_emitter.emit_fallible_method_call_raw(node)
+
+    def emit_iface_method_call(self, node: MethodCall):
+        return self.iface_emitter.emit_iface_method_call(node)
 
     def iface_vtable_function_ptr_types(self, iface_name):
         return self.iface_emitter.iface_vtable_function_ptr_types(iface_name)
