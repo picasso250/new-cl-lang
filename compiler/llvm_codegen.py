@@ -27,6 +27,7 @@ from compiler.llvm_layout import (
 )
 from compiler.names import safe_user_ident
 from compiler.ncrt import build_ncrt_obj, build_support_c_objs
+from compiler.llvm_control_expr import ControlExprEmitter
 from compiler.llvm_function import FunctionEmitter
 from compiler.llvm_iface import IfaceEmitter
 from compiler.llvm_loop import LoopEmitter
@@ -254,6 +255,7 @@ class LLVMCodegen:
         self.iface_vtables: dict[tuple[str, str], ir.GlobalVariable] = {}
         self.iface_thunks: dict[tuple[str, str, str], ir.Function] = {}
         self.function_value_thunks: dict[str, ir.Function] = {}
+        self.control_expr_emitter = ControlExprEmitter(self)
         self.function_emitter = FunctionEmitter(self)
         self.iface_emitter = IfaceEmitter(self)
         self.method_emitter = MethodEmitter(self)
@@ -683,11 +685,7 @@ class LLVMCodegen:
         raise NotImplementedError(f"LLVM backend does not support expression: {type(node).__name__}")
 
     def emit_block_expr(self, node: BlockExpr):
-        saved_vars = self.vars.copy()
-        try:
-            return self.emit_block_value(node.block)
-        finally:
-            self.vars = saved_vars
+        return self.control_expr_emitter.emit_block_expr(node)
 
     def emit_struct_literal(self, node: StructLiteral):
         fields = STRUCT_FIELDS[node.name]
@@ -882,78 +880,16 @@ class LLVMCodegen:
         return self.method_emitter.emit_operator_method_value(value, value_type, method_name, rhs, receiver_base)
 
     def emit_if_expr(self, node: IfExpr):
-        cond = self.bool_value(self.emit_expr(node.condition))
-        then_bb = self.func.append_basic_block("if.then")
-        else_bb = self.func.append_basic_block("if.else")
-        end_bb = self.func.append_basic_block("if.end")
-        self.builder.cbranch(cond, then_bb, else_bb)
-        self.builder.position_at_end(then_bb)
-        then_val = self.emit_block_value(node.then_block)
-        then_block = self.builder.block
-        if not self.builder.block.is_terminated:
-            self.builder.branch(end_bb)
-        self.builder.position_at_end(else_bb)
-        else_val = self.emit_block_value(node.else_block) if node.else_block else None
-        else_block = self.builder.block
-        if not self.builder.block.is_terminated:
-            self.builder.branch(end_bb)
-        self.builder.position_at_end(end_bb)
-        if node.type == "void":
-            return ir.Constant(ir.IntType(1), 0)
-        phi = self.builder.phi(llvm_type(node.type))
-        phi.add_incoming(self.cast_to(then_val, node.type), then_block)
-        phi.add_incoming(self.cast_to(else_val, node.type), else_block)
-        return phi
+        return self.control_expr_emitter.emit_if_expr(node)
 
     def emit_match_expr(self, node: MatchExpr):
-        scrutinee = self.emit_expr(node.scrutinee)
-        end_bb = self.func.append_basic_block("match.end")
-        incoming = []
-
-        for i, (pattern, body) in enumerate(node.arms):
-            body_bb = self.func.append_basic_block(f"match.arm.{i}")
-            next_bb = self.func.append_basic_block(f"match.next.{i}")
-            if pattern is None:
-                self.builder.branch(body_bb)
-            else:
-                cond = self.match_condition(scrutinee, node.scrutinee.type, pattern)
-                self.builder.cbranch(cond, body_bb, next_bb)
-            self.builder.position_at_end(body_bb)
-            body_val = self.emit_expr(body)
-            body_block = self.builder.block
-            if not self.builder.block.is_terminated:
-                self.builder.branch(end_bb)
-            incoming.append((body_val, body_block))
-            self.builder.position_at_end(next_bb)
-
-        if not self.builder.block.is_terminated:
-            self.builder.unreachable()
-        self.builder.position_at_end(end_bb)
-        if node.type == "void":
-            return ir.Constant(ir.IntType(1), 0)
-        phi = self.builder.phi(llvm_type(node.type))
-        for value, block in incoming:
-            phi.add_incoming(self.cast_to(value, node.type), block)
-        return phi
+        return self.control_expr_emitter.emit_match_expr(node)
 
     def match_condition(self, scrutinee, scrutinee_type, pattern):
-        pattern_value = self.emit_expr(pattern)
-        if scrutinee_type == "str":
-            return self.emit_str_eq(scrutinee, pattern_value)
-        if scrutinee_type in FLOAT_TYPES:
-            return self.builder.fcmp_ordered("==", scrutinee, pattern_value)
-        return self.builder.icmp_signed("==", scrutinee, pattern_value)
+        return self.control_expr_emitter.match_condition(scrutinee, scrutinee_type, pattern)
 
     def emit_block_value(self, block: Block):
-        if not block.statements:
-            return ir.Constant(ir.IntType(1), 0)
-        *prefix, tail = block.statements
-        for stmt in prefix:
-            self.emit_stmt(stmt)
-        if isinstance(tail, ExpressionStatement):
-            return self.emit_expr(tail.expr)
-        self.emit_stmt(tail)
-        return ir.Constant(ir.IntType(1), 0)
+        return self.control_expr_emitter.emit_block_value(block)
 
     def emit_call(self, node: FunctionCall):
         if node.name in ("io.print", "io.println"):
