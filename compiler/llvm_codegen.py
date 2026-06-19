@@ -21,7 +21,7 @@ from compiler.ast import (
 )
 from compiler.llvm_layout import (
     ENUM_VARIANTS, FLOAT_TYPES, I8PTR, IFACE_METHODS, INT_TYPES,
-    LLVMLayout, MAP_TYPE, SIGNED_INT_TYPES,
+    LLVMLayout, SIGNED_INT_TYPES,
     STRUCT_EMBEDS, STRUCT_FIELDS, STRUCT_FIELD_INDEX, STRUCT_TYPES,
     UNSIGNED_INT_TYPES, llvm_type,
 )
@@ -29,6 +29,7 @@ from compiler.names import safe_user_ident
 from compiler.ncrt import build_ncrt_obj, build_support_c_objs
 from compiler.llvm_function import FunctionEmitter
 from compiler.llvm_iface import IfaceEmitter
+from compiler.llvm_loop import LoopEmitter
 from compiler.llvm_map import MapEmitter
 from compiler.llvm_method import MethodEmitter
 from compiler.llvm_runtime import RuntimeEmitter
@@ -257,6 +258,7 @@ class LLVMCodegen:
         self.iface_emitter = IfaceEmitter(self)
         self.method_emitter = MethodEmitter(self)
         self.runtime_emitter = RuntimeEmitter(self)
+        self.loop_emitter = LoopEmitter(self)
         self.slice_emitter = SliceEmitter(self)
         self.string_emitter = StringEmitter(self)
         self.map_emitter = MapEmitter(self, STRUCT_FIELDS, ENUM_VARIANTS, llvm_type)
@@ -585,140 +587,16 @@ class LLVMCodegen:
         return self.runtime_emitter.emit_exit(code)
 
     def emit_for_condition(self, stmt: ForCondition):
-        cond_bb = self.func.append_basic_block("for.cond")
-        body_bb = self.func.append_basic_block("for.body")
-        end_bb = self.func.append_basic_block("for.end")
-        self.builder.branch(cond_bb)
-        self.builder.position_at_end(cond_bb)
-        self.builder.cbranch(self.bool_value(self.emit_expr(stmt.condition)), body_bb, end_bb)
-        self.builder.position_at_end(body_bb)
-        self.break_stack.append(end_bb)
-        self.emit_block(stmt.body)
-        self.break_stack.pop()
-        if not self.builder.block.is_terminated:
-            self.builder.branch(cond_bb)
-        self.builder.position_at_end(end_bb)
+        return self.loop_emitter.emit_for_condition(stmt)
 
     def emit_for_in(self, stmt: ForIn):
-        if stmt.start is None:
-            if parse_map_type(stmt.iterable.type) is not None:
-                self.emit_map_for_in(stmt)
-            else:
-                self.emit_slice_for_in(stmt)
-            return
-
-        idx_type = ir.IntType(32)
-        idx_slot = self.alloca_at_entry(safe_user_ident(stmt.index), idx_type)
-        self.vars[stmt.index] = (idx_slot, "i32")
-        start = self.cast_to(self.emit_expr(stmt.start), "i32")
-        end = self.cast_to(self.emit_expr(stmt.end), "i32")
-        self.builder.store(start, idx_slot)
-
-        cond_bb = self.func.append_basic_block("for.range.cond")
-        body_bb = self.func.append_basic_block("for.range.body")
-        end_bb = self.func.append_basic_block("for.range.end")
-        self.builder.branch(cond_bb)
-        self.builder.position_at_end(cond_bb)
-        current = self.builder.load(idx_slot, name=safe_user_ident(stmt.index))
-        self.builder.cbranch(self.builder.icmp_signed("<", current, end), body_bb, end_bb)
-        self.builder.position_at_end(body_bb)
-        self.break_stack.append(end_bb)
-        self.emit_block(stmt.body)
-        self.break_stack.pop()
-        if not self.builder.block.is_terminated:
-            current = self.builder.load(idx_slot, name=safe_user_ident(stmt.index))
-            next_value = self.builder.add(current, ir.Constant(idx_type, 1))
-            self.builder.store(next_value, idx_slot)
-            self.builder.branch(cond_bb)
-        self.builder.position_at_end(end_bb)
+        return self.loop_emitter.emit_for_in(stmt)
 
     def emit_slice_for_in(self, stmt: ForIn):
-        elem_type = parse_slice_type(stmt.iterable.type)
-        if elem_type is None or stmt.value is None:
-            raise NotImplementedError("LLVM backend only supports for i, item in slice")
-
-        saved_vars = self.vars.copy()
-        idx_type = ir.IntType(32)
-        idx_slot = self.alloca_at_entry(safe_user_ident(stmt.index), idx_type)
-        value_slot = self.alloca_at_entry(safe_user_ident(stmt.value), llvm_type(elem_type))
-        self.vars[stmt.index] = (idx_slot, "i32")
-        self.vars[stmt.value] = (value_slot, elem_type)
-        self.root_slots_for_type(value_slot, elem_type)
-
-        slice_value = self.emit_expr(stmt.iterable)
-        ptr = self.builder.extract_value(slice_value, 0)
-        length64 = self.builder.extract_value(slice_value, 1)
-        length32 = self.builder.trunc(length64, idx_type)
-        self.builder.store(ir.Constant(idx_type, 0), idx_slot)
-
-        cond_bb = self.func.append_basic_block("for.slice.cond")
-        body_bb = self.func.append_basic_block("for.slice.body")
-        end_bb = self.func.append_basic_block("for.slice.end")
-        self.builder.branch(cond_bb)
-        self.builder.position_at_end(cond_bb)
-        current = self.builder.load(idx_slot, name=safe_user_ident(stmt.index))
-        self.builder.cbranch(self.builder.icmp_signed("<", current, length32), body_bb, end_bb)
-        self.builder.position_at_end(body_bb)
-        elem_ptr = self.builder.gep(ptr, [current], inbounds=True, name="for.slice.elem.ptr")
-        self.builder.store(self.builder.load(elem_ptr), value_slot)
-        self.break_stack.append(end_bb)
-        self.emit_block(stmt.body)
-        self.break_stack.pop()
-        if not self.builder.block.is_terminated:
-            current = self.builder.load(idx_slot, name=safe_user_ident(stmt.index))
-            next_value = self.builder.add(current, ir.Constant(idx_type, 1))
-            self.builder.store(next_value, idx_slot)
-            self.builder.branch(cond_bb)
-        self.builder.position_at_end(end_bb)
-        self.vars = saved_vars
+        return self.loop_emitter.emit_slice_for_in(stmt)
 
     def emit_map_for_in(self, stmt: ForIn):
-        map_parts = parse_map_type(stmt.iterable.type)
-        if map_parts is None or stmt.value is None:
-            raise NotImplementedError("LLVM backend only supports for key, value in map")
-        key_type, value_type = map_parts
-
-        saved_vars = self.vars.copy()
-        key_slot = self.alloca_at_entry(safe_user_ident(stmt.index), llvm_type(key_type))
-        value_slot = self.alloca_at_entry(safe_user_ident(stmt.value), llvm_type(value_type))
-        cursor_slot = self.alloca_at_entry("__nc_map_cursor", ir.IntType(64))
-        found_slot = self.alloca_at_entry("__nc_map_found", ir.IntType(64))
-        map_slot = self.alloca_at_entry("__nc_map_iter", MAP_TYPE)
-        self.vars[stmt.index] = (key_slot, key_type)
-        self.vars[stmt.value] = (value_slot, value_type)
-        self.root_slots_for_type(key_slot, key_type)
-        self.root_slots_for_type(value_slot, value_type)
-
-        map_value = self.emit_expr(stmt.iterable)
-        self.builder.store(map_value, map_slot)
-        self.builder.store(ir.Constant(ir.IntType(64), 0), cursor_slot)
-
-        cond_bb = self.func.append_basic_block("for.map.cond")
-        body_bb = self.func.append_basic_block("for.map.body")
-        end_bb = self.func.append_basic_block("for.map.end")
-        self.builder.branch(cond_bb)
-        self.builder.position_at_end(cond_bb)
-        cursor = self.builder.load(cursor_slot, name="for.map.cursor")
-        key_ptr = self.builder.bitcast(key_slot, I8PTR)
-        value_ptr = self.builder.bitcast(value_slot, I8PTR)
-        found = self.builder.call(self.map_next_fn, [map_slot, cursor, key_ptr, value_ptr], name="for.map.next")
-        self.builder.store(found, found_slot)
-        self.builder.cbranch(
-            self.builder.icmp_signed(">=", found, ir.Constant(ir.IntType(64), 0)),
-            body_bb,
-            end_bb,
-        )
-        self.builder.position_at_end(body_bb)
-        self.break_stack.append(end_bb)
-        self.emit_block(stmt.body)
-        self.break_stack.pop()
-        if not self.builder.block.is_terminated:
-            found = self.builder.load(found_slot, name="for.map.found")
-            next_cursor = self.builder.add(found, ir.Constant(ir.IntType(64), 1))
-            self.builder.store(next_cursor, cursor_slot)
-            self.builder.branch(cond_bb)
-        self.builder.position_at_end(end_bb)
-        self.vars = saved_vars
+        return self.loop_emitter.emit_map_for_in(stmt)
 
     def emit_expr(self, node):
         if isinstance(node, IntegerLiteral):
