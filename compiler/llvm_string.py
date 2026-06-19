@@ -1,10 +1,7 @@
 from llvmlite import ir
 
 from compiler.llvm_context import CodegenContext
-
-
-I8PTR = ir.IntType(8).as_pointer()
-STR_TYPE = ir.LiteralStructType([I8PTR, ir.IntType(64)])
+from compiler.llvm_layout import I8PTR, STR_TYPE
 
 
 class StringEmitter:

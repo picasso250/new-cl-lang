@@ -1,32 +1,11 @@
 from llvmlite import ir
 
 from compiler.llvm_context import CodegenContext
+from compiler.llvm_layout import (
+    I8PTR, INT_TYPES, MAP_DESC_TYPE, MAP_EQ_FN_TYPE, MAP_HASH_FN_TYPE, MAP_TYPE,
+    STR_TYPE,
+)
 from compiler.type_ref import parse_map_type
-
-
-INT_TYPES = {
-    "i8": ir.IntType(8),
-    "i16": ir.IntType(16),
-    "i32": ir.IntType(32),
-    "i64": ir.IntType(64),
-    "u8": ir.IntType(8),
-    "u16": ir.IntType(16),
-    "u32": ir.IntType(32),
-    "u64": ir.IntType(64),
-    "bool": ir.IntType(1),
-    "rune": ir.IntType(32),
-}
-I8PTR = ir.IntType(8).as_pointer()
-STR_TYPE = ir.LiteralStructType([I8PTR, ir.IntType(64)])
-MAP_HASH_FN_TYPE = ir.FunctionType(ir.IntType(64), [I8PTR])
-MAP_EQ_FN_TYPE = ir.FunctionType(ir.IntType(32), [I8PTR, I8PTR])
-MAP_DESC_TYPE = ir.LiteralStructType([
-    ir.IntType(64), ir.IntType(64), ir.IntType(64), ir.IntType(64),
-    ir.IntType(64), ir.IntType(64),
-    MAP_HASH_FN_TYPE.as_pointer(), MAP_EQ_FN_TYPE.as_pointer(),
-])
-MAP_DESC_PTR = MAP_DESC_TYPE.as_pointer()
-MAP_TYPE = ir.LiteralStructType([MAP_DESC_PTR, I8PTR, ir.IntType(64), ir.IntType(64), ir.IntType(64)])
 
 
 class MapEmitter:
