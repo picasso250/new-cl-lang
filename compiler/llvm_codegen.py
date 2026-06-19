@@ -21,6 +21,7 @@ from compiler.ast import (
 )
 from compiler.names import safe_user_ident
 from compiler.ncrt import build_ncrt_obj, build_support_c_objs
+from compiler.llvm_string import StringEmitter
 from compiler.target import TargetSpec, get_target
 from compiler.type_ref import parse_array_type, parse_fn_type, parse_map_type, parse_slice_type
 
@@ -325,6 +326,7 @@ class LLVMCodegen:
         self.iface_vtables: dict[tuple[str, str], ir.GlobalVariable] = {}
         self.iface_thunks: dict[tuple[str, str, str], ir.Function] = {}
         self.function_value_thunks: dict[str, ir.Function] = {}
+        self.string_emitter = StringEmitter(self)
 
     def generate(self, program) -> str:
         collected = _collect_llvm_inputs(program)
@@ -1883,18 +1885,10 @@ class LLVMCodegen:
         return self.builder.select(cond, neg, value, name="abs")
 
     def emit_str_cat(self, left, right):
-        self.ensure_ncrt_runtime()
-        out = self.alloca_at_entry("__nc_str_cat_out", STR_TYPE)
-        left_ptr = self.value_to_stack_ptr(left, STR_TYPE, "__nc_str_cat_left")
-        right_ptr = self.value_to_stack_ptr(right, STR_TYPE, "__nc_str_cat_right")
-        self.builder.call(self.str_cat_fn, [out, left_ptr, right_ptr])
-        return self.builder.load(out, name="str.cat")
+        return self.string_emitter.emit_str_cat(left, right)
 
     def str_value(self, ptr, length):
-        value = ir.Constant(STR_TYPE, ir.Undefined)
-        value = self.builder.insert_value(value, ptr, [0], name="str.ptr")
-        value = self.builder.insert_value(value, length, [1], name="str.len")
-        return value
+        return self.string_emitter.str_value(ptr, length)
 
     def map_value(self, desc, entries, cap, length):
         value = ir.Constant(MAP_TYPE, ir.Undefined)
@@ -2214,43 +2208,25 @@ class LLVMCodegen:
         return self.builder.call(self.gc_alloc, [count], name="malloc.bytes")
 
     def emit_i32_to_str(self, arg_expr):
-        value = self.cast_to(self.emit_expr(arg_expr), "i32")
-        return self.emit_i32_value_to_str(value)
+        return self.string_emitter.emit_i32_to_str(arg_expr)
 
     def emit_i32_value_to_str(self, value):
-        self.ensure_ncrt_runtime()
-        out = self.alloca_at_entry("__nc_i32_str_out", STR_TYPE)
-        self.builder.call(self.i32_to_str_fn, [out, value])
-        return self.builder.load(out, name="i32.str")
+        return self.string_emitter.emit_i32_value_to_str(value)
 
     def emit_i64_value_to_str(self, value):
-        self.ensure_ncrt_runtime()
-        out = self.alloca_at_entry("__nc_i64_str_out", STR_TYPE)
-        self.builder.call(self.i64_to_str_fn, [out, value])
-        return self.builder.load(out, name="i64.str")
+        return self.string_emitter.emit_i64_value_to_str(value)
 
     def emit_u64_value_to_str(self, value):
-        self.ensure_ncrt_runtime()
-        out = self.alloca_at_entry("__nc_u64_str_out", STR_TYPE)
-        self.builder.call(self.u64_to_str_fn, [out, value])
-        return self.builder.load(out, name="u64.str")
+        return self.string_emitter.emit_u64_value_to_str(value)
 
     def emit_rune_value_to_str(self, value):
-        self.ensure_ncrt_runtime()
-        out = self.alloca_at_entry("__nc_rune_str_out", STR_TYPE)
-        self.builder.call(self.rune_to_str_fn, [out, self.cast_to(value, "rune")])
-        return self.builder.load(out, name="rune.str")
+        return self.string_emitter.emit_rune_value_to_str(value)
 
     def emit_f64_value_to_str(self, value):
-        self.ensure_ncrt_runtime()
-        out = self.alloca_at_entry("__nc_f64_str_out", STR_TYPE)
-        self.builder.call(self.f64_to_str_fn, [out, value])
-        return self.builder.load(out, name="f64.str")
+        return self.string_emitter.emit_f64_value_to_str(value)
 
     def emit_str_to_i32(self, arg_expr):
-        self.ensure_ncrt_runtime()
-        value = self.emit_expr(arg_expr)
-        return self.builder.call(self.str_to_i32_fn, [self.value_to_stack_ptr(value, STR_TYPE, "__nc_str_to_i32_arg")], name="str.i32")
+        return self.string_emitter.emit_str_to_i32(arg_expr)
 
     def emit_gc_live(self):
         self.ensure_ncrt_runtime()
@@ -2369,60 +2345,19 @@ class LLVMCodegen:
             )
 
     def emit_str_alloc(self, len_expr):
-        fn = (
-            self.module.globals["__nc_str_alloc_out"]
-            if "__nc_str_alloc_out" in self.module.globals
-            else ir.Function(
-                self.module,
-                ir.FunctionType(ir.VoidType(), [STR_TYPE.as_pointer(), ir.IntType(64)]),
-                name="__nc_str_alloc_out",
-            )
-        )
-        length = self.cast_to(self.emit_expr(len_expr), "u64")
-        out = self.alloca_at_entry("__nc_str_alloc_out", STR_TYPE)
-        self.builder.call(fn, [out, length])
-        return self.builder.load(out, name="str.alloc")
+        return self.string_emitter.emit_str_alloc(len_expr)
 
     def emit_bytes_alloc(self, len_expr):
-        self.ensure_ncrt_runtime()
-        length = self.cast_to(self.emit_expr(len_expr), "u64")
-        ptr = self.builder.call(self.gc_alloc, [length], name="bytes.alloc.ptr")
-        return self.slice_value("u8", self.builder.bitcast(ptr, llvm_type("u8").as_pointer()), length, length)
+        return self.string_emitter.emit_bytes_alloc(len_expr)
 
     def emit_u8_slice_to_str(self, arg_expr):
-        self.ensure_ncrt_runtime()
-        source = self.emit_expr(arg_expr)
-        source_ptr = self.builder.extract_value(source, 0, name="u8str.source.ptr")
-        length = self.builder.extract_value(source, 1, name="u8str.len")
-        alloc_len = self.builder.add(length, ir.Constant(ir.IntType(64), 1), name="u8str.alloc.len")
-        dest = self.builder.call(self.gc_alloc, [alloc_len], name="u8str.dest")
-        dest_u8 = self.builder.bitcast(dest, llvm_type("u8").as_pointer(), name="u8str.dest.u8")
-        self.copy_bytes(dest_u8, ir.Constant(ir.IntType(64), 0), source_ptr, ir.Constant(ir.IntType(64), 0), length, "u8str")
-        nul_ptr = self.builder.gep(dest_u8, [length], inbounds=True, name="u8str.nul.ptr")
-        self.builder.store(ir.Constant(ir.IntType(8), 0), nul_ptr)
-        value = ir.Constant(STR_TYPE, None)
-        value = self.builder.insert_value(value, dest_u8, [0], name="u8str.ptr")
-        value = self.builder.insert_value(value, length, [1], name="u8str.out.len")
-        return value
+        return self.string_emitter.emit_u8_slice_to_str(arg_expr)
 
     def emit_cstr_to_str(self, arg_expr):
-        self.ensure_ncrt_runtime()
-        value = self.emit_expr(arg_expr)
-        ptr = self.builder.bitcast(value, I8PTR, name="cstr.ptr")
-        out = self.alloca_at_entry("__nc_cstr_to_str_out", STR_TYPE)
-        self.builder.call(self.cstr_to_str_fn, [out, ptr])
-        return self.builder.load(out, name="cstr.str")
+        return self.string_emitter.emit_cstr_to_str(arg_expr)
 
     def emit_str_eq(self, left, right):
-        self.ensure_ncrt_runtime()
-        fn = (
-            ir.Function(self.module, ir.FunctionType(ir.IntType(32), [STR_TYPE.as_pointer(), STR_TYPE.as_pointer()]), name="__nc_str_eq_ptr")
-            if "__nc_str_eq_ptr" not in self.module.globals else self.module.globals["__nc_str_eq_ptr"]
-        )
-        left_ptr = self.value_to_stack_ptr(left, STR_TYPE, "__nc_str_eq_left")
-        right_ptr = self.value_to_stack_ptr(right, STR_TYPE, "__nc_str_eq_right")
-        eq = self.builder.call(fn, [left_ptr, right_ptr], name="str.eq.i32")
-        return self.builder.icmp_signed("!=", eq, ir.Constant(ir.IntType(32), 0), name="str.eq")
+        return self.string_emitter.emit_str_eq(left, right)
 
     def emit_struct_eq(self, left, right, typ):
         result = ir.Constant(ir.IntType(1), 1)

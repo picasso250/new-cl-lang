@@ -158,3 +158,7 @@
 - 2026-06-19: 预备补齐泛型函数值与修复索引表达式解析：支持已实例化泛型函数作为 fun 值，修复 items[j - 1] 一类索引误判，并用 sort 复用 case 验证泛型与函数值闭环。why：intro sort 暴露出泛型、函数值和 parser 的组合边界尚未闭环，需要以标准库真实用法推动最小语言能力。
 
 - 2026-06-19: 已补齐实例化泛型函数值与索引表达式解析：新增 oo[T]/module.foo[T] 函数值表达式，monomorphize 触发实例化，typecheck 生成 un(...) R 类型，LLVM 为具名函数值生成无捕获 thunk；修复 items[j - 1]/items[lo + root] 解析误判。sort.sort 已改为通过 _sort_less_ord[T] 复用 sort.by。同步 design.md 与 docs/generics.md。验证：python tests/test_stdlib.py 通过 60/60；python tests/test_language_cases.py 通过 254/254；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q 通过 88 passed, 1 skipped。
+
+- 2026-06-19: 预备拆分 LLVM 后端 string lowering：新增可复用 CodegenContext 协议与 StringEmitter，先迁移字符串分配、转换、相等和拼接相关 lowering，LLVMCodegen 保留薄代理。why：llvm_codegen.py 已成为最大结构性热点，需要用等价重构建立后续 map/iface/function value 拆分模式。
+
+- 2026-06-19: 已拆分 LLVM 后端 string lowering：新增 compiler/llvm_context.py 的 CodegenContext 协议与 compiler/llvm_string.py 的 StringEmitter，迁移字符串拼接、分配、[]u8/C string 转换、数值/rune/string 转换和字符串相等 lowering；LLVMCodegen 保留薄代理，行为边界不变，design.md 无需更新。验证：python -m py_compile compiler/llvm_codegen.py compiler/llvm_context.py compiler/llvm_string.py；python -m pytest tests/test_llvm_backend.py -q 通过 46 passed, 1 skipped；python tests/test_language_cases.py 通过 254/254；python tests/test_stdlib.py 通过 60/60；python -m pytest tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q 通过 42 passed。
