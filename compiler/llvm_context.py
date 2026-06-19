@@ -26,8 +26,20 @@ class CodegenContext(Protocol):
     current_is_fallible: bool
     current_return_type: str
     current_is_main: bool
+    printf: ir.Function | None
+    fprintf: ir.Function | None
+    exit_fn: ir.Function | None
+    nc_stderr: ir.Function | None
+    malloc: ir.Function | None
     gc_alloc: ir.Function | None
+    gc_collect: ir.Function | None
+    gc_live: ir.Function | None
+    gc_init: ir.Function | None
+    gc_root_mark: ir.Function | None
+    gc_root_rewind: ir.Function | None
+    gc_push_root_slot: ir.Function | None
     str_cat_fn: ir.Function | None
+    str_slice_fn: ir.Function | None
     i32_to_str_fn: ir.Function | None
     i64_to_str_fn: ir.Function | None
     u64_to_str_fn: ir.Function | None
@@ -40,6 +52,18 @@ class CodegenContext(Protocol):
     map_set_fn: ir.Function | None
     map_has_fn: ir.Function | None
     map_delete_fn: ir.Function | None
+    map_clear_fn: ir.Function | None
+    map_next_fn: ir.Function | None
+    slice_copy_fn: ir.Function | None
+    slice_append_fn: ir.Function | None
+    slice_copy_into_fn: ir.Function | None
+    slice_clear_fn: ir.Function | None
+    os_set_args_fn: ir.Function | None
+    sprintf: ir.Function | None
+    atoi: ir.Function | None
+    memcmp: ir.Function | None
+    empty_c_string: Any
+    strings: dict[tuple[str, str], ir.GlobalVariable]
     map_descs: dict[str, ir.GlobalVariable]
     map_hash_fns: dict[str, ir.Function]
     map_eq_fns: dict[str, ir.Function]
@@ -63,6 +87,7 @@ class CodegenContext(Protocol):
     def emit_iface_method_call(self, node: Any): ...
     def value_to_i8_stack_ptr(self, value: Any, typ: Any, name: str): ...
     def align_to(self, value: int, alignment: int) -> int: ...
+    def aligned_sizeof_type(self, nc_type: str) -> int: ...
     def sizeof_fields(self, fields: list[str]) -> int: ...
     def ensure_memcmp(self): ...
     def ensure_ncrt_runtime(self): ...

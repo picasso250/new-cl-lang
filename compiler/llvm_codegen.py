@@ -31,6 +31,7 @@ from compiler.llvm_function import FunctionEmitter
 from compiler.llvm_iface import IfaceEmitter
 from compiler.llvm_map import MapEmitter
 from compiler.llvm_method import MethodEmitter
+from compiler.llvm_runtime import RuntimeEmitter
 from compiler.llvm_string import StringEmitter
 from compiler.target import TargetSpec, get_target
 from compiler.type_ref import parse_array_type, parse_fn_type, parse_map_type, parse_slice_type
@@ -222,6 +223,7 @@ class LLVMCodegen:
         self.map_has_fn = None
         self.map_delete_fn = None
         self.map_clear_fn = None
+        self.map_next_fn = None
         self.slice_copy_fn = None
         self.slice_append_fn = None
         self.slice_copy_into_fn = None
@@ -253,6 +255,7 @@ class LLVMCodegen:
         self.function_emitter = FunctionEmitter(self)
         self.iface_emitter = IfaceEmitter(self)
         self.method_emitter = MethodEmitter(self)
+        self.runtime_emitter = RuntimeEmitter(self)
         self.string_emitter = StringEmitter(self)
         self.map_emitter = MapEmitter(self, STRUCT_FIELDS, ENUM_VARIANTS, llvm_type)
 
@@ -571,26 +574,13 @@ class LLVMCodegen:
         self.builder.position_at_end(end_bb)
 
     def emit_print_error(self, value):
-        self.ensure_fprintf()
-        stderr = self.builder.call(self.nc_stderr, [], name="stderr")
-        fmt = self.global_c_string("error: %.*s\n", "fmt_error")
-        ptr = self.builder.extract_value(value, 0)
-        length64 = self.builder.extract_value(value, 1)
-        length32 = self.builder.trunc(length64, ir.IntType(32))
-        self.builder.call(self.fprintf, [stderr, fmt, length32, ptr])
+        return self.runtime_emitter.emit_print_error(value)
 
     def ensure_exit(self):
-        if self.exit_fn is None:
-            existing = self.module.globals.get("exit")
-            self.exit_fn = existing if existing is not None else ir.Function(
-                self.module,
-                ir.FunctionType(ir.VoidType(), [ir.IntType(32)]),
-                name="exit",
-            )
+        return self.runtime_emitter.ensure_exit()
 
     def emit_exit(self, code: int):
-        self.ensure_exit()
-        self.builder.call(self.exit_fn, [ir.Constant(ir.IntType(32), code)])
+        return self.runtime_emitter.emit_exit(code)
 
     def emit_for_condition(self, stmt: ForCondition):
         cond_bb = self.func.append_basic_block("for.cond")
@@ -1478,102 +1468,25 @@ class LLVMCodegen:
         return self.map_emitter.emit_map_eq_value(builder, left, right, typ)
 
     def ensure_printf(self):
-        if self.printf is None:
-            i8ptr = ir.IntType(8).as_pointer()
-            self.printf = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [i8ptr], var_arg=True), name="printf")
+        return self.runtime_emitter.ensure_printf()
 
     def ensure_fprintf(self):
-        if self.fprintf is None:
-            self.fprintf = ir.Function(
-                self.module,
-                ir.FunctionType(ir.IntType(32), [I8PTR, I8PTR], var_arg=True),
-                name="fprintf",
-            )
-            self.nc_stderr = ir.Function(
-                self.module,
-                ir.FunctionType(I8PTR, []),
-                name="__nc_stderr",
-            )
+        return self.runtime_emitter.ensure_fprintf()
 
     def ensure_sprintf(self):
-        if self.sprintf is None:
-            self.sprintf = ir.Function(
-                self.module,
-                ir.FunctionType(ir.IntType(32), [I8PTR, I8PTR], var_arg=True),
-                name="sprintf",
-            )
+        return self.runtime_emitter.ensure_sprintf()
 
     def ensure_atoi(self):
-        if self.atoi is None:
-            self.atoi = ir.Function(
-                self.module,
-                ir.FunctionType(ir.IntType(32), [I8PTR]),
-                name="atoi",
-            )
+        return self.runtime_emitter.ensure_atoi()
 
     def ensure_malloc(self):
-        if self.malloc is None:
-            self.malloc = ir.Function(self.module, ir.FunctionType(I8PTR, [ir.IntType(64)]), name="malloc")
+        return self.runtime_emitter.ensure_malloc()
 
     def ensure_gc_runtime(self):
-        self.ensure_ncrt_runtime()
+        return self.runtime_emitter.ensure_gc_runtime()
 
     def ensure_ncrt_runtime(self):
-        if self.gc_alloc is None:
-            self.gc_alloc = ir.Function(
-                self.module,
-                ir.FunctionType(I8PTR, [ir.IntType(64)]),
-                name="__nc_gc_alloc",
-            )
-            self.gc_collect = ir.Function(self.module, ir.FunctionType(ir.VoidType(), []), name="__nc_gc_collect")
-            self.gc_live = ir.Function(self.module, ir.FunctionType(ir.IntType(64), []), name="__nc_gc_live")
-            self.gc_init = ir.Function(self.module, ir.FunctionType(ir.VoidType(), []), name="__nc_gc_init")
-            self.gc_root_mark = ir.Function(self.module, ir.FunctionType(ir.IntType(64), []), name="__nc_gc_root_mark")
-            self.gc_root_rewind = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [ir.IntType(64)]), name="__nc_gc_root_rewind")
-            self.gc_push_root_slot = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [I8PTR]), name="__nc_gc_push_root_slot")
-            str_ptr = STR_TYPE.as_pointer()
-            self.str_cat_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [str_ptr, str_ptr, str_ptr]), name="__nc_str_cat_out")
-            self.str_slice_fn = ir.Function(
-                self.module,
-                ir.FunctionType(ir.VoidType(), [str_ptr, str_ptr, ir.IntType(64), ir.IntType(64)]),
-                name="__nc_str_slice_copy_out",
-            )
-            self.i32_to_str_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [str_ptr, ir.IntType(32)]), name="__nc_i32_to_str_out")
-            self.i64_to_str_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [str_ptr, ir.IntType(64)]), name="__nc_i64_to_str_out")
-            self.u64_to_str_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [str_ptr, ir.IntType(64)]), name="__nc_u64_to_str_out")
-            self.f64_to_str_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [str_ptr, ir.DoubleType()]), name="__nc_f64_to_str_out")
-            self.rune_to_str_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [str_ptr, ir.IntType(32)]), name="__nc_rune_to_str_out")
-            self.str_to_i32_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [str_ptr]), name="__nc_str_to_i32_ptr")
-            self.cstr_to_str_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [str_ptr, I8PTR]), name="__nc_cstr_to_str_out")
-            raw_slice_ptr = RAW_SLICE_TYPE.as_pointer()
-            self.os_set_args_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [ir.IntType(32), I8PTR.as_pointer()]), name="__nc_os_set_args")
-            self.map_init_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [MAP_TYPE.as_pointer(), MAP_DESC_PTR]), name="__nc_map_init")
-            self.map_get_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [I8PTR, MAP_TYPE.as_pointer(), MAP_DESC_PTR, I8PTR]), name="__nc_map_get")
-            self.map_set_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [MAP_TYPE.as_pointer(), MAP_DESC_PTR, I8PTR, I8PTR]), name="__nc_map_set")
-            self.map_has_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(32), [MAP_TYPE.as_pointer(), MAP_DESC_PTR, I8PTR]), name="__nc_map_has")
-            self.map_delete_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [MAP_TYPE.as_pointer(), MAP_DESC_PTR, I8PTR]), name="__nc_map_delete")
-            self.map_clear_fn = ir.Function(self.module, ir.FunctionType(ir.VoidType(), [MAP_TYPE.as_pointer()]), name="__nc_map_clear")
-            self.map_next_fn = ir.Function(self.module, ir.FunctionType(ir.IntType(64), [MAP_TYPE.as_pointer(), ir.IntType(64), I8PTR, I8PTR]), name="__nc_map_next")
-            self.slice_copy_fn = ir.Function(
-                self.module,
-                ir.FunctionType(ir.VoidType(), [raw_slice_ptr, I8PTR, ir.IntType(64), ir.IntType(64)]),
-                name="__nc_slice_copy_raw",
-            )
-            self.slice_append_fn = ir.Function(
-                self.module,
-                ir.FunctionType(ir.VoidType(), [raw_slice_ptr, raw_slice_ptr, I8PTR, ir.IntType(64)]),
-                name="__nc_slice_append_raw",
-            )
-            self.slice_copy_into_fn = ir.Function(
-                self.module,
-                ir.FunctionType(ir.IntType(32), [raw_slice_ptr, raw_slice_ptr, ir.IntType(64)]),
-                name="__nc_slice_copy_into_raw",
-            )
-            self.slice_clear_fn = ir.Function(
-                self.module,
-                ir.FunctionType(ir.VoidType(), [raw_slice_ptr, ir.IntType(64)]),
-                name="__nc_slice_clear_raw",
-            )
+        return self.runtime_emitter.ensure_ncrt_runtime()
 
     def value_to_stack_ptr(self, value, typ, name):
         slot = self.alloca_at_entry(name, typ)
@@ -1584,15 +1497,10 @@ class LLVMCodegen:
         return self.builder.bitcast(self.value_to_stack_ptr(value, typ, name), I8PTR)
 
     def malloc_array(self, elem_type: str, count):
-        self.ensure_gc_runtime()
-        elem_size = ir.Constant(ir.IntType(64), self.aligned_sizeof_type(elem_type))
-        size = self.builder.mul(count, elem_size, name="malloc.size")
-        raw = self.builder.call(self.gc_alloc, [size], name="gc.alloc.raw")
-        return self.builder.bitcast(raw, llvm_type(elem_type).as_pointer(), name="malloc.typed")
+        return self.runtime_emitter.malloc_array(elem_type, count)
 
     def malloc_bytes(self, count):
-        self.ensure_gc_runtime()
-        return self.builder.call(self.gc_alloc, [count], name="malloc.bytes")
+        return self.runtime_emitter.malloc_bytes(count)
 
     def emit_i32_to_str(self, arg_expr):
         return self.string_emitter.emit_i32_to_str(arg_expr)
@@ -1616,18 +1524,10 @@ class LLVMCodegen:
         return self.string_emitter.emit_str_to_i32(arg_expr)
 
     def emit_gc_live(self):
-        self.ensure_ncrt_runtime()
-        self.ensure_printf()
-        fmt = self.global_c_string("%d\n", "fmt_gc_live")
-        live64 = self.builder.call(self.gc_live, [], name="gc.live")
-        live = self.builder.trunc(live64, ir.IntType(32), name="gc.live.i32")
-        self.builder.call(self.printf, [fmt, live])
-        return live
+        return self.runtime_emitter.emit_gc_live()
 
     def emit_gc_collect(self):
-        self.ensure_ncrt_runtime()
-        self.builder.call(self.gc_collect, [])
-        return ir.Constant(ir.IntType(1), 0)
+        return self.runtime_emitter.emit_gc_collect()
 
     def copy_bytes(self, dest, dest_offset, source, source_offset, count, label):
         idx_slot = self.alloca_at_entry(f"__nc_{label}_i", ir.IntType(64))
@@ -1666,12 +1566,7 @@ class LLVMCodegen:
         return self.layout.sizeof_fields(field_types)
 
     def ensure_memcmp(self):
-        if self.memcmp is None:
-            self.memcmp = ir.Function(
-                self.module,
-                ir.FunctionType(ir.IntType(32), [I8PTR, I8PTR, ir.IntType(64)]),
-                name="memcmp",
-            )
+        return self.runtime_emitter.ensure_memcmp()
 
     def emit_str_alloc(self, len_expr):
         return self.string_emitter.emit_str_alloc(len_expr)
@@ -1705,22 +1600,10 @@ class LLVMCodegen:
         return self.emit_binary_values(left, "==", right, typ)
 
     def global_c_string(self, text: str, hint: str):
-        key = (hint, text)
-        if key in self.strings:
-            return self.strings[key].bitcast(ir.IntType(8).as_pointer())
-        raw = bytearray(text.encode("utf-8")) + b"\00"
-        typ = ir.ArrayType(ir.IntType(8), len(raw))
-        glob = ir.GlobalVariable(self.module, typ, name=f"__nc_{hint}_{len(self.strings)}")
-        glob.linkage = "internal"
-        glob.global_constant = True
-        glob.initializer = ir.Constant(typ, raw)
-        self.strings[key] = glob
-        return glob.bitcast(ir.IntType(8).as_pointer())
+        return self.runtime_emitter.global_c_string(text, hint)
 
     def empty_string_ptr(self):
-        if self.empty_c_string is None:
-            self.empty_c_string = self.global_c_string("", "empty_c_str")
-        return self.empty_c_string
+        return self.runtime_emitter.empty_string_ptr()
 
     def bool_value(self, value):
         if isinstance(value.type, ir.IntType) and value.type.width == 1:

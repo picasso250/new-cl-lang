@@ -57,7 +57,7 @@ def test_std_module_builtins_are_explicitly_bounded():
 
 
 def test_llvm_declares_external_ncrt_symbols():
-    source = _read("compiler/llvm_codegen.py")
+    source = _read("compiler/llvm_runtime.py")
 
     assert "__nc_gc_alloc" in source
     assert "__nc_read_file" not in source
