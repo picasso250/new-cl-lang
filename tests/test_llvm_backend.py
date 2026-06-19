@@ -4,6 +4,7 @@ import sys
 
 import pytest
 
+import compiler.llvm_codegen as llvm_codegen
 from compiler import build_llvm_ir, compile_nc_sources_with_libs, compile_nc_to_llvm_ir, run_llvm_ir
 
 
@@ -716,6 +717,46 @@ def test_llvm_build_writes_ir_obj_and_exe(tmp_path):
     result = subprocess.run([exe_path], capture_output=True, text=True)
     assert result.stdout.strip() == "42"
     assert result.returncode == 0
+
+
+def test_llvm_build_uses_hosted_c_runtime_link_path(tmp_path, monkeypatch):
+    commands = []
+
+    def fake_run(cmd, capture_output, text):
+        commands.append(cmd)
+
+        class Result:
+            returncode = 0
+            stderr = ""
+
+        return Result()
+
+    monkeypatch.setattr(llvm_codegen, "object_from_llvm_ir", lambda llvm_ir, target_name=None: b"obj")
+    monkeypatch.setattr(llvm_codegen, "build_ncrt_obj", lambda out_dir, target_name=None: os.path.join(out_dir, "ncrt.o"))
+    monkeypatch.setattr(llvm_codegen, "build_support_c_objs", lambda out_dir, sources, target_name=None: [])
+    monkeypatch.setattr(llvm_codegen.subprocess, "run", fake_run)
+
+    _ll_path, _obj_path, exe_path = build_llvm_ir(
+        "define i32 @main() { ret i32 0 }",
+        str(tmp_path),
+        "main",
+        link_libs=["m"],
+        target_name="linux-x64",
+    )
+
+    assert os.path.exists(exe_path) is False
+    assert len(commands) == 1
+    link_cmd = commands[0]
+    assert link_cmd[0] == "gcc"
+    assert "-nostdlib" not in link_cmd
+    assert "-nodefaultlibs" not in link_cmd
+    assert "-o" in link_cmd
+    assert "-lm" in link_cmd
+    hosted_args = llvm_codegen.get_target("linux-x64").hosted_runtime_link_args()
+    if hosted_args:
+        first_hosted = link_cmd.index(hosted_args[0])
+        explicit = link_cmd.index("-lm")
+        assert first_hosted < explicit
 
 
 def test_llvm_build_links_fs_support_when_stdlib_fs_is_imported(tmp_path):

@@ -427,8 +427,12 @@ why：
 - `compile` 输出 LLVM IR。
 - `build` 输出对象文件、运行时对象和可执行文件。
 - 支持显式 target：`windows-x64`、`linux-x64`。
+- `build` / `run` 生成 hosted 用户态程序，始终通过目标平台 C runtime 和默认启动环境链接。
+- `ncrt` 是 NC 私有运行时 ABI，构建在 hosted C runtime 基线之上。
 
 why：
 
 - NC 不应依赖用户手写 make/cmake 才能完成基本构建。
 - target 必须显式进入编译模型，FFI 和标准库都依赖它。
+- GC 分配、启动参数、stderr/error 退出、字符串/容器 runtime，以及 `fs` / `os` / `math` 等标准能力都实践依赖普通用户态 C runtime。
+- v1 不提供也不预留 freestanding / `nostd` 模式；源码层标准库仍必须显式 `import`。

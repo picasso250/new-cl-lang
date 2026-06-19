@@ -22,6 +22,15 @@ class TargetSpec:
             return lib
         return f"-l{lib}"
 
+    def hosted_runtime_link_args(self) -> list[str]:
+        """Extra args for NC's hosted C runtime baseline.
+
+        The gcc driver already supplies CRT startup files and libc by default for
+        current targets. An empty list here means "use gcc hosted defaults", not
+        "freestanding" or "nostd".
+        """
+        return []
+
 
 WINDOWS_X64 = TargetSpec("windows-x64", "x86_64-w64-windows-gnu", ".obj", ".exe")
 LINUX_X64 = TargetSpec("linux-x64", "x86_64-pc-linux-gnu", ".o", "")

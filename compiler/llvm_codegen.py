@@ -2276,7 +2276,9 @@ def build_llvm_ir(
     with open(obj_path, "wb") as f:
         f.write(object_from_llvm_ir(llvm_ir, target_spec.name))
     link_inputs = [obj_path, ncrt_obj, *support_objs]
-    link_cmd = ["gcc", *link_inputs, "-o", exe_path] + [target_spec.resolve_link_lib(lib) for lib in list(link_libs or [])]
+    hosted_link_args = target_spec.hosted_runtime_link_args()
+    explicit_link_args = [target_spec.resolve_link_lib(lib) for lib in list(link_libs or [])]
+    link_cmd = ["gcc", *link_inputs, "-o", exe_path, *hosted_link_args, *explicit_link_args]
     result = subprocess.run(link_cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"LLVM object link failed:\n{result.stderr}")
