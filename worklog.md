@@ -174,3 +174,7 @@
 - 2026-06-19: 预备拆分 LLVM 后端类型布局：新增 LLVMLayout 承接 LLVM 类型常量、llvm_type、sizeof/align 计算和共享结构/枚举/接口布局表，LLVMCodegen 保留薄代理。why：string/map emitter 已落地，继续拆 iface/function value 前需要先收敛类型布局边界。
 
 - 2026-06-19: 已拆分 LLVM 后端类型布局：新增 compiler/llvm_layout.py，承接 LLVM 基础/聚合类型常量、llvm_type、sizeof/align 计算以及 struct/enum/iface 共享布局表；LLVMCodegen 保留 sizeof/align 薄代理，StringEmitter 与 MapEmitter 改用统一布局常量。语言行为边界不变，design.md 无需更新。验证：python -m py_compile compiler/llvm_codegen.py compiler/llvm_context.py compiler/llvm_string.py compiler/llvm_map.py compiler/llvm_layout.py；python -m pytest tests/test_llvm_backend.py -q 通过 46 passed, 1 skipped；python tests/test_language_cases.py 通过 254/254；python tests/test_stdlib.py 通过 60/60；python -m pytest tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q 通过 42 passed。
+
+- 2026-06-19: 预备做 basedpyright 第一轮降噪：显式声明 AST/pass 动态属性，修正少量明显可空路径，并新增保守 basedpyright 配置。why：编辑器暴露大量静态建模缺口，先把真实结构债作为雷达而非 CI 门禁处理，不改变语言行为。
+
+- 2026-06-19: 已完成 basedpyright 第一轮降噪：新增 pyrightconfig.json，仅检查 compiler 并关闭 Unknown/Any 等当前非阻塞噪音；AST 节点显式声明 type/fallible/closure_id/_narrowed_vars/overload 等 pass 间属性，SymbolTable 初始化方法/函数表，编译管线用 _require_ast 收窄解析后 SourceFile.ast，并修复 closure_id 默认 None 后的收集哨兵。语言行为边界不变，design.md 无需更新。验证：python tests/test_language_cases.py 通过 254/254；python tests/test_stdlib.py 通过 60/60；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q 通过 89 passed, 1 skipped；npx --yes basedpyright --outputjson 从 737 errors/6198 warnings 降至 522 errors/0 warnings。

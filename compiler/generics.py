@@ -218,7 +218,7 @@ def monomorphize(program: Program) -> Program:
                     and n.obj.name in generic_funcs):
                 args = [rewrite_type(a) for a in type_args]
                 request_func(n.obj.name, args)
-                n.__class__ = GenericFunctionValue
+                n.__class__ = GenericFunctionValue  # pyright: ignore[reportAttributeAccessIssue]
                 n.name = _instance_name(n.obj.name, args)
                 n.type_args = []
                 if hasattr(n, "obj"):

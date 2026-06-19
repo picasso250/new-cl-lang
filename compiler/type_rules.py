@@ -192,6 +192,7 @@ class TypeRules:
             if isinstance(r, GenericType):
                 if not isinstance(r.base, NamedType):
                     self.fail(f"size_of: unsupported type {t}", node)
+                    return
                 base = r.base.name
                 if base != "map":
                     self.fail(f"size_of: unknown type {base}", node)

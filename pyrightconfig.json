@@ -1,0 +1,24 @@
+{
+  "include": ["compiler"],
+  "exclude": [
+    "**/__pycache__",
+    ".pytest_cache",
+    "build",
+    "processed"
+  ],
+  "pythonVersion": "3.12",
+  "typeCheckingMode": "standard",
+  "reportAny": "none",
+  "reportExplicitAny": "none",
+  "reportMissingParameterType": "none",
+  "reportMissingTypeArgument": "none",
+  "reportUnknownArgumentType": "none",
+  "reportUnknownLambdaType": "none",
+  "reportUnknownMemberType": "none",
+  "reportUnknownParameterType": "none",
+  "reportUnknownVariableType": "none",
+  "reportUnusedCallResult": "none",
+  "reportUnusedImport": "none",
+  "reportUnusedParameter": "none",
+  "reportPrivateUsage": "none"
+}

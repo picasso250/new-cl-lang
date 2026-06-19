@@ -40,6 +40,9 @@ class SymbolTable:
         self._struct_embeds: dict[str, dict[str, str]] = {}
         self._enums: dict[str, set[str]] = {}  # enum名 → variants
         self._ifaces: dict[str, dict] = {}
+        self._methods = {}  # {type_name: {method_name: (ret_type, [(param, type)])}}
+        self._functions = {}  # {function_name: (ret_type, [(param, type)])}
+        self._extern_functions = set()
 
     def push_scope(self):
         self._scopes.append({})
@@ -109,11 +112,6 @@ def build_symbol_table(program: "Program") -> SymbolTable:
         ArrayLiteral, IndexAccess, MethodCall, FieldAccess, StructLiteral, Defer, FallibleOp
     )
     table = SymbolTable()
-
-    table._methods = {}  # {type_name: {method_name: (ret_type, [(param, type)])}}
-    table._functions = {}  # {function_name: (ret_type, [(param, type)])}
-    table._extern_functions = set()
-    table._struct_embeds = {}
 
     def walk_stmts(stmts: list):
         for stmt in stmts:

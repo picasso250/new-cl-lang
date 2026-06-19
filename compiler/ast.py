@@ -1,8 +1,18 @@
 """AST 节点定义。"""
 
+from __future__ import annotations
+
+from typing import Any
+
 
 class Node:
-    pass
+    type: str | None
+    span: tuple[int, int] | None
+    source_file: Any
+    generic_type_args: list[Any]
+    generic_type_args_candidate: list[Any]
+    is_capture: bool
+    capture_type: str | None
 
 
 class Program(Node):
@@ -29,6 +39,7 @@ class VariableDeclaration(Node):
         self.name = name
         self.initializer = initializer
         self.annotation = annotation
+        self.type: str | None = None
 
     def __repr__(self):
         t = f": {self.annotation}" if self.annotation else ""
@@ -50,6 +61,9 @@ class Assignment(Node):
         self.target = target
         self.expr = expr
         self.op = op
+        self.overload_method: str | None = None
+        self.overload_receiver_path: list[str] = []
+        self.overload_receiver_base: str | None = None
 
     def __repr__(self):
         return f"Assign({self.target} {self.op} {self.expr})"
@@ -69,6 +83,7 @@ class Block(Node):
     """{ statement* }"""
     def __init__(self, statements: list):
         self.statements = statements
+        self._narrowed_vars: dict[str, str] | None = None
 
     def __repr__(self):
         return f"Block({self.statements})"
@@ -129,7 +144,7 @@ class IfaceDecl(Node):
     def __init__(self, name: str, methods: list, embeds: list[str] | None = None):
         self.name = name
         self.methods = methods  # [(name, [(param, type), ...], return_type), ...]
-        self.embeds = embeds or []
+        self.embeds: list[Any] = embeds or []
 
     def __repr__(self):
         ms = ', '.join(f'{n}({ps}): {rt}' for n, ps, rt in self.methods)
@@ -152,6 +167,7 @@ class ExternBlock(Node):
     def __init__(self, lib: str | None, functions: list):
         self.lib = lib
         self.functions = functions
+        self.trusted_stdlib = False
 
     def __repr__(self):
         lib = f'"{self.lib}"' if self.lib is not None else "<default>"
@@ -190,6 +206,7 @@ class EnumRef(Node):
     def __init__(self, enum_name: str, variant: str):
         self.enum_name = enum_name
         self.variant = variant
+        self.type: str | None = None
 
     def __repr__(self):
         return f"EnumRef({self.enum_name}::{self.variant})"
@@ -198,9 +215,10 @@ class EnumRef(Node):
 class StructLiteral(Node):
     """Name { field: value, ... }  或  new Name { field: value, ... }"""
     def __init__(self, name: str, fields: list, heap: bool = False):
-        self.name = name
+        self.name: Any = name
         self.fields = fields  # [(name, expr), ...]
         self.heap = heap
+        self.type: str | None = None
 
     def __repr__(self):
         fs = ', '.join(f'{n}: {v}' for n, v in self.fields)
@@ -213,6 +231,7 @@ class FieldAccess(Node):
     def __init__(self, obj, field: str):
         self.obj = obj
         self.field = field
+        self.type: str | None = None
 
     def __repr__(self):
         return f"Field({self.obj}.{self.field})"
@@ -237,6 +256,7 @@ class ArrayLiteral(Node):
         self.length = length
         self.elem_type = elem_type
         self.elements = elements
+        self.type: str | None = None
 
     def __repr__(self):
         es = ', '.join(str(e) for e in self.elements)
@@ -248,6 +268,7 @@ class SliceLiteral(Node):
     def __init__(self, elem_type: str, elements: list):
         self.elem_type = elem_type
         self.elements = elements
+        self.type: str | None = None
 
     def __repr__(self):
         es = ', '.join(str(e) for e in self.elements)
@@ -259,6 +280,9 @@ class IndexAccess(Node):
     def __init__(self, obj, index):
         self.obj = obj
         self.index = index
+        self.name: str | None = None
+        self.type_args: list[Any] = []
+        self.type: str | None = None
 
     def __repr__(self):
         return f"Index({self.obj}[{self.index}])"
@@ -270,6 +294,7 @@ class SliceExpr(Node):
         self.array = array
         self.start = start  # None 表示 [:end]
         self.end = end      # None 表示 [start:]
+        self.type: str | None = None
 
     def __repr__(self):
         s = str(self.start) if self.start else ""
@@ -303,7 +328,11 @@ class FunctionDeclaration(Node):
                  return_type_explicit: bool = False, type_params: list[str] | None = None,
                  type_param_constraints: dict[str, str] | None = None):
         self.name = name
-        self.extern_symbol = None
+        self.extern_symbol: Any = None
+        self.extern_lib: Any = None
+        self.is_extern = False
+        self.trusted_stdlib = False
+        self.fallible = False
         self.params = params   # [Param, ...]
         self.return_type = return_type
         self.return_type_explicit = return_type_explicit
@@ -330,6 +359,9 @@ class FunctionExpr(Node):
         self.return_type_explicit = return_type_explicit
         self.body = body
         self.captures = []  # [(name, type), ...] filled by typecheck
+        self.type: str | None = None
+        self.fallible = False
+        self.closure_id: int | None = None
 
     def __repr__(self):
         p = ', '.join(str(param) for param in self.params)
@@ -341,7 +373,9 @@ class GenericFunctionValue(Node):
     """foo[T] as a first-class function value after monomorphization."""
     def __init__(self, name: str, type_args: list[str] | None = None):
         self.name = name
-        self.type_args = type_args or []
+        self.type_args: list[Any] = type_args or []
+        self.type: str | None = None
+        self.fallible = False
 
     def __repr__(self):
         args = f"[{','.join(self.type_args)}]" if self.type_args else ""
@@ -362,6 +396,7 @@ class FallibleOp(Node):
     def __init__(self, expr, op: str):
         self.expr = expr
         self.op = op
+        self.type: str | None = None
 
     def __repr__(self):
         return f"FallibleOp({self.expr} {self.op})"
@@ -375,6 +410,7 @@ class IfExpr(Node):
         self.condition = condition
         self.then_block = then_block
         self.else_block = else_block
+        self.type: str | None = None
 
     def __repr__(self):
         e = f" else {self.else_block}" if self.else_block else ""
@@ -385,6 +421,7 @@ class BlockExpr(Node):
     """{ statements; tail_expr } 作为表达式。"""
     def __init__(self, block: Block):
         self.block = block
+        self.type: str | None = None
 
     def __repr__(self):
         return f"BlockExpr({self.block})"
@@ -395,6 +432,7 @@ class MatchExpr(Node):
     def __init__(self, scrutinee, arms: list):
         self.scrutinee = scrutinee
         self.arms = arms  # [(pattern_expr | None, body_expr), ...]; None 表示 else
+        self.type: str | None = None
 
     def __repr__(self):
         arms = ', '.join(f"{p if p is not None else 'else'} -> {b}" for p, b in self.arms)
@@ -403,6 +441,7 @@ class MatchExpr(Node):
 class StringLiteral(Node):
     def __init__(self, value: str):
         self.value = value
+        self.type: str | None = None
 
     def __repr__(self):
         return f'String("{self.value}")'
@@ -412,6 +451,7 @@ class InterpolatedString(Node):
     """String with literal/expression parts."""
     def __init__(self, parts: list):
         self.parts = parts
+        self.type: str | None = None
 
     def __repr__(self):
         return f"InterpolatedString({self.parts})"
@@ -420,6 +460,7 @@ class InterpolatedString(Node):
 class RuneLiteral(Node):
     def __init__(self, value: int):
         self.value = value
+        self.type: str | None = None
 
     def __repr__(self):
         return f"Rune({self.value})"
@@ -429,6 +470,7 @@ class IntegerLiteral(Node):
     def __init__(self, value: int, suffix_type: str | None = None):
         self.value = value
         self.suffix_type = suffix_type
+        self.type: str | None = None
 
     def __repr__(self):
         suffix = self.suffix_type or ""
@@ -439,6 +481,7 @@ class FloatLiteral(Node):
     def __init__(self, value: str, suffix_type: str | None = None):
         self.value = value
         self.suffix_type = suffix_type
+        self.type: str | None = None
 
     def __repr__(self):
         suffix = self.suffix_type or ""
@@ -448,12 +491,16 @@ class FloatLiteral(Node):
 class BoolLiteral(Node):
     def __init__(self, value: bool):
         self.value = value
+        self.type: str | None = None
 
     def __repr__(self):
         return "Bool(true)" if self.value else "Bool(false)"
 
 
 class NilLiteral(Node):
+    def __init__(self):
+        self.type: str | None = None
+
     def __repr__(self):
         return "Nil"
 
@@ -463,6 +510,10 @@ class BinaryOp(Node):
         self.left = left
         self.op = op
         self.right = right
+        self.type: str | None = None
+        self.overload_method: str | None = None
+        self.overload_receiver_path: list[str] = []
+        self.overload_receiver_base: str | None = None
 
     def __repr__(self):
         return f"BinOp({self.left} {self.op} {self.right})"
@@ -473,6 +524,7 @@ class UnaryOp(Node):
     def __init__(self, op: str, operand):
         self.op = op
         self.operand = operand
+        self.type: str | None = None
 
     def __repr__(self):
         return f"UnaryOp({self.op}{self.operand})"
@@ -482,7 +534,11 @@ class FunctionCall(Node):
     def __init__(self, name: str, args: list, type_args: list[str] | None = None):
         self.name = name
         self.args = args
-        self.type_args = type_args or []
+        self.type_args: list[Any] = type_args or []
+        self.type: str | None = None
+        self.fallible = False
+        self.is_closure_call = False
+        self.closure_param_types: list[Any] = []
 
     def __repr__(self):
         return f"Call({self.name}, {self.args})"
@@ -491,7 +547,8 @@ class FunctionCall(Node):
 class SizeOfType(Node):
     """size_of(T) compile-time builtin expression."""
     def __init__(self, type_name: str):
-        self.type_name = type_name
+        self.type_name: Any = type_name
+        self.type: str | None = None
 
     def __repr__(self):
         return f"SizeOf({self.type_name})"
@@ -503,6 +560,9 @@ class MethodCall(Node):
         self.obj = obj
         self.method = method
         self.args = args
+        self.type: str | None = None
+        self.fallible = False
+        self.promoted_receiver_base: str | None = None
 
     def __repr__(self):
         as_ = ', '.join(str(a) for a in self.args)
@@ -512,6 +572,9 @@ class MethodCall(Node):
 class Identifier(Node):
     def __init__(self, name: str):
         self.name = name
+        self.type: str | None = None
+        self.is_capture = False
+        self.capture_type: str | None = None
 
     def __repr__(self):
         return f"Id({self.name})"

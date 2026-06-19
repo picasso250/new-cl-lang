@@ -76,7 +76,7 @@ def _collect_llvm_inputs(program) -> _LLVMInputs:
 
     def collect_closure_expr(node):
         if isinstance(node, FunctionExpr):
-            if not hasattr(node, "closure_id"):
+            if getattr(node, "closure_id", None) is None:
                 node.closure_id = len(result.closures)
                 result.closures.append(node)
             collect_top_level(node.body.statements)

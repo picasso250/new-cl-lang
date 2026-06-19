@@ -21,6 +21,12 @@ STDLIB_DIR = os.path.join(ROOT_DIR, "stdlib")
 STDLIB_SOURCE_MODULES = {"fs", "os", "strings", "strconv", "math", "sort", "linux"}
 
 
+def _require_ast(source_file: SourceFile) -> Program:
+    if source_file.ast is None:
+        raise RuntimeError(f"source file has not been parsed: {source_file.path}")
+    return source_file.ast
+
+
 def _expand_type_str(t: str, aliases: dict[str, str], stack: list[str]) -> str:
     """递归展开类型字符串中的别名。"""
     if not isinstance(t, str):
@@ -45,15 +51,16 @@ def _expand_type_aliases_in_module(module: Module):
 
     # 第一遍：收集别名定义并验证
     for source_file in module.files:
+        ast = _require_ast(source_file)
         remaining = []
-        for stmt in source_file.ast.statements:
+        for stmt in ast.statements:
             if isinstance(stmt, TypeAlias):
                 if stmt.name in aliases:
                     raise RuntimeError(f"duplicate type alias '{stmt.name}'")
                 aliases[stmt.name] = stmt.target_type
             else:
                 remaining.append(stmt)
-        source_file.ast.statements = remaining
+        ast.statements = remaining
 
     if not aliases:
         return
@@ -114,7 +121,8 @@ def _expand_type_aliases_in_module(module: Module):
                 walk(value)
 
     for source_file in module.files:
-        for stmt in source_file.ast.statements:
+        ast = _require_ast(source_file)
+        for stmt in ast.statements:
             walk(stmt)
 
 
@@ -136,7 +144,8 @@ def parse_module_sources(sources: "list[tuple[str, str]]", *, trusted_stdlib: bo
     for source_file, tokens in zip(module.files, token_lists):
         source_file.ast = parse(tokens, imported_modules)
         if trusted_stdlib:
-            for stmt in source_file.ast.statements:
+            ast = _require_ast(source_file)
+            for stmt in ast.statements:
                 if isinstance(stmt, ExternBlock):
                     stmt.trusted_stdlib = True
                     for fn in stmt.functions:
@@ -149,7 +158,8 @@ def parse_module_sources(sources: "list[tuple[str, str]]", *, trusted_stdlib: bo
 def _module_imports(module: Module) -> list[ImportDecl]:
     imports = []
     for source_file in module.files:
-        for stmt in source_file.ast.statements:
+        ast = _require_ast(source_file)
+        for stmt in ast.statements:
             if isinstance(stmt, ImportDecl):
                 imports.append(stmt)
     return imports
@@ -158,7 +168,8 @@ def _module_imports(module: Module) -> list[ImportDecl]:
 def _top_names(module: Module) -> set[str]:
     names = set()
     for source_file in module.files:
-        for stmt in source_file.ast.statements:
+        ast = _require_ast(source_file)
+        for stmt in ast.statements:
             if isinstance(stmt, FunctionDeclaration):
                 if not stmt.receiver_name:
                     names.add(stmt.name)
@@ -258,7 +269,8 @@ def _rewrite_module_names(module: Module, entry: bool):
                 walk(value)
 
     for source_file in module.files:
-        for stmt in source_file.ast.statements:
+        ast = _require_ast(source_file)
+        for stmt in ast.statements:
             walk(stmt)
 
 
