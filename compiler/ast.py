@@ -337,6 +337,17 @@ class FunctionExpr(Node):
         return f"FunExpr({p}{r} {self.body})"
 
 
+class GenericFunctionValue(Node):
+    """foo[T] as a first-class function value after monomorphization."""
+    def __init__(self, name: str, type_args: list[str] | None = None):
+        self.name = name
+        self.type_args = type_args or []
+
+    def __repr__(self):
+        args = f"[{','.join(self.type_args)}]" if self.type_args else ""
+        return f"GenericFunValue({self.name}{args})"
+
+
 class Return(Node):
     """ret expr;"""
     def __init__(self, expr = None):

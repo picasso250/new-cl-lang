@@ -166,6 +166,52 @@ struct Box[T] { value: T }
         assert result.stdout.strip() == "7\nok"
 
 
+def test_import_generic_function_value_run():
+    with tempfile.TemporaryDirectory() as tmp:
+        main = os.path.join(tmp, "main")
+        order = os.path.join(tmp, "order")
+        os.mkdir(main)
+        os.mkdir(order)
+        write_file(os.path.join(main, "main.nc"), """import io
+import order
+fun apply(f: fun(i32, i32) bool, a: i32, b: i32): bool { f(a, b) }
+fun main() {
+  io.println(apply(order.less[i32], 1, 2))
+  io.println(apply(order.less[i32], 3, 2))
+}
+""")
+        write_file(os.path.join(order, "order.nc"), """import types
+fun less[T types.Ord](a: T, b: T): bool { a < b }
+""")
+
+        result = run_nc("run", main)
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "1\n0"
+
+
+def test_import_private_generic_function_value_error():
+    with tempfile.TemporaryDirectory() as tmp:
+        main = os.path.join(tmp, "main")
+        order = os.path.join(tmp, "order")
+        os.mkdir(main)
+        os.mkdir(order)
+        write_file(os.path.join(main, "main.nc"), """import order
+fun main() {
+  let f = order._less[i32]
+}
+""")
+        write_file(os.path.join(order, "order.nc"), """import types
+fun _less[T types.Ord](a: T, b: T): bool { a < b }
+""")
+
+        result = run_nc("compile", main)
+
+        assert result.returncode != 0
+        assert "symbol 'order._less" in result.stderr
+        assert "is private" in result.stderr
+
+
 def test_import_iface_and_concrete_satisfaction_run():
     with tempfile.TemporaryDirectory() as tmp:
         main = os.path.join(tmp, "main")

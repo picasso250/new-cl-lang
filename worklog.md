@@ -154,3 +154,7 @@
 - 2026-06-19: 预备将标准库 sort 从稳定插入排序改为不稳定 intro sort，并删除新增 sorted API 计划。why：排序默认能力应更接近标准库级复杂度保证，同时用 NC 源码验证递归、分区和堆排序实现便利性。
 
 - 2026-06-19: 已将标准库 sort 改为不稳定 intro sort：默认排序和自定义比较排序使用三数取中快排主路径、深度耗尽堆排序兜底、小分区插入排序收尾；未新增 sorted/is_sorted API，并修复同模块私有符号访问检查以保持 sort helper 私有。同步 docs/stdlib.md，新增 sort 边界与私有 helper case。验证：python tests/test_stdlib.py 通过 60/60；python tests/test_language_cases.py 通过 249/249；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q 通过 86 passed, 1 skipped。
+
+- 2026-06-19: 预备补齐泛型函数值与修复索引表达式解析：支持已实例化泛型函数作为 fun 值，修复 items[j - 1] 一类索引误判，并用 sort 复用 case 验证泛型与函数值闭环。why：intro sort 暴露出泛型、函数值和 parser 的组合边界尚未闭环，需要以标准库真实用法推动最小语言能力。
+
+- 2026-06-19: 已补齐实例化泛型函数值与索引表达式解析：新增 oo[T]/module.foo[T] 函数值表达式，monomorphize 触发实例化，typecheck 生成 un(...) R 类型，LLVM 为具名函数值生成无捕获 thunk；修复 items[j - 1]/items[lo + root] 解析误判。sort.sort 已改为通过 _sort_less_ord[T] 复用 sort.by。同步 design.md 与 docs/generics.md。验证：python tests/test_stdlib.py 通过 60/60；python tests/test_language_cases.py 通过 254/254；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q 通过 88 passed, 1 skipped。

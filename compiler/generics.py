@@ -5,7 +5,10 @@ from __future__ import annotations
 import copy
 import re
 
-from compiler.ast import FunctionCall, FunctionDeclaration, Program, SizeOfType, StructDecl, StructLiteral
+from compiler.ast import (
+    FunctionCall, FunctionDeclaration, GenericFunctionValue, Identifier, IndexAccess,
+    Program, SizeOfType, StructDecl, StructLiteral,
+)
 from compiler.constraints import satisfies_constraint
 from compiler.type_ref import parse_type_app, rewrite_type as rewrite_type_ref
 
@@ -75,6 +78,10 @@ def _substitute_node(node, subst: dict[str, str]):
         elif isinstance(n, FunctionCall):
             _normalize_call_type_args(n)
             n.type_args = [_sub_type(t, subst) for t in n.type_args]
+        elif isinstance(n, GenericFunctionValue):
+            n.type_args = [_sub_type(t, subst) for t in n.type_args]
+        elif hasattr(n, "generic_type_args_candidate"):
+            n.generic_type_args_candidate = [_sub_type(t, subst) for t in n.generic_type_args_candidate]
         elif isinstance(n, SizeOfType):
             n.type_name = _sub_type(n.type_name, subst)
         for key in ("annotation", "elem_type"):
@@ -197,6 +204,29 @@ def monomorphize(program: Program) -> Program:
                 request_func(n.name, args)
                 n.name = _instance_name(n.name, args)
                 n.type_args = []
+        elif isinstance(n, GenericFunctionValue):
+            if not n.type_args:
+                return
+            args = [rewrite_type(a) for a in n.type_args]
+            request_func(n.name, args)
+            n.name = _instance_name(n.name, args)
+            n.type_args = []
+        elif isinstance(n, IndexAccess):
+            type_args = getattr(n, "generic_type_args_candidate", None)
+            if (type_args
+                    and isinstance(n.obj, Identifier)
+                    and n.obj.name in generic_funcs):
+                args = [rewrite_type(a) for a in type_args]
+                request_func(n.obj.name, args)
+                n.__class__ = GenericFunctionValue
+                n.name = _instance_name(n.obj.name, args)
+                n.type_args = []
+                if hasattr(n, "obj"):
+                    delattr(n, "obj")
+                if hasattr(n, "index"):
+                    delattr(n, "index")
+                if hasattr(n, "generic_type_args_candidate"):
+                    delattr(n, "generic_type_args_candidate")
         elif isinstance(n, SizeOfType):
             n.type_name = rewrite_type(n.type_name)
         for key in ("annotation", "elem_type"):

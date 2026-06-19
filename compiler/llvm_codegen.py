@@ -14,7 +14,7 @@ from llvmlite import binding, ir
 from compiler.ast import (
     ArrayLiteral, Assignment, Update, BinaryOp, Block, BlockExpr, BoolLiteral, Break,
     Defer, ExternBlock, ExpressionStatement, EnumDecl, EnumRef, FieldAccess, FloatLiteral, FunctionCall,
-    FunctionExpr, ErrReturn, FallibleOp,
+    FunctionExpr, GenericFunctionValue, ErrReturn, FallibleOp,
     ForIn, FunctionDeclaration, Identifier, IfExpr, IfaceDecl, ImportDecl, IndexAccess, IntegerLiteral,
     MatchExpr, MethodCall, NilLiteral, Return, SizeOfType, SliceExpr, SliceLiteral, StringLiteral, InterpolatedString, RuneLiteral, StructDecl,
     StructLiteral, UnaryOp, VariableDeclaration, ForCondition,
@@ -324,6 +324,7 @@ class LLVMCodegen:
         self.current_return_slot = None
         self.iface_vtables: dict[tuple[str, str], ir.GlobalVariable] = {}
         self.iface_thunks: dict[tuple[str, str, str], ir.Function] = {}
+        self.function_value_thunks: dict[str, ir.Function] = {}
 
     def generate(self, program) -> str:
         collected = _collect_llvm_inputs(program)
@@ -1067,6 +1068,8 @@ class LLVMCodegen:
             return self.emit_method_call(node)
         if isinstance(node, FunctionExpr):
             return self.emit_function_expr(node)
+        if isinstance(node, GenericFunctionValue):
+            return self.emit_generic_function_value(node)
         raise NotImplementedError(f"LLVM backend does not support expression: {type(node).__name__}")
 
     def emit_block_expr(self, node: BlockExpr):
@@ -1598,6 +1601,38 @@ class LLVMCodegen:
         value = self.builder.insert_value(value, fn.bitcast(closure_type.elements[0]), [0], name="closure.call")
         value = self.builder.insert_value(value, env_ptr, [1], name="closure.env")
         return value
+
+    def emit_generic_function_value(self, node: GenericFunctionValue):
+        closure_type = llvm_type(node.type)
+        thunk = self.function_value_thunk(node.name, node.type)
+        value = ir.Constant(closure_type, ir.Undefined)
+        value = self.builder.insert_value(value, thunk.bitcast(closure_type.elements[0]), [0], name="fn.value.call")
+        value = self.builder.insert_value(value, ir.Constant(I8PTR, None), [1], name="fn.value.env")
+        return value
+
+    def function_value_thunk(self, fn_name: str, fn_value_type: str):
+        if fn_name in self.function_value_thunks:
+            return self.function_value_thunks[fn_name]
+        parsed = parse_fn_type(fn_value_type)
+        if parsed is None:
+            raise RuntimeError(f"{fn_name} is not a function value")
+        param_types, ret_type = parsed
+        thunk_name = f"__nc_fnval_{safe_user_ident(fn_name)}"
+        thunk_type = ir.FunctionType(llvm_type(ret_type), [I8PTR] + [llvm_type(t) for t in param_types])
+        thunk = ir.Function(self.module, thunk_type, name=thunk_name)
+        self.function_value_thunks[fn_name] = thunk
+
+        block = thunk.append_basic_block("entry")
+        saved_builder = self.builder
+        self.builder = ir.IRBuilder(block)
+        target = self.module.globals[self.function_symbol(self.fn_decls[fn_name])]
+        result = self.builder.call(target, [arg for arg in thunk.args[1:]])
+        if ret_type == "void":
+            self.builder.ret_void()
+        else:
+            self.builder.ret(result)
+        self.builder = saved_builder
+        return thunk
 
     def emit_closure_env(self, node: FunctionExpr):
         captures = getattr(node, "captures", [])

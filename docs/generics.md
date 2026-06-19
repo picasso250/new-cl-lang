@@ -6,9 +6,12 @@
 
 - 泛型函数和泛型 struct 使用显式类型参数：`fun id[T](x: T): T`、`struct Box[T] { value: T }`。
 - 调用和构造必须显式写类型实参：`id[i32](1)`、`Box[str] { value: "x" }`。
+- 已实例化泛型函数可作为函数值：`let f: fun(i32) i32 = id[i32]`。
 - 默认约束是 `any`。
 - 编译器识别的标准约束名：`types.Eq`、`types.Ord`、`types.Hash`、`types.Zero`。
 - `types.Cmp` 不是当前语言边界。
+- 不支持未实例化的泛型函数模板值；`id` 本身不能当作函数值，必须写完整类型实参。
+- 递归函数需要显式返回类型；本边界也适用于递归泛型函数。
 
 ## 约束族
 

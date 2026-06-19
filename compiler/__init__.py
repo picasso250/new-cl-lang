@@ -10,7 +10,7 @@ from compiler.llvm_codegen import build_llvm_ir, generate_llvm_ir, run_llvm_ir
 from compiler.source import Module, SourceFile, annotate_source_file, module_name_from_sources
 from compiler.ast import (
     Program, ImportDecl, FunctionDeclaration, StructDecl, IfaceDecl, EnumDecl, FunctionCall, SizeOfType,
-    Identifier, StructLiteral, EnumRef, TypeAlias, FunctionExpr, ExternBlock,
+    GenericFunctionValue, Identifier, StructLiteral, EnumRef, TypeAlias, FunctionExpr, ExternBlock,
 )
 from compiler.type_ref import rewrite_type
 from compiler.target import get_target
@@ -88,6 +88,10 @@ def _expand_type_aliases_in_module(module: Module):
             node.name = expand_type(node.name)
         elif isinstance(node, FunctionCall):
             node.type_args = [expand_type(a) for a in node.type_args]
+        elif isinstance(node, GenericFunctionValue):
+            node.type_args = [expand_type(a) for a in node.type_args]
+        elif hasattr(node, "generic_type_args_candidate"):
+            node.generic_type_args_candidate = [expand_type(a) for a in node.generic_type_args_candidate]
         elif isinstance(node, SizeOfType):
             node.type_name = expand_type(node.type_name)
         for key in ("annotation", "elem_type"):
@@ -224,6 +228,11 @@ def _rewrite_module_names(module: Module, entry: bool):
                 param.type = _qual_type(param.type, module.name, local_names)
         elif isinstance(node, FunctionCall):
             node.name = q(node.name)
+        elif isinstance(node, GenericFunctionValue):
+            node.name = q(node.name)
+            node.type_args = [_qual_type(a, module.name, local_names) for a in node.type_args]
+        elif hasattr(node, "generic_type_args_candidate"):
+            node.generic_type_args_candidate = [_qual_type(a, module.name, local_names) for a in node.generic_type_args_candidate]
         elif isinstance(node, SizeOfType):
             node.type_name = _qual_type(node.type_name, module.name, local_names)
         elif isinstance(node, Identifier):

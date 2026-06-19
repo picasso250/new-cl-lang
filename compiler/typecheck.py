@@ -23,7 +23,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         StructDecl, IfaceDecl, StructLiteral, FieldAccess,
         EnumDecl, EnumRef, ForIn,
         IfExpr, BlockExpr, MatchExpr, IntegerLiteral, FloatLiteral, StringLiteral, InterpolatedString, RuneLiteral, BoolLiteral, NilLiteral, BinaryOp, UnaryOp, FunctionCall, SizeOfType, Identifier,
-        ExternBlock, FunctionExpr,
+        ExternBlock, FunctionExpr, GenericFunctionValue,
         ArrayLiteral, SliceLiteral, IndexAccess, SliceExpr, MethodCall, Defer, Break, FallibleOp
     )
 
@@ -767,6 +767,19 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             node.type = fn_type([ptype for _pname, ptype in node.params], current_return_type)
             current_return_type = prev_return_type
             symtab.pop_scope()
+        elif isinstance(node, GenericFunctionValue):
+            require_public_qualified(node.name, node)
+            funcs = getattr(symtab, "_functions", {})
+            if node.name not in funcs:
+                fail(f"generic function value {node.name}: function not found", node)
+            ret_type, params = funcs[node.name]
+            if ret_type is None:
+                ret_type = resolve_function_return(node.name, node)
+            fn_node = function_decls.get(node.name)
+            if bool(getattr(fn_node, "fallible", False)):
+                fail(f"generic function value {node.name}: fallible functions cannot be used as function values", node)
+            node.type = fn_type([ptype for _pname, ptype in params], ret_type)
+            node.fallible = False
         elif isinstance(node, IfExpr):
             walk_expr(node.condition)
             require_type(node.condition.type, "bool", "if condition", node.condition)
@@ -1295,6 +1308,8 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             return mark_direct_fallible(node.operand)
         if isinstance(node, FunctionCall):
             return any(mark_direct_fallible(arg) for arg in node.args)
+        if isinstance(node, GenericFunctionValue):
+            return False
         if isinstance(node, MethodCall):
             return mark_direct_fallible(node.obj) or any(mark_direct_fallible(arg) for arg in node.args)
         if isinstance(node, (ArrayLiteral, SliceLiteral)):

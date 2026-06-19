@@ -588,21 +588,35 @@ class Parser:
                     raise ParseError("Only named functions and closure variables can be called")
             elif self.peek().kind == TokenKind.LBRACKET:
                 save = self.pos
-                if isinstance(expr, Identifier) and self._token_after_matching_bracket(self.pos).kind == TokenKind.LPAREN:
-                    type_args = self._parse_type_arg_list()
-                    expr.generic_type_args = type_args
-                else:
+                type_args = None
+                if isinstance(expr, Identifier):
+                    try:
+                        type_args = self._parse_type_arg_list()
+                    except ParseError:
+                        type_args = None
+                    after_type_args = self.peek().kind if type_args is not None else None
                     self.pos = save
+                    if type_args is not None and after_type_args == TokenKind.LPAREN:
+                        self._parse_type_arg_list()
+                        expr.generic_type_args = type_args
+                        continue
+                    if type_args is not None and self._matching_bracket_contains(save, TokenKind.COMMA):
+                        self._parse_type_arg_list()
+                        expr = GenericFunctionValue(expr.name, type_args)
+                        continue
+                self.advance()
+                first = self.parse_expression()
+                if self.peek().kind == TokenKind.COLON:
                     self.advance()
-                    first = self.parse_expression()
-                    if self.peek().kind == TokenKind.COLON:
-                        self.advance()
-                        end = None if self.peek().kind == TokenKind.RBRACKET else self.parse_expression()
-                        self.expect(TokenKind.RBRACKET)
-                        expr = SliceExpr(expr, first, end)
-                    else:
-                        self.expect(TokenKind.RBRACKET)
-                        expr = IndexAccess(expr, first)
+                    end = None if self.peek().kind == TokenKind.RBRACKET else self.parse_expression()
+                    self.expect(TokenKind.RBRACKET)
+                    expr = SliceExpr(expr, first, end)
+                else:
+                    self.expect(TokenKind.RBRACKET)
+                    access = IndexAccess(expr, first)
+                    if type_args is not None:
+                        access.generic_type_args_candidate = type_args
+                    expr = access
             elif self.peek().kind == TokenKind.DOT:
                 start_pos = getattr(expr, "span", (self.peek().pos, self.peek().pos))[0]
                 self.advance()
@@ -622,6 +636,8 @@ class Parser:
                                 args.append(self.parse_expression())
                         self.expect(TokenKind.RPAREN)
                         expr = FunctionCall(qname, args, type_args)
+                    elif self.peek().kind not in (TokenKind.LBRACE,):
+                        expr = GenericFunctionValue(qname, type_args)
                     elif self.peek().kind == TokenKind.LBRACE:
                         self.advance()
                         fields = []
@@ -638,8 +654,6 @@ class Parser:
                                 fields.append((fname, fval))
                         self.expect(TokenKind.RBRACE)
                         expr = StructLiteral(f"{qname}[{','.join(type_args)}]", fields)
-                    else:
-                        raise ParseError("generic type application must be used in a call or struct literal")
                 elif self.peek().kind == TokenKind.LPAREN:
                     self.advance()
                     args = []
@@ -656,21 +670,6 @@ class Parser:
                     expr.span = (start_pos, self.tokens[self.pos - 1].pos)
                 else:
                     expr = FieldAccess(expr, field)
-            elif self.peek().kind == TokenKind.LBRACKET:
-                self.advance()
-                first = self.parse_expression()
-                # arr[start:end] 切片 vs arr[idx] 索引
-                if self.peek().kind == TokenKind.COLON:
-                    self.advance()
-                    if self.peek().kind == TokenKind.RBRACKET:
-                        end = None
-                    else:
-                        end = self.parse_expression()
-                    self.expect(TokenKind.RBRACKET)
-                    expr = SliceExpr(expr, first, end)
-                else:
-                    self.expect(TokenKind.RBRACKET)
-                    expr = IndexAccess(expr, first)
             elif self.peek().kind == TokenKind.QUESTIONQUESTION:
                 self.advance()
                 expr = FallibleOp(expr, "??")
@@ -698,6 +697,22 @@ class Parser:
                     return self.tokens[i + 1] if i + 1 < len(self.tokens) else self.tokens[i]
             i += 1
         return self.tokens[start_pos]
+
+    def _matching_bracket_contains(self, start_pos: int, target: TokenKind):
+        depth = 0
+        i = start_pos
+        while i < len(self.tokens):
+            kind = self.tokens[i].kind
+            if kind == TokenKind.LBRACKET:
+                depth += 1
+            elif kind == TokenKind.RBRACKET:
+                depth -= 1
+                if depth == 0:
+                    return False
+            elif depth == 1 and kind == target:
+                return True
+            i += 1
+        return False
 
     def parse_primary(self):
         t = self.peek()
