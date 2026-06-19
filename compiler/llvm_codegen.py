@@ -27,6 +27,7 @@ from compiler.llvm_layout import (
 )
 from compiler.names import safe_user_ident
 from compiler.ncrt import build_ncrt_obj, build_support_c_objs
+from compiler.llvm_function import FunctionEmitter
 from compiler.llvm_map import MapEmitter
 from compiler.llvm_string import StringEmitter
 from compiler.target import TargetSpec, get_target
@@ -247,6 +248,7 @@ class LLVMCodegen:
         self.iface_vtables: dict[tuple[str, str], ir.GlobalVariable] = {}
         self.iface_thunks: dict[tuple[str, str, str], ir.Function] = {}
         self.function_value_thunks: dict[str, ir.Function] = {}
+        self.function_emitter = FunctionEmitter(self)
         self.string_emitter = StringEmitter(self)
         self.map_emitter = MapEmitter(self, STRUCT_FIELDS, ENUM_VARIANTS, llvm_type)
 
@@ -333,196 +335,37 @@ class LLVMCodegen:
             resolve(name)
 
     def register_closure_envs(self, closures: list[FunctionExpr]):
-        self.closure_env_types.clear()
-        for closure in closures:
-            fields = [llvm_type(capture_type) for _name, capture_type in getattr(closure, "captures", [])]
-            if not fields:
-                fields = [ir.IntType(8)]
-            self.closure_env_types[closure.closure_id] = ir.LiteralStructType(fields)
+        return self.function_emitter.register_closure_envs(closures)
 
     def declare_function(self, fn: FunctionDeclaration):
-        name = self.function_symbol(fn)
-        is_fallible = bool(getattr(fn, "fallible", False)) and not getattr(fn, "is_extern", False) and fn.name != "main"
-        ret = ir.IntType(1) if is_fallible else (
-            ir.IntType(32) if fn.name == "main" and (fn.return_type or "void") == "void" else llvm_type(fn.return_type)
-        )
-        all_params = ([(fn.receiver_name, fn.receiver_type)] if fn.receiver_name else []) + fn.params
-        args = [ir.IntType(32), I8PTR.as_pointer()] if fn.name == "main" else []
-        if is_fallible:
-            if (fn.return_type or "void") != "void":
-                args.append(llvm_type(fn.return_type).as_pointer())
-            args.append(STR_TYPE.as_pointer())
-        args.extend([llvm_type(t) for _n, t in all_params])
-        fn_type = ir.FunctionType(ret, args)
-        existing = self.module.globals.get(name)
-        if existing is not None:
-            if getattr(existing, "function_type", None) != fn_type:
-                raise RuntimeError(f"extern symbol '{name}' declared with incompatible ABI")
-        else:
-            self.module.globals[name] = ir.Function(self.module, fn_type, name=name)
-        self.fn_decls[name] = fn
-        if not fn.receiver_name:
-            self.fn_decls[fn.name] = fn
+        return self.function_emitter.declare_function(fn)
 
     def function_symbol(self, fn: FunctionDeclaration):
-        if getattr(fn, "is_extern", False):
-            return getattr(fn, "extern_symbol", None) or fn.name
-        if fn.receiver_name:
-            receiver_type = fn.receiver_type.lstrip("*").lstrip("?")
-            return safe_user_ident(f"{receiver_type}_{fn.name}")
-        return safe_user_ident(fn.name)
+        return self.function_emitter.function_symbol(fn)
 
     def closure_symbol(self, closure: FunctionExpr):
-        return f"__nc_lambda_{closure.closure_id}"
+        return self.function_emitter.closure_symbol(closure)
 
     def declare_closure_function(self, closure: FunctionExpr):
-        ret = llvm_type(closure.return_type or "void")
-        args = [I8PTR] + [llvm_type(t) for _n, t in closure.params]
-        ir.Function(self.module, ir.FunctionType(ret, args), name=self.closure_symbol(closure))
+        return self.function_emitter.declare_closure_function(closure)
 
     def emit_closure_function(self, closure: FunctionExpr):
-        llvm_fn = self.module.globals[self.closure_symbol(closure)]
-        block = llvm_fn.append_basic_block("entry")
-        saved_builder, saved_func, saved_vars = self.builder, self.func, self.vars
-        saved_defer = (self.defer_sites, self.defer_stack_slot, self.defer_top_slot, self.emitting_defer)
-        saved_gc = (self.current_gc_mark, self.current_return_slot)
-        self.builder = ir.IRBuilder(block)
-        self.func = llvm_fn
-        self.vars = {}
-        self.init_defer_state()
-        self.init_gc_frame(is_main=False)
-        llvm_fn.args[0].name = "__nc_env"
-        env_type = self.closure_env_types[closure.closure_id]
-        env_ptr = self.builder.bitcast(llvm_fn.args[0], env_type.as_pointer(), name="closure.env.ptr")
-        env_slot = self.alloca_at_entry("__nc_env_slot", I8PTR)
-        self.builder.store(llvm_fn.args[0], env_slot)
-        self.root_slots_for_type(env_slot, f"*__nc_env_{closure.closure_id}")
-        for i, (capture_name, capture_type) in enumerate(getattr(closure, "captures", [])):
-            field_ptr = self.builder.gep(
-                env_ptr,
-                [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), i)],
-                inbounds=True,
-                name=f"capture.{safe_user_ident(capture_name)}.ptr",
-            )
-            self.vars[capture_name] = (field_ptr, capture_type)
-        for arg, (param_name, param_type) in zip(llvm_fn.args[1:], closure.params):
-            arg.name = safe_user_ident(param_name)
-            slot = self.alloca_at_entry(safe_user_ident(param_name), llvm_type(param_type))
-            self.builder.store(arg, slot)
-            self.vars[param_name] = (slot, param_type)
-            self.root_slots_for_type(slot, param_type)
-        if (closure.return_type or "void") != "void":
-            self.current_return_slot = self.alloca_at_entry("__nc_ret", llvm_type(closure.return_type))
-            self.root_slots_for_type(self.current_return_slot, closure.return_type)
-        self.emit_callable_body(closure.body, closure.return_type or "void", f"lambda {closure.closure_id}")
-        self.builder, self.func, self.vars = saved_builder, saved_func, saved_vars
-        self.defer_sites, self.defer_stack_slot, self.defer_top_slot, self.emitting_defer = saved_defer
-        self.current_gc_mark, self.current_return_slot = saved_gc
+        return self.function_emitter.emit_closure_function(closure)
 
     def emit_function(self, fn: FunctionDeclaration):
-        llvm_fn = self.module.globals[self.function_symbol(fn)]
-        block = llvm_fn.append_basic_block("entry")
-        saved_defer = (self.defer_sites, self.defer_stack_slot, self.defer_top_slot, self.emitting_defer)
-        saved_gc = (self.current_gc_mark, self.current_return_slot, self.current_error_slot, self.current_is_fallible)
-        self.builder = ir.IRBuilder(block)
-        self.func = llvm_fn
-        self.vars = {}
-        self.init_defer_state()
-        self.init_gc_frame(is_main=fn.name == "main")
-        all_params = ([(fn.receiver_name, fn.receiver_type)] if fn.receiver_name else []) + fn.params
-        llvm_args = list(llvm_fn.args)
-        self.current_is_fallible = bool(getattr(fn, "fallible", False)) and fn.name != "main"
-        if fn.name == "main":
-            llvm_args[0].name = "__nc_argc"
-            llvm_args[1].name = "__nc_argv"
-            self.init_os_args(llvm_args[0], llvm_args[1])
-            llvm_args = llvm_args[2:]
-        elif self.current_is_fallible:
-            if (fn.return_type or "void") != "void":
-                self.current_return_slot = llvm_args[0]
-                self.root_slots_for_type(self.current_return_slot, fn.return_type)
-                llvm_args = llvm_args[1:]
-            self.current_error_slot = llvm_args[0]
-            self.root_slots_for_type(self.current_error_slot, "error")
-            llvm_args = llvm_args[1:]
-        for arg, (param_name, param_type) in zip(llvm_args, all_params):
-            arg.name = safe_user_ident(param_name)
-            slot = self.alloca_at_entry(safe_user_ident(param_name), llvm_type(param_type))
-            self.builder.store(arg, slot)
-            self.vars[param_name] = (slot, param_type)
-            self.root_slots_for_type(slot, param_type)
-        if (fn.return_type or "void") != "void" and self.current_return_slot is None:
-            self.current_return_slot = self.alloca_at_entry("__nc_ret", llvm_type(fn.return_type))
-            self.root_slots_for_type(self.current_return_slot, fn.return_type)
-
-        self.emit_function_body(fn)
-        self.defer_sites, self.defer_stack_slot, self.defer_top_slot, self.emitting_defer = saved_defer
-        self.current_gc_mark, self.current_return_slot, self.current_error_slot, self.current_is_fallible = saved_gc
+        return self.function_emitter.emit_function(fn)
 
     def emit_function_body(self, fn: FunctionDeclaration):
-        self.emit_callable_body(fn.body, fn.return_type or "void", f"function {fn.name}", is_main=fn.name == "main")
+        return self.function_emitter.emit_function_body(fn)
 
     def emit_callable_body(self, body: Block, return_type: str, name: str, is_main: bool = False):
-        prev_return_type, prev_is_main = self.current_return_type, self.current_is_main
-        self.current_return_type = return_type
-        self.current_is_main = is_main
-        stmts = body.statements
-        if return_type != "void" and stmts and isinstance(stmts[-1], ExpressionStatement):
-            for stmt in stmts[:-1]:
-                self.emit_stmt(stmt)
-            if not self.builder.block.is_terminated:
-                value = self.emit_coerced_expr(stmts[-1].expr, return_type)
-                if self.current_return_slot is not None:
-                    self.builder.store(value, self.current_return_slot)
-                self.emit_success_return()
-            self.current_return_type, self.current_is_main = prev_return_type, prev_is_main
-            return
-        self.emit_block(body)
-        if not self.builder.block.is_terminated:
-            self.emit_deferred()
-            if is_main and return_type == "void":
-                self.emit_gc_rewind()
-                self.builder.ret(ir.Constant(ir.IntType(32), 0))
-            elif return_type == "void":
-                self.emit_success_return()
-            else:
-                raise RuntimeError(f"missing ret in {name}")
-        self.current_return_type, self.current_is_main = prev_return_type, prev_is_main
+        return self.function_emitter.emit_callable_body(body, return_type, name, is_main)
 
     def emit_success_return(self):
-        self.emit_deferred()
-        if self.current_is_fallible:
-            self.emit_gc_rewind()
-            self.builder.ret(ir.Constant(ir.IntType(1), 0))
-            return
-        if self.current_is_main and self.current_return_type == "void":
-            self.emit_gc_rewind()
-            self.builder.ret(ir.Constant(ir.IntType(32), 0))
-            return
-        if self.current_return_type == "void":
-            self.emit_gc_rewind()
-            self.builder.ret_void()
-            return
-        value = self.builder.load(self.current_return_slot, name="ret.value")
-        self.emit_gc_rewind()
-        self.builder.ret(value)
+        return self.function_emitter.emit_success_return()
 
     def emit_error_return_value(self, value):
-        if self.current_error_slot is not None:
-            self.builder.store(self.cast_to(value, "error"), self.current_error_slot)
-        self.emit_deferred()
-        if self.current_is_main:
-            self.emit_print_error(value)
-            self.emit_gc_rewind()
-            self.builder.ret(ir.Constant(self.func.function_type.return_type, 1))
-            return
-        if not self.current_is_fallible:
-            self.emit_print_error(value)
-            self.emit_exit(1)
-            self.builder.unreachable()
-            return
-        self.emit_gc_rewind()
-        self.builder.ret(ir.Constant(ir.IntType(1), 1))
+        return self.function_emitter.emit_error_return_value(value)
 
     def alloca_at_entry(self, name, typ):
         return self.builder.alloca(typ, name=name)
@@ -1359,12 +1202,7 @@ class LLVMCodegen:
                 raise RuntimeError(f"{node.name} expects one argument")
             return self.emit_print(node.args[0], newline=node.name == "io.println")
         if getattr(node, "is_closure_call", False):
-            closure = self.emit_expr(Identifier(node.name))
-            call_ptr = self.builder.extract_value(closure, 0)
-            env = self.builder.extract_value(closure, 1)
-            param_types = getattr(node, "closure_param_types", [arg.type for arg in node.args])
-            args = [env] + [self.emit_coerced_expr(arg, ptype) for arg, ptype in zip(node.args, param_types)]
-            return self.builder.call(call_ptr, args)
+            return self.function_emitter.emit_closure_call(node)
         if node.name == "len":
             if len(node.args) != 1:
                 raise RuntimeError("len expects one argument")
@@ -1462,121 +1300,28 @@ class LLVMCodegen:
         return self.builder.call(fn, coerced_args)
 
     def emit_fallible_op(self, node: FallibleOp):
-        status, value_slot, error_slot, success_type = self.emit_fallible_call_raw(node.expr)
-        if node.op == "is_err":
-            return status
-        err_bb = self.func.append_basic_block("fallible.err")
-        ok_bb = self.func.append_basic_block("fallible.ok")
-        self.builder.cbranch(status, err_bb, ok_bb)
-        self.builder.position_at_end(err_bb)
-        err_value = self.builder.load(error_slot, name="fallible.err.value")
-        if node.op == "??":
-            self.emit_error_return_value(err_value)
-        elif node.op == "!!":
-            self.emit_print_error(err_value)
-            self.emit_exit(1)
-            self.builder.unreachable()
-        else:
-            raise RuntimeError(f"unknown fallible operator {node.op}")
-        self.builder.position_at_end(ok_bb)
-        if success_type == "void":
-            return ir.Constant(ir.IntType(1), 0)
-        return self.builder.load(value_slot, name="fallible.ok.value")
+        return self.function_emitter.emit_fallible_op(node)
 
     def emit_fallible_call_raw(self, call_node):
-        if isinstance(call_node, FunctionCall):
-            return self.emit_fallible_function_call_raw(call_node)
-        if isinstance(call_node, MethodCall):
-            return self.emit_fallible_method_call_raw(call_node)
-        raise RuntimeError(f"fallible operator requires a fallible call, got {type(call_node).__name__}")
+        return self.function_emitter.emit_fallible_call_raw(call_node)
 
     def fallible_out_slots(self, success_type):
-        value_slot = None
-        if success_type != "void":
-            value_slot = self.alloca_at_entry("__nc_fallible_value", llvm_type(success_type))
-            self.root_slots_for_type(value_slot, success_type)
-        error_slot = self.alloca_at_entry("__nc_fallible_error", STR_TYPE)
-        self.root_slots_for_type(error_slot, "error")
-        return value_slot, error_slot
+        return self.function_emitter.fallible_out_slots(success_type)
 
     def emit_fallible_function_call_raw(self, node: FunctionCall):
-        fn_decl = self.fn_decls[node.name]
-        if not getattr(fn_decl, "fallible", False):
-            raise RuntimeError(f"{node.name} is not fallible")
-        fn = self.module.globals[self.function_symbol(fn_decl)]
-        success_type = fn_decl.return_type or "void"
-        value_slot, error_slot = self.fallible_out_slots(success_type)
-        args = []
-        if value_slot is not None:
-            args.append(value_slot)
-        args.append(error_slot)
-        args.extend([
-            self.emit_coerced_expr(arg, ptype)
-            for arg, (_pname, ptype) in zip(node.args, fn_decl.params)
-        ])
-        status = self.builder.call(fn, args, name="fallible.status")
-        return status, value_slot, error_slot, success_type
+        return self.function_emitter.emit_fallible_function_call_raw(node)
 
     def emit_function_expr(self, node: FunctionExpr):
-        closure_type = llvm_type(node.type)
-        fn = self.module.globals[self.closure_symbol(node)]
-        env_ptr = self.emit_closure_env(node)
-        value = ir.Constant(closure_type, ir.Undefined)
-        value = self.builder.insert_value(value, fn.bitcast(closure_type.elements[0]), [0], name="closure.call")
-        value = self.builder.insert_value(value, env_ptr, [1], name="closure.env")
-        return value
+        return self.function_emitter.emit_function_expr(node)
 
     def emit_generic_function_value(self, node: GenericFunctionValue):
-        closure_type = llvm_type(node.type)
-        thunk = self.function_value_thunk(node.name, node.type)
-        value = ir.Constant(closure_type, ir.Undefined)
-        value = self.builder.insert_value(value, thunk.bitcast(closure_type.elements[0]), [0], name="fn.value.call")
-        value = self.builder.insert_value(value, ir.Constant(I8PTR, None), [1], name="fn.value.env")
-        return value
+        return self.function_emitter.emit_generic_function_value(node)
 
     def function_value_thunk(self, fn_name: str, fn_value_type: str):
-        if fn_name in self.function_value_thunks:
-            return self.function_value_thunks[fn_name]
-        parsed = parse_fn_type(fn_value_type)
-        if parsed is None:
-            raise RuntimeError(f"{fn_name} is not a function value")
-        param_types, ret_type = parsed
-        thunk_name = f"__nc_fnval_{safe_user_ident(fn_name)}"
-        thunk_type = ir.FunctionType(llvm_type(ret_type), [I8PTR] + [llvm_type(t) for t in param_types])
-        thunk = ir.Function(self.module, thunk_type, name=thunk_name)
-        self.function_value_thunks[fn_name] = thunk
-
-        block = thunk.append_basic_block("entry")
-        saved_builder = self.builder
-        self.builder = ir.IRBuilder(block)
-        target = self.module.globals[self.function_symbol(self.fn_decls[fn_name])]
-        result = self.builder.call(target, [arg for arg in thunk.args[1:]])
-        if ret_type == "void":
-            self.builder.ret_void()
-        else:
-            self.builder.ret(result)
-        self.builder = saved_builder
-        return thunk
+        return self.function_emitter.function_value_thunk(fn_name, fn_value_type)
 
     def emit_closure_env(self, node: FunctionExpr):
-        captures = getattr(node, "captures", [])
-        if not captures:
-            return ir.Constant(I8PTR, None)
-        env_type = self.closure_env_types[node.closure_id]
-        size = self.sizeof_fields([capture_type for _name, capture_type in captures])
-        raw = self.malloc_bytes(ir.Constant(ir.IntType(64), max(size, 1)))
-        env_ptr = self.builder.bitcast(raw, env_type.as_pointer(), name="closure.env.alloc")
-        for i, (capture_name, capture_type) in enumerate(captures):
-            source_ptr, _source_type = self.vars[capture_name]
-            capture_value = self.builder.load(source_ptr, name=f"capture.{safe_user_ident(capture_name)}")
-            field_ptr = self.builder.gep(
-                env_ptr,
-                [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), i)],
-                inbounds=True,
-                name=f"capture.{safe_user_ident(capture_name)}.store.ptr",
-            )
-            self.builder.store(self.cast_to(capture_value, capture_type), field_ptr)
-        return self.builder.bitcast(env_ptr, I8PTR, name="closure.env.i8")
+        return self.function_emitter.emit_closure_env(node)
 
     def emit_method_call(self, node: MethodCall):
         obj_type = node.obj.type
