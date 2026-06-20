@@ -463,6 +463,21 @@ def test_builtin_strings_module_preempts_sibling_directory():
         assert result.stdout.strip() == "3"
 
 
+def test_builtin_json_module_preempts_sibling_directory():
+    with tempfile.TemporaryDirectory() as tmp:
+        main = os.path.join(tmp, "main")
+        json_dir = os.path.join(tmp, "json")
+        os.mkdir(main)
+        os.mkdir(json_dir)
+        write_file(os.path.join(main, "main.nc"), 'import io\nimport json\nfun main() { io.println(json.stringify(json.parse("true")!!)) }\n')
+        write_file(os.path.join(json_dir, "json.nc"), "fun parse(s: str): i32 { bad() }\n")
+
+        result = run_nc("run", main)
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "true"
+
+
 def test_bare_print_and_unimported_io_println_errors():
     with tempfile.TemporaryDirectory() as tmp:
         main = os.path.join(tmp, "main")

@@ -192,7 +192,7 @@ class LLVMCodegen:
     def __init__(self, target: TargetSpec | None = None):
         self.target = target or get_target()
         self.layout = LLVMLayout()
-        self.module = ir.Module(name="nc")
+        self.module = ir.Module(name="nc", context=ir.Context())
         self.module.triple = self.target.triple
         self.builder = None
         self.func = None
@@ -308,10 +308,42 @@ class LLVMCodegen:
             STRUCT_FIELD_INDEX[struct.name] = {
                 field_name: i for i, (field_name, _field_type) in enumerate(struct.fields)
             }
+        self.reject_direct_recursive_structs()
         for struct in structs:
-            STRUCT_TYPES[struct.name] = ir.LiteralStructType([
+            STRUCT_TYPES[struct.name] = self.module.context.get_identified_type(safe_user_ident(struct.name))
+        for struct in structs:
+            STRUCT_TYPES[struct.name].set_body(*[
                 llvm_type(field_type) for _field_name, field_type in struct.fields
             ])
+
+    def reject_direct_recursive_structs(self):
+        def inline_struct_deps(nc_type: str) -> set[str]:
+            if nc_type in STRUCT_FIELDS:
+                return {nc_type}
+            array_info = parse_array_type(nc_type)
+            if array_info is not None:
+                _length, elem_type = array_info
+                return inline_struct_deps(elem_type)
+            return set()
+
+        visiting: list[str] = []
+        visited: set[str] = set()
+
+        def visit(name: str):
+            if name in visiting:
+                cycle = " -> ".join(visiting[visiting.index(name):] + [name])
+                raise RuntimeError(f"struct {name}: direct recursive field cycle {cycle}")
+            if name in visited:
+                return
+            visiting.append(name)
+            for _field_name, field_type in STRUCT_FIELDS[name]:
+                for dep in inline_struct_deps(field_type):
+                    visit(dep)
+            visiting.pop()
+            visited.add(name)
+
+        for struct_name in STRUCT_FIELDS:
+            visit(struct_name)
 
     def register_ifaces(self, program):
         return self.iface_emitter.register_ifaces(program)

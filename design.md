@@ -217,6 +217,7 @@ why：
 - `type Name = Type` 类型别名。
 - 显式泛型 v1，用于函数和 struct。
 - Go 式 struct 嵌入：`struct B { A, y: i32 }`。
+- struct 可通过指针、nullable pointer 或 slice 形字段引用自身或互相引用；直接按值递归字段不支持。
 
 struct 嵌入规则：
 
@@ -226,6 +227,7 @@ struct 嵌入规则：
 - 嵌入字段和方法在无冲突时提升为 `b.x` 和 `b.foo()`。
 - 提升冲突在 struct 声明期报错，不做覆盖或顺序选择。
 - 嵌入是组合，不是子类型；`B` 不可隐式当作 `A` 使用。
+- 递归 struct 只允许经由固定大小引用形状打断布局；`struct Node { next: Node }` 这类直接值递归应明确报错。
 
 接口规则：
 
@@ -362,6 +364,7 @@ why：
 - `sort`
 - `types`
 - `linux`
+- `json`
 
 why：
 

@@ -218,3 +218,7 @@
 - 2026-06-20: 预备让泛型默认参数表达式按调用惰性单态化，并收敛 sort API 删除 sort.by。why：默认参数已定义为调用端补齐；显式传比较器时不应提前实例化默认比较器约束，sort(items) 与 sort(items, less) 应作为同一能力闭环。
 
 - 2026-06-20: 已实现泛型默认参数惰性单态化并收敛 sort API：monomorphize 只在调用省略默认参数时实例化默认表达式依赖，typecheck 跳过泛型实例声明阶段的默认值强制检查，默认表达式补齐保留声明处私有访问权限；sort.sort 改为单入口 `sort[T](items, less = 默认 < 比较器)`，删除公开 sort.by，显式 less 可排序非 Ord struct。同步 design.md/docs，新增 case_311 与更新 sort cases。验证：python tests/test_language_cases.py 通过 262/262；python tests/test_stdlib.py 通过 61/61；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q 通过 57 passed, 1 skipped。
+
+- 2026-06-20: 预备添加 json 标准库模块：以动态 Value DOM 为第一版，尽量用 NC 实现 parse/stringify，并补齐 JSON 需要的递归指针形 struct LLVM 支持。why：json 是标准库核心能力，当前缺口来自真实 DOM case，不引入反射或 struct 自动映射。
+
+- 2026-06-20: 已添加 json 标准库模块：新增动态 json.Value DOM、parse/stringify、构造/查询/数组/对象 API，json 作为保留标准模块名；LLVM struct 注册改用独立 context identified struct，支持指针/slice 形递归 struct 并拒绝直接值递归；同模块声明可引用本模块私有类型。同步 design.md/docs/stdlib.md，新增 json stdlib cases、递归 struct language cases 和 json preempt 项目测试。验证：python tests/test_language_cases.py 通过 264/264；python tests/test_stdlib.py 通过 67/67；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q 通过 58 passed, 1 skipped。

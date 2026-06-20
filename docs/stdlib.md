@@ -10,7 +10,7 @@
 
 ## import 规则
 
-- 标准库一级内置模块名：`io`、`fs`、`os`、`runtime`、`strings`、`strconv`、`math`、`sort`、`types`、`linux`。
+- 标准库一级内置模块名：`io`、`fs`、`os`、`runtime`、`strings`、`strconv`、`math`、`sort`、`types`、`linux`、`json`。
 - `import foo` 优先解析同级目录模块；内置标准模块名保留，导入这些名字时不查找同级目录。
 - 编译器随附的 NC 标准库源码模块会递归加载自身 import；用户同级目录仍不能覆盖保留标准模块名。
 - 标准库源码模块可带同名 C support 文件：若实际导入 `stdlib/<name>/<name>.nc` 所在模块，且存在 `stdlib/<name>/<name>.c`，构建系统会自动编译并链接该 C 文件。该机制只对编译器随附标准库生效，不扩展到用户项目的 `foo/foo.c`。
@@ -117,6 +117,31 @@ v1 不提供 `os.setenv`、`os.unsetenv`、`os.chdir`。
 - `sort.is_sorted_by[T](items: []T, less: fun(T, T) bool): bool`
 
 `sort.sort` 原地不稳定排序；省略 `less` 时使用 `<` 作为默认比较器，因此元素类型必须支持大小比较。显式传入 `less(a, b)` 时，`less` 返回 `true` 表示 `a` 应排在 `b` 前。相等元素的原相对顺序不保证保留。
+
+### json
+
+- `json.parse(s): json.Value`
+- `json.stringify(v): str`
+- `json.null(): json.Value`
+- `json.bool_value(v): json.Value`
+- `json.number(v): json.Value`
+- `json.string(v): json.Value`
+- `json.array(): json.Value`
+- `json.object(): json.Value`
+- `json.kind(v): i32`
+- `json.as_bool(v): bool`
+- `json.as_number(v): f64`
+- `json.as_string(v): str`
+- `json.array_len(v): i32`
+- `json.array_at(v, i): json.Value`
+- `json.array_append(v, item)`
+- `json.object_has(v, key): bool`
+- `json.object_get(v, key): json.Value`
+- `json.object_set(v, key, item)`
+
+`json.Value` 是动态 DOM 值，`kind` 编号为 `0=null`、`1=bool`、`2=number`、`3=string`、`4=array`、`5=object`。`parse` 支持常用 JSON：对象、数组、字符串、数字、`true`、`false`、`null`、空白、常见字符串转义和基本 `\uXXXX` 转义；非法输入会 `err "json.parse failed"`。`stringify` 输出紧凑 JSON，并按 JSON 规则转义字符串。
+
+v1 不提供 `json.decode[T]`、`json.encode[T]`、字段标签或 struct 自动映射。需要类型化数据时，先用动态 `Value` API 手写转换。
 
 ### types
 

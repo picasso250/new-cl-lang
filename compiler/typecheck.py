@@ -82,9 +82,13 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         if getattr(node, "_default_arg_expr", False):
             return
         if isinstance(name, str) and "." in name and name.rsplit(".", 1)[1].startswith("_"):
+            owner_name = getattr(node, "name", None)
+            if isinstance(node, (StructDecl, IfaceDecl, FunctionDeclaration)) and isinstance(owner_name, str) and "." in owner_name:
+                if owner_name.rsplit(".", 1)[0] == name.rsplit(".", 1)[0].lstrip("*?[]"):
+                    return
             callable_name = getattr(current_callable, "name", None)
             if isinstance(callable_name, str) and "." in callable_name:
-                if callable_name.rsplit(".", 1)[0] == name.rsplit(".", 1)[0]:
+                if callable_name.rsplit(".", 1)[0] == name.rsplit(".", 1)[0].lstrip("*?[]"):
                     return
             fail(f"symbol '{name}' is private", node)
 
