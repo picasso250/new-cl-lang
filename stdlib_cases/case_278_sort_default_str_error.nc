@@ -1,4 +1,4 @@
-# ERROR: generic function sort.sort: type arg str does not satisfy types.Ord
+# ERROR: comparison: expected numeric operands, got str and str
 
 import sort
 

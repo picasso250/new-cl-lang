@@ -42,6 +42,6 @@
 
 ## 标准库使用
 
-- `sort.sort[T types.Ord](items: []T)` 使用 `types.Ord`。
+- `sort.sort[T](items)` 省略比较器时会实例化默认 `<` 比较器，因此要求 `T` 支持大小比较；`sort.sort[T](items, less)` 可用显式比较器排序任意 `T`。
 - `map[K,V]` 的 key 规则等价于 `K: types.Hash`。
 - `map[K,V]` 的 value 规则要求 `V` 是 sized 且满足 `types.Zero`。

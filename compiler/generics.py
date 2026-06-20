@@ -39,24 +39,26 @@ def _normalize_call_type_args(call: FunctionCall):
         call.name, call.type_args = app
 
 
-def _walk_values(node, fn):
+def _walk_values(node, fn, *, skip_param_defaults: bool = False):
     if not hasattr(node, "__dict__") or node.__class__.__name__ == "SourceFile":
         return
     fn(node)
-    for value in list(node.__dict__.values()):
+    for key, value in list(node.__dict__.items()):
+        if skip_param_defaults and node.__class__.__name__ == "Param" and key == "default":
+            continue
         if isinstance(value, list):
             for item in value:
                 if isinstance(item, tuple):
                     for part in item:
-                        _walk_values(part, fn)
+                        _walk_values(part, fn, skip_param_defaults=skip_param_defaults)
                 elif item.__class__.__name__ != "SourceFile":
-                    _walk_values(item, fn)
+                    _walk_values(item, fn, skip_param_defaults=skip_param_defaults)
         elif isinstance(value, tuple):
             for item in value:
-                _walk_values(item, fn)
+                _walk_values(item, fn, skip_param_defaults=skip_param_defaults)
         else:
             if value.__class__.__name__ != "SourceFile":
-                _walk_values(value, fn)
+                _walk_values(value, fn, skip_param_defaults=skip_param_defaults)
 
 
 def _substitute_node(node, subst: dict[str, str]):
@@ -95,6 +97,7 @@ def monomorphize(program: Program) -> Program:
     generic_funcs = {}
     generic_structs = {}
     ordinary = []
+    concrete_funcs = {}
     for stmt in program.statements:
         if isinstance(stmt, FunctionDeclaration) and stmt.type_params:
             if stmt.receiver_name:
@@ -103,6 +106,8 @@ def monomorphize(program: Program) -> Program:
         elif isinstance(stmt, StructDecl) and stmt.type_params:
             generic_structs[stmt.name] = stmt
         else:
+            if isinstance(stmt, FunctionDeclaration):
+                concrete_funcs[stmt.name] = stmt
             ordinary.append(stmt)
 
     generated = []
@@ -157,6 +162,7 @@ def monomorphize(program: Program) -> Program:
         inst._generic_origin_name = base
         inst._generic_constraints = [(param, arg, tmpl.type_param_constraints.get(param, "any"))
                                      for param, arg in zip(tmpl.type_params, args)]
+        concrete_funcs[inst.name] = inst
         generated.append(inst)
 
     def rewrite_type(t):
@@ -233,11 +239,28 @@ def monomorphize(program: Program) -> Program:
             if hasattr(n, key):
                 setattr(n, key, rewrite_type(getattr(n, key)))
 
+    def request_omitted_defaults(call: FunctionCall):
+        fn = concrete_funcs.get(call.name)
+        if fn is None:
+            return
+        if len(call.args) >= len(fn.params):
+            return
+        for param in fn.params[len(call.args):]:
+            if param.default is not None:
+                _walk_values(param.default, rewrite_node)
+
     changed = True
     while changed:
         before = len(generated)
-        for stmt in ordinary + generated:
+        for stmt in ordinary:
             _walk_values(stmt, rewrite_node)
+        for stmt in generated:
+            _walk_values(stmt, rewrite_node, skip_param_defaults=True)
+        for stmt in ordinary + generated:
+            def request_call_defaults(n):
+                if isinstance(n, FunctionCall):
+                    request_omitted_defaults(n)
+            _walk_values(stmt, request_call_defaults, skip_param_defaults=True)
         changed = len(generated) != before
 
     return Program(ordinary + generated)

@@ -214,3 +214,7 @@
 - 2026-06-20: 预备完善默认参数表达式能力：明确默认值在调用端补齐且每次省略实参重新求值，补齐 slice/map/function 默认值 case，并让普通具名函数可作为无捕获函数值用于默认参数。why：默认参数已经进入语言边界，需要避免 Python 式共享可变默认值坑，并为后续 sort API 收敛打基础。
 
 - 2026-06-20: 已完善默认参数表达式能力：design.md 明确默认值在调用端补齐并每次省略重新求值，slice literal、map 构造和函数值默认值成为正式 case；普通函数名现在可作为无捕获函数值，已实例化泛型函数值与匿名函数默认值保持可用。同步 docs/generics.md，新增 case_305~310 覆盖可变默认值 fresh 语义、具名/泛型/匿名函数值默认值和类型错误。验证：python tests/test_language_cases.py 通过 261/261；python tests/test_stdlib.py 通过 61/61；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q 通过 57 passed, 1 skipped。
+
+- 2026-06-20: 预备让泛型默认参数表达式按调用惰性单态化，并收敛 sort API 删除 sort.by。why：默认参数已定义为调用端补齐；显式传比较器时不应提前实例化默认比较器约束，sort(items) 与 sort(items, less) 应作为同一能力闭环。
+
+- 2026-06-20: 已实现泛型默认参数惰性单态化并收敛 sort API：monomorphize 只在调用省略默认参数时实例化默认表达式依赖，typecheck 跳过泛型实例声明阶段的默认值强制检查，默认表达式补齐保留声明处私有访问权限；sort.sort 改为单入口 `sort[T](items, less = 默认 < 比较器)`，删除公开 sort.by，显式 less 可排序非 Ord struct。同步 design.md/docs，新增 case_311 与更新 sort cases。验证：python tests/test_language_cases.py 通过 262/262；python tests/test_stdlib.py 通过 61/61；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q 通过 57 passed, 1 skipped。

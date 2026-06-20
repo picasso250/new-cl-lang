@@ -47,7 +47,7 @@ fun main() {
         Item { key: 3, seq: 16 },
         Item { key: 2, seq: 17 }
     }
-    sort.by[Item](items, less_item)
+    sort.sort[Item](items, less_item)
     io.println(items[0].key)
     io.println(items[5].key)
     io.println(items[11].key)

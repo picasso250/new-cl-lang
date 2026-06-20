@@ -1,10 +1,4 @@
-import types
-
-fun sort[T types.Ord](items: []T): void {
-    by[T](items, _sort_less_ord[T])
-}
-
-fun by[T](items: []T, less: fun(T, T) bool): void {
+fun sort[T any](items: []T, less: fun(T, T) bool = _sort_less_default[T]): void {
     let n = len(items)
     if n < 2 {
         ret
@@ -22,7 +16,7 @@ fun is_sorted_by[T](items: []T, less: fun(T, T) bool): bool {
     ret true
 }
 
-fun _sort_less_ord[T types.Ord](a: T, b: T): bool {
+fun _sort_less_default[T any](a: T, b: T): bool {
     a < b
 }
 
