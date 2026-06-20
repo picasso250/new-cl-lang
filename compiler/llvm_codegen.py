@@ -622,6 +622,8 @@ class LLVMCodegen:
         if isinstance(node, EnumRef):
             return ir.Constant(ir.IntType(32), ENUM_VARIANTS[node.enum_name][node.variant])
         if isinstance(node, Identifier):
+            if getattr(node, "is_function_value", False):
+                return self.emit_generic_function_value(node)
             slot, _typ = self.vars[node.name]
             return self.builder.load(slot, name=safe_user_ident(node.name))
         if isinstance(node, StructLiteral):

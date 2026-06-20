@@ -575,6 +575,22 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             node.type = "__nil"
         elif isinstance(node, Identifier):
             sym = symtab.lookup(node.name)
+            funcs = getattr(symtab, "_functions", {})
+            if sym.scope_level == 0 and node.name in funcs:
+                fn_node = function_decls.get(node.name)
+                if fn_node is None:
+                    fail(f"function value {node.name}: extern functions cannot be used as function values", node)
+                if getattr(fn_node, "type_params", []):
+                    fail(f"function value {node.name}: generic functions require explicit type arguments", node)
+                ret_type, params = funcs[node.name]
+                if ret_type is None:
+                    ret_type = resolve_function_return(node.name, node)
+                if bool(getattr(fn_node, "fallible", False)):
+                    fail(f"function value {node.name}: fallible functions cannot be used as function values", node)
+                node.type = fn_type([ptype for _pname, ptype in params], ret_type or "void")
+                node.is_function_value = True
+                node.fallible = False
+                return
             node.type = lookup_narrowed(node.name) or sym.nc_type
             if closure_stack and sym.scope_level < closure_stack[-1]["level"] and sym.nc_type not in ("struct", "enum"):
                 ctx = closure_stack[-1]
