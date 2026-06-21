@@ -26,8 +26,12 @@ RESERVED_RUNTIME_NAMES = {
     "str",
 }
 
+RESERVED_MAGIC_NAMES = {"__FILE__", "__LINE__", "__COL__", "__FUNC__"}
+
 
 def _check_runtime_name(name: str):
+    if name in RESERVED_MAGIC_NAMES:
+        raise NameError(f"'{name}' is a reserved magic constant")
     if name in RESERVED_RUNTIME_NAMES or name.startswith("__nc_"):
         raise NameError(f"'{name}' conflicts with NC runtime name")
 
@@ -53,6 +57,8 @@ class SymbolTable:
         self._level -= 1
 
     def declare(self, name: str, nc_type: str, *, allow_runtime_name: bool = False):
+        if name in RESERVED_MAGIC_NAMES:
+            raise NameError(f"'{name}' is a reserved magic constant")
         if not allow_runtime_name:
             _check_runtime_name(name)
         if name in self._scopes[-1]:
@@ -61,6 +67,7 @@ class SymbolTable:
 
     def declare_global(self, name: str, nc_type: str):
         """类型定义统一入全局层（struct/enum），不随作用域弹出。"""
+        _check_runtime_name(name)
         if name in self._scopes[0]:
             raise NameError(f"'{name}' already declared globally")
         self._scopes[0][name] = Symbol(name, nc_type, 0)

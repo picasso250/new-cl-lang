@@ -16,7 +16,7 @@ from compiler.ast import (
     Defer, ExternBlock, ExpressionStatement, EnumDecl, EnumRef, FieldAccess, FloatLiteral, FunctionCall,
     FunctionExpr, GenericFunctionValue, ErrReturn, FallibleOp,
     ForIn, FunctionDeclaration, Identifier, IfExpr, IfaceDecl, ImportDecl, IndexAccess, IntegerLiteral,
-    MatchExpr, MethodCall, NilLiteral, Return, SizeOfType, SliceExpr, SliceLiteral, StringLiteral, InterpolatedString, RuneLiteral, StructDecl,
+    MatchExpr, MethodCall, NilLiteral, MagicConst, Return, SizeOfType, SliceExpr, SliceLiteral, StringLiteral, InterpolatedString, RuneLiteral, StructDecl,
     StructLiteral, UnaryOp, VariableDeclaration, ForCondition,
 )
 from compiler.llvm_layout import (
@@ -36,6 +36,7 @@ from compiler.llvm_method import MethodEmitter
 from compiler.llvm_runtime import RuntimeEmitter
 from compiler.llvm_slice import SliceEmitter
 from compiler.llvm_string import StringEmitter
+from compiler.source_location import line_col_for_node, normalized_source_path
 from compiler.target import TargetSpec, get_target
 from compiler.type_ref import parse_array_type, parse_fn_type, parse_map_type, parse_slice_type
 
@@ -670,6 +671,8 @@ class LLVMCodegen:
                 ptr,
                 ir.Constant(ir.IntType(64), len(node.value.encode("utf-8"))),
             ])
+        if isinstance(node, MagicConst):
+            return self.emit_magic_const(node)
         if isinstance(node, InterpolatedString):
             return self.emit_interpolated_string(node)
         if isinstance(node, EnumRef):
@@ -738,6 +741,25 @@ class LLVMCodegen:
         if isinstance(node, GenericFunctionValue):
             return self.emit_generic_function_value(node)
         raise NotImplementedError(f"LLVM backend does not support expression: {type(node).__name__}")
+
+    def emit_magic_const(self, node: MagicConst):
+        if node.name == "__LINE__":
+            line, _col = line_col_for_node(node)
+            return ir.Constant(ir.IntType(32), line)
+        if node.name == "__COL__":
+            _line, col = line_col_for_node(node)
+            return ir.Constant(ir.IntType(32), col)
+        if node.name == "__FILE__":
+            value = normalized_source_path(getattr(node, "source_file", None))
+        elif node.name == "__FUNC__":
+            value = self.current_frame_name
+        else:
+            raise NotImplementedError(f"LLVM backend does not support magic constant {node.name}")
+        ptr = self.global_c_string(value, "magic_const")
+        return ir.Constant.literal_struct([
+            ptr,
+            ir.Constant(ir.IntType(64), len(value.encode("utf-8"))),
+        ])
 
     def emit_block_expr(self, node: BlockExpr):
         return self.control_expr_emitter.emit_block_expr(node)

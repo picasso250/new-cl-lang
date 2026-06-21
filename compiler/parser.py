@@ -4,6 +4,9 @@ from compiler.ast import *
 from compiler.lexer import Token, TokenKind
 
 
+MAGIC_CONSTS = {"__FILE__", "__LINE__", "__COL__", "__FUNC__"}
+
+
 class ParseError(Exception):
     pass
 
@@ -793,6 +796,8 @@ class Parser:
         if t.kind == TokenKind.IDENT:
             start = self.advance()
             name = start.value
+            if name in MAGIC_CONSTS:
+                return self.span(MagicConst(name), start)
             if (self.peek().kind == TokenKind.DOT
                     and self.pos + 2 < len(self.tokens)
                     and self.tokens[self.pos + 1].kind == TokenKind.IDENT

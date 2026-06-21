@@ -1,11 +1,10 @@
-import os
-
 from llvmlite import ir
 
 from compiler.ast import Block, ExpressionStatement, FunctionCall, FunctionDeclaration, FunctionExpr, GenericFunctionValue, Identifier, MethodCall
 from compiler.llvm_context import CodegenContext
 from compiler.llvm_layout import ERROR_TYPE, I8PTR, llvm_type
 from compiler.names import safe_user_ident
+from compiler.source_location import location_for_node
 from compiler.type_ref import parse_fn_type
 
 
@@ -60,19 +59,7 @@ class FunctionEmitter:
         return fn.name
 
     def node_location(self, node):
-        source_file = getattr(node, "source_file", None)
-        source = getattr(source_file, "source", "") or ""
-        path = getattr(source_file, "path", "<memory>") or "<memory>"
-        if not path.startswith("<"):
-            path = os.path.relpath(os.path.abspath(path))
-        span = getattr(node, "span", None)
-        if not span:
-            return path, 0, 0
-        pos = span[0]
-        line = source.count("\n", 0, pos) + 1
-        last_nl = source.rfind("\n", 0, pos)
-        col = pos + 1 if last_nl < 0 else pos - last_nl
-        return path, line, col
+        return location_for_node(node)
 
     def closure_symbol(self, closure: FunctionExpr):
         return f"__nc_lambda_{closure.closure_id}"
@@ -87,10 +74,11 @@ class FunctionEmitter:
         block = llvm_fn.append_basic_block("entry")
         saved_builder, saved_func, saved_vars = self.ctx.builder, self.ctx.func, self.ctx.vars
         saved_defer = (self.ctx.defer_sites, self.ctx.defer_stack_slot, self.ctx.defer_top_slot, self.ctx.emitting_defer)
-        saved_gc = (self.ctx.current_gc_mark, self.ctx.current_return_slot)
+        saved_gc = (self.ctx.current_gc_mark, self.ctx.current_return_slot, self.ctx.current_frame_name)
         self.ctx.builder = ir.IRBuilder(block)
         self.ctx.func = llvm_fn
         self.ctx.vars = {}
+        self.ctx.current_frame_name = f"lambda {closure.closure_id}"
         self.ctx.init_defer_state()
         self.ctx.init_gc_frame(is_main=False)
         llvm_fn.args[0].name = "__nc_env"
@@ -119,7 +107,7 @@ class FunctionEmitter:
         self.emit_callable_body(closure.body, closure.return_type or "void", f"lambda {closure.closure_id}")
         self.ctx.builder, self.ctx.func, self.ctx.vars = saved_builder, saved_func, saved_vars
         self.ctx.defer_sites, self.ctx.defer_stack_slot, self.ctx.defer_top_slot, self.ctx.emitting_defer = saved_defer
-        self.ctx.current_gc_mark, self.ctx.current_return_slot = saved_gc
+        self.ctx.current_gc_mark, self.ctx.current_return_slot, self.ctx.current_frame_name = saved_gc
 
     def emit_function(self, fn: FunctionDeclaration):
         llvm_fn = self.ctx.module.globals[self.function_symbol(fn)]

@@ -506,6 +506,16 @@ class NilLiteral(Node):
         return "Nil"
 
 
+class MagicConst(Node):
+    """Compiler-provided source location constants."""
+    def __init__(self, name: str):
+        self.name = name
+        self.type: str | None = None
+
+    def __repr__(self):
+        return f"MagicConst({self.name})"
+
+
 class BinaryOp(Node):
     def __init__(self, left, op: str, right):
         self.left = left

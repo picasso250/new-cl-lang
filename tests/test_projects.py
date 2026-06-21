@@ -36,6 +36,12 @@ def test_multifile_inferred_return_run():
     assert result.stdout.strip() == "11"
 
 
+def test_magic_file_uses_declaring_source_file():
+    result = run_nc("run", os.path.join("test_cases", "project_331_magic_file"))
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == os.path.join("test_cases", "project_331_magic_file", "other.nc")
+
+
 def test_default_build_outputs_llvm_ir_obj_and_exe():
     with tempfile.TemporaryDirectory() as tmp:
         project = os.path.join(ROOT, "test_cases", "project_095_multifile")

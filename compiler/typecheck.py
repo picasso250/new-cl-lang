@@ -22,7 +22,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         Assignment, Update, Block, ForCondition, FunctionDeclaration, Return, ErrReturn, ImportDecl,
         StructDecl, IfaceDecl, StructLiteral, FieldAccess,
         EnumDecl, EnumRef, ForIn,
-        IfExpr, BlockExpr, MatchExpr, IntegerLiteral, FloatLiteral, StringLiteral, InterpolatedString, RuneLiteral, BoolLiteral, NilLiteral, BinaryOp, UnaryOp, FunctionCall, SizeOfType, Identifier,
+        IfExpr, BlockExpr, MatchExpr, IntegerLiteral, FloatLiteral, StringLiteral, InterpolatedString, RuneLiteral, BoolLiteral, NilLiteral, MagicConst, BinaryOp, UnaryOp, FunctionCall, SizeOfType, Identifier,
         ExternBlock, FunctionExpr, GenericFunctionValue,
         ArrayLiteral, SliceLiteral, IndexAccess, SliceExpr, MethodCall, Defer, Break, FallibleOp
     )
@@ -603,7 +603,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         return any(name in scope for scope in narrowed_assign_forbidden)
 
     def walk_expr(node):
-        nonlocal current_return_type, fallible_op_depth
+        nonlocal current_return_type, current_callable, fallible_op_depth
         if isinstance(node, IntegerLiteral):
             node.type = node.suffix_type or "i32"
         elif isinstance(node, FloatLiteral):
@@ -622,6 +622,15 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             node.type = "bool"
         elif isinstance(node, NilLiteral):
             node.type = "__nil"
+        elif isinstance(node, MagicConst):
+            if node.name in {"__FILE__", "__FUNC__"}:
+                if node.name == "__FUNC__" and current_callable is None:
+                    fail("__FUNC__ is only available inside functions", node)
+                node.type = "str"
+            elif node.name in {"__LINE__", "__COL__"}:
+                node.type = "i32"
+            else:
+                fail(f"unknown magic constant {node.name}", node)
         elif isinstance(node, Identifier):
             sym = symtab.lookup(node.name)
             funcs = getattr(symtab, "_functions", {})
@@ -813,9 +822,11 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                     fail("function expressions cannot have default parameters", param)
                 require_concrete_param_type(param, "function expression", node)
             prev_return_type = current_return_type
+            prev_callable = current_callable
             if not node.return_type_explicit:
                 infer_function_expr_return(node)
             current_return_type = node.return_type or "void"
+            current_callable = node
             symtab.push_scope()
             for pname, ptype in node.params:
                 if ptype is None:
@@ -834,6 +845,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             node.captures = list(ctx["captures"].items())
             node.type = fn_type([ptype for _pname, ptype in node.params], current_return_type)
             current_return_type = prev_return_type
+            current_callable = prev_callable
             symtab.pop_scope()
         elif isinstance(node, GenericFunctionValue):
             require_public_qualified(node.name, node)
