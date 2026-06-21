@@ -60,8 +60,10 @@ class TypeRules:
         seen.add(t)
         if t in FLOAT_TYPES:
             return t
-        if t in NUMERIC_TYPES or t in {"bool", "str", "rune", "error"}:
+        if t in NUMERIC_TYPES or t in {"bool", "str", "rune"}:
             return None
+        if t == "error":
+            return t
         if self.is_pointer_type(t) or self.is_nullable_pointer_type(t):
             return None
         if parse_map_type(t) is not None:
@@ -211,8 +213,10 @@ class TypeRules:
         if t in seen:
             return None
         seen.add(t)
-        if t in NUMERIC_TYPES or t in {"bool", "str", "rune", "error"}:
+        if t in NUMERIC_TYPES or t in {"bool", "str", "rune"}:
             return None
+        if t == "error":
+            return t
         if self.is_pointer_type(t) or self.is_nullable_pointer_type(t):
             return None
         if parse_map_type(t) is not None:

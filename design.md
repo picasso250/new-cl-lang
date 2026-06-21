@@ -316,12 +316,13 @@ fun main() {
 
 核心规则：
 
-- `error` 是内建错误类型；v1 允许 `str` 在 `err` 位置隐式转为 `error`。
-- `err expr` 立即结束当前函数，执行已登记 defer，并把错误返回给调用者。
+- `error` 是 opaque 内建错误对象，不等同于 `str`，不参与比较或 map key 哈希。
+- v1 允许 `str` 在 `err` 位置隐式构造为 `error`。
+- `err expr` 立即结束当前函数，执行已登记 defer，并把错误返回给调用者；错误对象记录当前 NC 调用栈 frame。
 - 函数是否可错由函数体推导；源码签名不标注可错。
 - 可错调用不能裸用，必须写 `??`、`!!` 或 `is err`。
-- `call()??` 成功时产生成功值，出错时从当前函数继续 `err` 传播。
-- `call()!!` 成功时产生成功值，出错时打印错误并退出进程。
+- `call()??` 成功时产生成功值，出错时追加当前调用点 frame，并从当前函数继续 `err` 传播。
+- `call()!!` 成功时产生成功值，出错时打印错误与 NC 调用栈并退出进程。
 - `call() is err` 只产生 bool，不绑定错误对象。
 - `defer` 按 LIFO 执行；`ret`、`err` 和函数正常退出都必须执行已登记 defer。
 - `defer` 中禁止 `err` 和 `??`，避免清理路径产生双重错误出口。
@@ -330,6 +331,7 @@ fun main() {
 
 - v1 可错 callable 只覆盖普通函数和 struct 方法。
 - extern、iface 方法、函数值和闭包不支持可错。
+- `!!` 和 main 未捕获错误打印 `error: message`、`stack:` 与 `at function (path:line:col)` frame；标准库 frame 不折叠。
 - 不提供 `throw`、`try/catch`、panic 或 recover。
 
 why：

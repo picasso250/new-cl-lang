@@ -39,6 +39,49 @@ FILE* __nc_stderr(void) {
     return stderr;
 }
 
+void __nc_error_from_str_out(nc_error* out, const str* message) {
+    out->message = *message;
+    out->frames.ptr = NULL;
+    out->frames.len = 0;
+    out->frames.cap = 0;
+}
+
+void __nc_error_append_frame(nc_error* err, const str* function, const str* path, int32_t line, int32_t col) {
+    if (err->frames.len == err->frames.cap) {
+        uint64_t next_cap = err->frames.cap ? err->frames.cap * 2 : 4;
+        nc_error_frame* next = (nc_error_frame*)realloc(err->frames.ptr, (size_t)next_cap * sizeof(nc_error_frame));
+        if (!next) __nc_abort_oom();
+        err->frames.ptr = next;
+        err->frames.cap = next_cap;
+    }
+    nc_error_frame* frames = (nc_error_frame*)err->frames.ptr;
+    nc_error_frame* frame = &frames[err->frames.len++];
+    frame->function = *function;
+    frame->path = *path;
+    frame->line = line;
+    frame->col = col;
+}
+
+void __nc_error_print(const nc_error* err) {
+    FILE* stream = __nc_stderr();
+    fprintf(stream, "error: %.*s\n", (int)err->message.len, err->message.ptr);
+    fprintf(stream, "stack:\n");
+    nc_error_frame* frames = (nc_error_frame*)err->frames.ptr;
+    for (uint64_t i = 0; i < err->frames.len; i++) {
+        nc_error_frame* frame = &frames[i];
+        fprintf(
+            stream,
+            "  at %.*s (%.*s:%d:%d)\n",
+            (int)frame->function.len,
+            frame->function.ptr,
+            (int)frame->path.len,
+            frame->path.ptr,
+            frame->line,
+            frame->col
+        );
+    }
+}
+
 void __nc_gc_init(void) {
 #ifdef _WIN32
     _setmode(_fileno(stdout), _O_BINARY);

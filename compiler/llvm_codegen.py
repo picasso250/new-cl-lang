@@ -232,6 +232,9 @@ class LLVMCodegen:
         self.slice_append_fn = None
         self.slice_copy_into_fn = None
         self.slice_clear_fn = None
+        self.error_from_str_fn = None
+        self.error_append_frame_fn = None
+        self.error_print_fn = None
         self.gc_live_count = None
         self.memcmp = None
         self.sprintf = None
@@ -247,6 +250,7 @@ class LLVMCodegen:
         self.current_is_main = False
         self.current_is_fallible = False
         self.current_error_slot = None
+        self.current_frame_name = "<unknown>"
         self.defer_sites = []
         self.defer_stack_slot = None
         self.defer_top_slot = None
@@ -390,7 +394,7 @@ class LLVMCodegen:
         self.builder.call(self.gc_push_root_slot, [self.builder.bitcast(ptr, I8PTR)])
 
     def root_slots_for_type(self, ptr, nc_type):
-        if nc_type in ("str", "error"):
+        if nc_type == "str":
             field = self.builder.gep(
                 ptr,
                 [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)],
@@ -398,6 +402,19 @@ class LLVMCodegen:
                 name="gc.root.str.ptr",
             )
             self.root_pointer_slot(field)
+            return
+        if nc_type == "error":
+            message_ptr = self.builder.gep(
+                ptr,
+                [
+                    ir.Constant(ir.IntType(32), 0),
+                    ir.Constant(ir.IntType(32), 0),
+                    ir.Constant(ir.IntType(32), 0),
+                ],
+                inbounds=True,
+                name="gc.root.error.message.ptr",
+            )
+            self.root_pointer_slot(message_ptr)
             return
         if nc_type == "nc_map" or parse_map_type(nc_type) is not None:
             field = self.builder.gep(
@@ -541,7 +558,7 @@ class LLVMCodegen:
                 self.emit_success_return()
             return
         if isinstance(stmt, ErrReturn):
-            self.emit_error_return_value(self.emit_coerced_expr(stmt.expr, "error"))
+            self.function_emitter.emit_error_return_value(self.emit_coerced_expr(stmt.expr, "error"), stmt)
             return
         if isinstance(stmt, Defer):
             self.emit_defer(stmt)
@@ -614,6 +631,9 @@ class LLVMCodegen:
 
     def emit_print_error(self, value):
         return self.runtime_emitter.emit_print_error(value)
+
+    def emit_error_append_frame(self, value, function_name: str, path: str, line: int, col: int):
+        return self.runtime_emitter.emit_error_append_frame(value, function_name, path, line, col)
 
     def ensure_exit(self):
         return self.runtime_emitter.ensure_exit()
@@ -1374,8 +1394,6 @@ class LLVMCodegen:
         return ir.Constant(typ, None)
 
     def cast_to(self, value, nc_type):
-        if nc_type == "error":
-            nc_type = "str"
         target = llvm_type(nc_type)
         if value.type == target:
             return value
@@ -1394,6 +1412,8 @@ class LLVMCodegen:
 
     def emit_coerced_expr(self, expr, target_type):
         value = self.emit_expr(expr)
+        if target_type == "error" and getattr(expr, "type", None) == "str":
+            return self.runtime_emitter.emit_error_from_str(value)
         if target_type in IFACE_METHODS and getattr(expr, "type", None) != target_type:
             return self.box_iface(value, expr.type, target_type)
         return self.cast_to(value, target_type)

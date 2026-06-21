@@ -20,6 +20,7 @@ UNSIGNED_INT_TYPES = {"u8", "u16", "u32", "u64", "bool", "rune"}
 FLOAT_TYPES = {"f32": ir.FloatType(), "f64": ir.DoubleType()}
 I8PTR = ir.IntType(8).as_pointer()
 STR_TYPE = ir.LiteralStructType([I8PTR, ir.IntType(64)])
+ERROR_FRAME_TYPE = ir.LiteralStructType([STR_TYPE, STR_TYPE, ir.IntType(32), ir.IntType(32)])
 MAP_HASH_FN_TYPE = ir.FunctionType(ir.IntType(64), [I8PTR])
 MAP_EQ_FN_TYPE = ir.FunctionType(ir.IntType(32), [I8PTR, I8PTR])
 MAP_DESC_TYPE = ir.LiteralStructType([
@@ -30,6 +31,7 @@ MAP_DESC_TYPE = ir.LiteralStructType([
 MAP_DESC_PTR = MAP_DESC_TYPE.as_pointer()
 MAP_TYPE = ir.LiteralStructType([MAP_DESC_PTR, I8PTR, ir.IntType(64), ir.IntType(64), ir.IntType(64)])
 RAW_SLICE_TYPE = ir.LiteralStructType([I8PTR, ir.IntType(64), ir.IntType(64)])
+ERROR_TYPE = ir.LiteralStructType([STR_TYPE, RAW_SLICE_TYPE])
 STRUCT_TYPES: dict[str, ir.Type] = {}
 STRUCT_FIELDS: dict[str, list[tuple[str, str]]] = {}
 STRUCT_FIELD_INDEX: dict[str, dict[str, int]] = {}
@@ -50,7 +52,7 @@ def llvm_type(nc_type: str | None):
     if nc_type == "str":
         return STR_TYPE
     if nc_type == "error":
-        return STR_TYPE
+        return ERROR_TYPE
     if nc_type == "nc_map" or parse_map_type(nc_type) is not None:
         return MAP_TYPE
     if nc_type in IFACE_METHODS:
@@ -104,6 +106,8 @@ class LLVMLayout:
             return 8
         if nc_type == "str":
             return 16
+        if nc_type == "error":
+            return 40
         if nc_type == "nc_map" or parse_map_type(nc_type) is not None:
             return 40
         if isinstance(nc_type, str) and (nc_type.startswith("*") or nc_type.startswith("?*")):
@@ -131,7 +135,7 @@ class LLVMLayout:
             return 2
         if nc_type in ("i32", "u32", "f32", "rune") or nc_type in ENUM_VARIANTS:
             return 4
-        if nc_type in ("i64", "u64", "f64", "str", "nc_map") or parse_map_type(nc_type) is not None:
+        if nc_type in ("i64", "u64", "f64", "str", "error", "nc_map") or parse_map_type(nc_type) is not None:
             return 8
         if isinstance(nc_type, str) and (nc_type.startswith("*") or nc_type.startswith("?*")):
             return 8

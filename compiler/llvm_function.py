@@ -1,8 +1,10 @@
+import os
+
 from llvmlite import ir
 
 from compiler.ast import Block, ExpressionStatement, FunctionCall, FunctionDeclaration, FunctionExpr, GenericFunctionValue, Identifier, MethodCall
 from compiler.llvm_context import CodegenContext
-from compiler.llvm_layout import I8PTR, STR_TYPE, llvm_type
+from compiler.llvm_layout import ERROR_TYPE, I8PTR, llvm_type
 from compiler.names import safe_user_ident
 from compiler.type_ref import parse_fn_type
 
@@ -30,7 +32,7 @@ class FunctionEmitter:
         if is_fallible:
             if (fn.return_type or "void") != "void":
                 args.append(llvm_type(fn.return_type).as_pointer())
-            args.append(STR_TYPE.as_pointer())
+            args.append(ERROR_TYPE.as_pointer())
         args.extend([llvm_type(t) for _n, t in all_params])
         fn_type = ir.FunctionType(ret, args)
         existing = self.ctx.module.globals.get(name)
@@ -50,6 +52,27 @@ class FunctionEmitter:
             receiver_type = fn.receiver_type.lstrip("*").lstrip("?")
             return safe_user_ident(f"{receiver_type}_{fn.name}")
         return safe_user_ident(fn.name)
+
+    def frame_name(self, fn: FunctionDeclaration):
+        if fn.receiver_name:
+            receiver_type = fn.receiver_type.lstrip("*").lstrip("?")
+            return f"{receiver_type}.{fn.name}"
+        return fn.name
+
+    def node_location(self, node):
+        source_file = getattr(node, "source_file", None)
+        source = getattr(source_file, "source", "") or ""
+        path = getattr(source_file, "path", "<memory>") or "<memory>"
+        if not path.startswith("<"):
+            path = os.path.relpath(os.path.abspath(path))
+        span = getattr(node, "span", None)
+        if not span:
+            return path, 0, 0
+        pos = span[0]
+        line = source.count("\n", 0, pos) + 1
+        last_nl = source.rfind("\n", 0, pos)
+        col = pos + 1 if last_nl < 0 else pos - last_nl
+        return path, line, col
 
     def closure_symbol(self, closure: FunctionExpr):
         return f"__nc_lambda_{closure.closure_id}"
@@ -102,7 +125,13 @@ class FunctionEmitter:
         llvm_fn = self.ctx.module.globals[self.function_symbol(fn)]
         block = llvm_fn.append_basic_block("entry")
         saved_defer = (self.ctx.defer_sites, self.ctx.defer_stack_slot, self.ctx.defer_top_slot, self.ctx.emitting_defer)
-        saved_gc = (self.ctx.current_gc_mark, self.ctx.current_return_slot, self.ctx.current_error_slot, self.ctx.current_is_fallible)
+        saved_gc = (
+            self.ctx.current_gc_mark,
+            self.ctx.current_return_slot,
+            self.ctx.current_error_slot,
+            self.ctx.current_is_fallible,
+            self.ctx.current_frame_name,
+        )
         self.ctx.builder = ir.IRBuilder(block)
         self.ctx.func = llvm_fn
         self.ctx.vars = {}
@@ -111,6 +140,7 @@ class FunctionEmitter:
         all_params = ([(fn.receiver_name, fn.receiver_type)] if fn.receiver_name else []) + fn.params
         llvm_args = list(llvm_fn.args)
         self.ctx.current_is_fallible = bool(getattr(fn, "fallible", False)) and fn.name != "main"
+        self.ctx.current_frame_name = self.frame_name(fn)
         if fn.name == "main":
             llvm_args[0].name = "__nc_argc"
             llvm_args[1].name = "__nc_argv"
@@ -136,7 +166,13 @@ class FunctionEmitter:
 
         self.emit_function_body(fn)
         self.ctx.defer_sites, self.ctx.defer_stack_slot, self.ctx.defer_top_slot, self.ctx.emitting_defer = saved_defer
-        self.ctx.current_gc_mark, self.ctx.current_return_slot, self.ctx.current_error_slot, self.ctx.current_is_fallible = saved_gc
+        (
+            self.ctx.current_gc_mark,
+            self.ctx.current_return_slot,
+            self.ctx.current_error_slot,
+            self.ctx.current_is_fallible,
+            self.ctx.current_frame_name,
+        ) = saved_gc
 
     def emit_function_body(self, fn: FunctionDeclaration):
         self.emit_callable_body(fn.body, fn.return_type or "void", f"function {fn.name}", is_main=fn.name == "main")
@@ -186,7 +222,10 @@ class FunctionEmitter:
         self.ctx.emit_gc_rewind()
         self.ctx.builder.ret(value)
 
-    def emit_error_return_value(self, value):
+    def emit_error_return_value(self, value, node=None, append_frame=True):
+        if append_frame:
+            path, line, col = self.node_location(node) if node is not None else ("<unknown>", 0, 0)
+            value = self.ctx.emit_error_append_frame(value, self.ctx.current_frame_name, path, line, col)
         if self.ctx.current_error_slot is not None:
             self.ctx.builder.store(self.ctx.cast_to(value, "error"), self.ctx.current_error_slot)
         self.ctx.emit_deferred()
@@ -213,8 +252,12 @@ class FunctionEmitter:
         self.ctx.builder.position_at_end(err_bb)
         err_value = self.ctx.builder.load(error_slot, name="fallible.err.value")
         if node.op == "??":
-            self.emit_error_return_value(err_value)
+            path, line, col = self.node_location(node)
+            err_value = self.ctx.emit_error_append_frame(err_value, self.ctx.current_frame_name, path, line, col)
+            self.emit_error_return_value(err_value, append_frame=False)
         elif node.op == "!!":
+            path, line, col = self.node_location(node)
+            err_value = self.ctx.emit_error_append_frame(err_value, self.ctx.current_frame_name, path, line, col)
             self.ctx.emit_print_error(err_value)
             self.ctx.emit_exit(1)
             self.ctx.builder.unreachable()
@@ -237,7 +280,7 @@ class FunctionEmitter:
         if success_type != "void":
             value_slot = self.ctx.alloca_at_entry("__nc_fallible_value", llvm_type(success_type))
             self.ctx.root_slots_for_type(value_slot, success_type)
-        error_slot = self.ctx.alloca_at_entry("__nc_fallible_error", STR_TYPE)
+        error_slot = self.ctx.alloca_at_entry("__nc_fallible_error", ERROR_TYPE)
         self.ctx.root_slots_for_type(error_slot, "error")
         return value_slot, error_slot
 

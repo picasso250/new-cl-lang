@@ -28,8 +28,8 @@ def parse_expected(source: str) -> Expected:
     error_lines = re.findall(r"#\s*ERROR:\s*(.*)", source)
     if error_lines:
         return ("__ERROR__", "\n".join(error_lines), 0)
-    stdout_lines = re.findall(r"#\s*STDOUT:\s*(.*)", source)
-    stderr_lines = re.findall(r"#\s*STDERR:\s*(.*)", source)
+    stdout_lines = re.findall(r"#\s*STDOUT: ?(.*)", source)
+    stderr_lines = re.findall(r"#\s*STDERR: ?(.*)", source)
     rc_lines = re.findall(r"#\s*RC:\s*(-?\d+)", source)
     stdout = "\n".join(stdout_lines)
     stderr = "\n".join(stderr_lines)

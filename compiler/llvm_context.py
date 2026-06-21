@@ -24,6 +24,7 @@ class CodegenContext(Protocol):
     current_return_slot: Any
     current_error_slot: Any
     current_is_fallible: bool
+    current_frame_name: str
     current_return_type: str
     current_is_main: bool
     printf: ir.Function | None
@@ -59,6 +60,9 @@ class CodegenContext(Protocol):
     slice_append_fn: ir.Function | None
     slice_copy_into_fn: ir.Function | None
     slice_clear_fn: ir.Function | None
+    error_from_str_fn: ir.Function | None
+    error_append_frame_fn: ir.Function | None
+    error_print_fn: ir.Function | None
     os_set_args_fn: ir.Function | None
     sprintf: ir.Function | None
     atoi: ir.Function | None
@@ -105,6 +109,7 @@ class CodegenContext(Protocol):
     def emit_deferred(self): ...
     def emit_gc_rewind(self): ...
     def emit_print_error(self, value: Any): ...
+    def emit_error_append_frame(self, value: Any, function_name: str, path: str, line: int, col: int): ...
     def emit_exit(self, code: int): ...
     def empty_string_ptr(self): ...
     def fallible_out_slots(self, success_type: str): ...

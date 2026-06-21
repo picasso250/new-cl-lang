@@ -39,6 +39,18 @@ typedef struct {
     uint64_t cap;
 } nc_slice_raw;
 
+typedef struct {
+    str function;
+    str path;
+    int32_t line;
+    int32_t col;
+} nc_error_frame;
+
+typedef struct {
+    str message;
+    nc_slice_raw frames;
+} nc_error;
+
 void __nc_gc_init(void);
 void* __nc_gc_alloc(size_t sz);
 void __nc_gc_collect(void);
@@ -73,6 +85,9 @@ void __nc_os_set_args(int argc, char** argv);
 int32_t __nc_argc(void);
 char* __nc_argv(int32_t i);
 FILE* __nc_stderr(void);
+void __nc_error_from_str_out(nc_error* out, const str* message);
+void __nc_error_append_frame(nc_error* err, const str* function, const str* path, int32_t line, int32_t col);
+void __nc_error_print(const nc_error* err);
 
 void __nc_slice_copy_raw(nc_slice_raw* out, const void* src, uint64_t len, uint64_t elem_size);
 void __nc_slice_append_raw(nc_slice_raw* out, const nc_slice_raw* in, const void* elem, uint64_t elem_size);

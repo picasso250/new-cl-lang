@@ -657,15 +657,21 @@ class Parser:
                 else:
                     expr = FieldAccess(expr, field)
             elif self.peek().kind == TokenKind.QUESTIONQUESTION:
+                start_pos = getattr(expr, "span", (self.peek().pos, self.peek().pos))[0]
                 self.advance()
                 expr = FallibleOp(expr, "??")
+                expr.span = (start_pos, self.tokens[self.pos - 1].pos)
             elif self.peek().kind == TokenKind.NOTNOT:
+                start_pos = getattr(expr, "span", (self.peek().pos, self.peek().pos))[0]
                 self.advance()
                 expr = FallibleOp(expr, "!!")
+                expr.span = (start_pos, self.tokens[self.pos - 1].pos)
             elif self.peek().kind == TokenKind.IS:
+                start_pos = getattr(expr, "span", (self.peek().pos, self.peek().pos))[0]
                 self.advance()
                 self.expect(TokenKind.ERR)
                 expr = FallibleOp(expr, "is_err")
+                expr.span = (start_pos, self.tokens[self.pos - 1].pos)
             else:
                 break
         return expr

@@ -1,7 +1,7 @@
 from llvmlite import ir
 
 from compiler.llvm_context import CodegenContext
-from compiler.llvm_layout import I8PTR, MAP_DESC_PTR, MAP_TYPE, RAW_SLICE_TYPE, STR_TYPE, llvm_type
+from compiler.llvm_layout import ERROR_TYPE, I8PTR, MAP_DESC_PTR, MAP_TYPE, RAW_SLICE_TYPE, STR_TYPE, llvm_type
 
 
 class RuntimeEmitter:
@@ -9,13 +9,33 @@ class RuntimeEmitter:
         self.ctx = ctx
 
     def emit_print_error(self, value):
-        self.ensure_fprintf()
-        stderr = self.ctx.builder.call(self.ctx.nc_stderr, [], name="stderr")
-        fmt = self.global_c_string("error: %.*s\n", "fmt_error")
-        ptr = self.ctx.builder.extract_value(value, 0)
-        length64 = self.ctx.builder.extract_value(value, 1)
-        length32 = self.ctx.builder.trunc(length64, ir.IntType(32))
-        self.ctx.builder.call(self.ctx.fprintf, [stderr, fmt, length32, ptr])
+        self.ensure_error_runtime()
+        slot = self.ctx.value_to_stack_ptr(value, ERROR_TYPE, "__nc_error_print_arg")
+        self.ctx.builder.call(self.ctx.error_print_fn, [slot])
+
+    def emit_error_from_str(self, value):
+        self.ensure_error_runtime()
+        out = self.ctx.alloca_at_entry("__nc_error_from_str_out", ERROR_TYPE)
+        message = self.ctx.value_to_stack_ptr(value, STR_TYPE, "__nc_error_message")
+        self.ctx.builder.call(self.ctx.error_from_str_fn, [out, message])
+        self.ctx.root_slots_for_type(out, "error")
+        return self.ctx.builder.load(out, name="error.from.str")
+
+    def emit_error_append_frame(self, value, function_name: str, path: str, line: int, col: int):
+        self.ensure_error_runtime()
+        slot = self.ctx.value_to_stack_ptr(value, ERROR_TYPE, "__nc_error_frame_arg")
+        function_value = self.global_nc_string(function_name, "error_fn")
+        path_value = self.global_nc_string(path, "error_path")
+        function_slot = self.ctx.value_to_stack_ptr(function_value, STR_TYPE, "__nc_error_frame_fn")
+        path_slot = self.ctx.value_to_stack_ptr(path_value, STR_TYPE, "__nc_error_frame_path")
+        self.ctx.builder.call(self.ctx.error_append_frame_fn, [
+            slot,
+            function_slot,
+            path_slot,
+            ir.Constant(ir.IntType(32), line),
+            ir.Constant(ir.IntType(32), col),
+        ])
+        return self.ctx.builder.load(slot, name="error.with.frame")
 
     def ensure_exit(self):
         if self.ctx.exit_fn is None:
@@ -46,6 +66,26 @@ class RuntimeEmitter:
                 self.ctx.module,
                 ir.FunctionType(I8PTR, []),
                 name="__nc_stderr",
+            )
+
+    def ensure_error_runtime(self):
+        if self.ctx.error_from_str_fn is None:
+            error_ptr = ERROR_TYPE.as_pointer()
+            str_ptr = STR_TYPE.as_pointer()
+            self.ctx.error_from_str_fn = ir.Function(
+                self.ctx.module,
+                ir.FunctionType(ir.VoidType(), [error_ptr, str_ptr]),
+                name="__nc_error_from_str_out",
+            )
+            self.ctx.error_append_frame_fn = ir.Function(
+                self.ctx.module,
+                ir.FunctionType(ir.VoidType(), [error_ptr, str_ptr, str_ptr, ir.IntType(32), ir.IntType(32)]),
+                name="__nc_error_append_frame",
+            )
+            self.ctx.error_print_fn = ir.Function(
+                self.ctx.module,
+                ir.FunctionType(ir.VoidType(), [error_ptr]),
+                name="__nc_error_print",
             )
 
     def ensure_sprintf(self):
@@ -238,6 +278,13 @@ class RuntimeEmitter:
         glob.initializer = ir.Constant(typ, raw)
         self.ctx.strings[key] = glob
         return glob.bitcast(ir.IntType(8).as_pointer())
+
+    def global_nc_string(self, text: str, hint: str):
+        ptr = self.global_c_string(text, hint)
+        value = ir.Constant(STR_TYPE, ir.Undefined)
+        value = self.ctx.builder.insert_value(value, ptr, [0], name=f"{hint}.ptr")
+        value = self.ctx.builder.insert_value(value, ir.Constant(ir.IntType(64), len(text.encode("utf-8"))), [1], name=f"{hint}.len")
+        return value
 
     def empty_string_ptr(self):
         if self.ctx.empty_c_string is None:
