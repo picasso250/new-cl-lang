@@ -622,6 +622,7 @@ class Parser:
                 self.advance()
                 field = self.expect(TokenKind.IDENT).value
                 if (self.peek().kind == TokenKind.LBRACKET and isinstance(expr, Identifier)
+                        and expr.name in self.imported_modules
                         and self.pos + 1 < len(self.tokens)
                         and self.tokens[self.pos + 1].kind != TokenKind.INTEGER):
                     qname = f"{expr.name}.{field}"

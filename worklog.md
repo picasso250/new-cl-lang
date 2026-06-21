@@ -222,3 +222,7 @@
 - 2026-06-20: 预备添加 json 标准库模块：以动态 Value DOM 为第一版，尽量用 NC 实现 parse/stringify，并补齐 JSON 需要的递归指针形 struct LLVM 支持。why：json 是标准库核心能力，当前缺口来自真实 DOM case，不引入反射或 struct 自动映射。
 
 - 2026-06-20: 已添加 json 标准库模块：新增动态 json.Value DOM、parse/stringify、构造/查询/数组/对象 API，json 作为保留标准模块名；LLVM struct 注册改用独立 context identified struct，支持指针/slice 形递归 struct 并拒绝直接值递归；同模块声明可引用本模块私有类型。同步 design.md/docs/stdlib.md，新增 json stdlib cases、递归 struct language cases 和 json preempt 项目测试。验证：python tests/test_language_cases.py 通过 264/264；python tests/test_stdlib.py 通过 67/67；python -m pytest tests/test_llvm_backend.py tests/test_type_ref.py tests/test_builtin_boundary.py tests/test_projects.py -q 通过 58 passed, 1 skipped。
+
+- 2026-06-21: 预备修复字段访问后索引解析：`p.s[i]`、`arr.items[i]`、`obj.entries[i]` 不应被误判为模块泛型函数值或调用，括号只能作为临时绕路，不应成为语言要求。why：字段索引是基础 postfix 链，当前 json 标准库防御式括号暴露 parser 泛型限定名分支过宽。
+
+- 2026-06-21: 已修复字段访问后索引解析：parser 的模块泛型限定名分支现在只接受已 import 模块名前缀，普通 `p.s[i]`、`arr.items[i]`、`obj.entries[i]` 和 `lit[i]` 走正常索引后缀；新增 case_314_postfix_field_index 覆盖该组合。design.md 无需更新。验证：python tests\test_language_cases.py 通过 265/265；python tests\test_stdlib.py 单 worker 通过 67/67；python -m pytest tests\test_llvm_backend.py tests\test_type_ref.py tests\test_builtin_boundary.py tests\test_projects.py -q --basetemp=.tmp\pytest 通过 58 passed, 1 skipped。
