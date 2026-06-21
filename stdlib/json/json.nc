@@ -1,3 +1,5 @@
+import strconv
+
 struct Value {
     kind_value: i32,
     bool_value: bool,
@@ -108,7 +110,7 @@ fun array_at(v: Value, i: i32): Value {
         if i < 0 || i >= len(arr.items) {
             err "json.array_at index out of range"
         }
-        ret (arr.items)[i]
+        ret arr.items[i]
     }
     err "json.array_at missing array"
 }
@@ -132,7 +134,7 @@ fun object_has(v: Value, key: str): bool {
     let obj = v.obj_value
     if obj != nil {
         for i in 0..len(obj.entries) {
-            if (obj.entries)[i].key == key {
+            if obj.entries[i].key == key {
                 ret true
             }
         }
@@ -148,8 +150,8 @@ fun object_get(v: Value, key: str): Value {
     let obj = v.obj_value
     if obj != nil {
         for i in 0..len(obj.entries) {
-            if (obj.entries)[i].key == key {
-                ret (obj.entries)[i].value
+            if obj.entries[i].key == key {
+                ret obj.entries[i].value
             }
         }
     }
@@ -165,11 +167,11 @@ fun object_set(v: Value, key: str, item: Value): void {
         let next = []json._Member {}
         let replaced = false
         for i in 0..len(obj.entries) {
-            if (obj.entries)[i].key == key {
+            if obj.entries[i].key == key {
                 next = append(next, _Member { key: key, value: item })
                 replaced = true
             } else {
-                next = append(next, (obj.entries)[i])
+                next = append(next, obj.entries[i])
             }
         }
         if !replaced {
@@ -205,7 +207,7 @@ fun stringify(v: Value): str {
         ret "false"
     }
     if k == 2 {
-        ret str(v.num_value)
+        ret strconv.format_f64(v.num_value)
     }
     if k == 3 {
         ret _quote(v.str_value)
@@ -218,7 +220,7 @@ fun stringify(v: Value): str {
                 if i > 0 {
                     out = out + ","
                 }
-                out = out + stringify((arr.items)[i])
+                out = out + stringify(arr.items[i])
             }
         }
         ret out + "]"
@@ -231,7 +233,7 @@ fun stringify(v: Value): str {
                 if i > 0 {
                     out = out + ","
                 }
-                out = out + _quote((obj.entries)[i].key) + ":" + stringify((obj.entries)[i].value)
+                out = out + _quote(obj.entries[i].key) + ":" + stringify(obj.entries[i].value)
             }
         }
         ret out + "}}"
@@ -244,7 +246,7 @@ fun _parse_value(p: *_Parser): Value {
     if p.i >= len(p.s) {
         err "json.parse failed"
     }
-    let b = (p.s)[p.i]
+    let b = p.s[p.i]
     if b == 110 {
         _expect_lit(p, "null")??
         ret null()
@@ -327,7 +329,7 @@ fun _parse_string(p: *_Parser): str {
     }
     let out = ""
     for p.i < len(p.s) {
-        let b = (p.s)[p.i]
+        let b = p.s[p.i]
         if b == 34 {
             p.i = p.i + 1
             ret out
@@ -337,7 +339,7 @@ fun _parse_string(p: *_Parser): str {
             if p.i >= len(p.s) {
                 err "json.parse failed"
             }
-            let e = (p.s)[p.i]
+            let e = p.s[p.i]
             p.i = p.i + 1
             if e == 34 {
                 out = out + "\""
@@ -364,7 +366,7 @@ fun _parse_string(p: *_Parser): str {
             if b < 32 {
                 err "json.parse failed"
             }
-            out = out + (p.s)[p.i:(p.i + 1)]
+            out = out + p.s[p.i:(p.i + 1)]
             p.i = p.i + 1
         }
     }
@@ -377,7 +379,7 @@ fun _parse_hex4(p: *_Parser): i32 {
     }
     let value = 0
     for n in 0..4 {
-        let d = _hex_value((p.s)[p.i])??
+        let d = _hex_value(p.s[p.i])??
         value = value * 16 + d
         p.i = p.i + 1
     }
@@ -385,73 +387,49 @@ fun _parse_hex4(p: *_Parser): i32 {
 }
 
 fun _parse_number(p: *_Parser): f64 {
-    let neg = false
+    let start = p.i
     if _consume(p, 45) {
-        neg = true
-    }
-    if p.i >= len(p.s) {
-        err "json.parse failed"
+        if p.i >= len(p.s) {
+            err "json.parse failed"
+        }
     }
 
-    let value = 0.0
     if _consume(p, 48) {
-        value = 0.0
-        if p.i < len(p.s) && _is_digit((p.s)[p.i]) {
+        if p.i < len(p.s) && _is_digit(p.s[p.i]) {
             err "json.parse failed"
         }
     } else {
-        if p.i >= len(p.s) || !_is_digit_1_9((p.s)[p.i]) {
+        if p.i >= len(p.s) || !_is_digit_1_9(p.s[p.i]) {
             err "json.parse failed"
         }
-        for p.i < len(p.s) && _is_digit((p.s)[p.i]) {
-            value = value * 10.0 + f64((p.s)[p.i] - 48)
+        for p.i < len(p.s) && _is_digit(p.s[p.i]) {
             p.i = p.i + 1
         }
     }
 
     if _consume(p, 46) {
-        if p.i >= len(p.s) || !_is_digit((p.s)[p.i]) {
+        if p.i >= len(p.s) || !_is_digit(p.s[p.i]) {
             err "json.parse failed"
         }
-        let place = 0.1
-        for p.i < len(p.s) && _is_digit((p.s)[p.i]) {
-            value = value + f64((p.s)[p.i] - 48) * place
-            place = place * 0.1
+        for p.i < len(p.s) && _is_digit(p.s[p.i]) {
             p.i = p.i + 1
         }
     }
 
-    if p.i < len(p.s) && ((p.s)[p.i] == 101 || (p.s)[p.i] == 69) {
+    if p.i < len(p.s) && (p.s[p.i] == 101 || p.s[p.i] == 69) {
         p.i = p.i + 1
-        let exp_neg = false
-        if _consume(p, 45) {
-            exp_neg = true
-        } else if _consume(p, 43) {
-            exp_neg = false
-        }
-        if p.i >= len(p.s) || !_is_digit((p.s)[p.i]) {
-            err "json.parse failed"
-        }
-        let exp = 0
-        for p.i < len(p.s) && _is_digit((p.s)[p.i]) {
-            exp = exp * 10 + ((p.s)[p.i] - 48)
+        if p.i < len(p.s) && (p.s[p.i] == 45 || p.s[p.i] == 43) {
             p.i = p.i + 1
         }
-        let scale = 1.0
-        for _n in 0..exp {
-            scale = scale * 10.0
+        if p.i >= len(p.s) || !_is_digit(p.s[p.i]) {
+            err "json.parse failed"
         }
-        if exp_neg {
-            value = value / scale
-        } else {
-            value = value * scale
+        for p.i < len(p.s) && _is_digit(p.s[p.i]) {
+            p.i = p.i + 1
         }
     }
 
-    if neg {
-        ret 0.0 - value
-    }
-    ret value
+    ret strconv.parse_f64(p.s[start:p.i])??
 }
 
 fun _quote(s: str): str {
@@ -483,7 +461,7 @@ fun _quote(s: str): str {
 
 fun _skip_ws(p: *_Parser): void {
     for p.i < len(p.s) {
-        let b = (p.s)[p.i]
+        let b = p.s[p.i]
         if b == 32 || b == 9 || b == 10 || b == 13 {
             p.i = p.i + 1
         } else {
@@ -493,7 +471,7 @@ fun _skip_ws(p: *_Parser): void {
 }
 
 fun _consume(p: *_Parser, b: i32): bool {
-    if p.i < len(p.s) && (p.s)[p.i] == b {
+    if p.i < len(p.s) && p.s[p.i] == b {
         p.i = p.i + 1
         ret true
     }
@@ -501,12 +479,12 @@ fun _consume(p: *_Parser, b: i32): bool {
 }
 
 fun _peek(p: *_Parser, b: i32): bool {
-    ret p.i < len(p.s) && (p.s)[p.i] == b
+    ret p.i < len(p.s) && p.s[p.i] == b
 }
 
 fun _expect_lit(p: *_Parser, lit: str): void {
     for i in 0..len(lit) {
-        if p.i + i >= len(p.s) || (p.s)[p.i + i] != (lit)[i] {
+        if p.i + i >= len(p.s) || p.s[p.i + i] != lit[i] {
             err "json.parse failed"
         }
     }

@@ -1,3 +1,8 @@
+extern {
+    fun c_parse_f32(ptr: ?*i8, len: u64): f32 = "__nc_strict_str_to_f32"
+    fun c_parse_f64(ptr: ?*i8, len: u64): f64 = "__nc_strict_str_to_f64"
+}
+
 fun is_digit_byte(b: i32): bool {
     ret b >= 48 && b <= 57
 }
@@ -58,47 +63,67 @@ fun format_i32(n: i32): str {
     ret str(n)
 }
 
-fun parse_f64(s: str): f64 {
+fun _validate_float(s: str, err_msg: str): void {
     if len(s) == 0 {
-        err "strconv.parse_f64 failed"
+        err err_msg
     }
 
     let i = 0
-    let neg = false
     if s[0] == 45 {
-        neg = true
         i = 1
     } else if s[0] == 43 {
         i = 1
     }
     if i == len(s) {
-        err "strconv.parse_f64 failed"
+        err err_msg
     }
 
-    let value = 0.0
     let digits = 0
     for i < len(s) && is_digit_byte(s[i]) {
-        value = value * 10.0 + f64(digit_byte(s[i]))
         digits = digits + 1
         i = i + 1
     }
     if i < len(s) && s[i] == 46 {
         i = i + 1
-        let place = 0.1
         for i < len(s) && is_digit_byte(s[i]) {
-            value = value + f64(digit_byte(s[i])) * place
-            place = place * 0.1
             digits = digits + 1
             i = i + 1
         }
     }
-    if digits == 0 || i != len(s) {
-        err "strconv.parse_f64 failed"
+    if digits == 0 {
+        err err_msg
     }
-    if neg {
-        ret 0.0 - value
+    if i < len(s) && (s[i] == 101 || s[i] == 69) {
+        i = i + 1
+        if i < len(s) && (s[i] == 45 || s[i] == 43) {
+            i = i + 1
+        }
+        let exp_digits = 0
+        for i < len(s) && is_digit_byte(s[i]) {
+            exp_digits = exp_digits + 1
+            i = i + 1
+        }
+        if exp_digits == 0 {
+            err err_msg
+        }
     }
-    ret value
+    if i != len(s) {
+        err err_msg
+    }
+}
+
+fun parse_f32(s: str): f32 {
+    _validate_float(s, "strconv.parse_f32 failed")??
+    ret c_parse_f32(s.ptr, s.len)
+}
+
+fun parse_f64(s: str): f64 {
+    _validate_float(s, "strconv.parse_f64 failed")??
+    ret c_parse_f64(s.ptr, s.len)
+}
+
+fun format_f32(n: f32): str {
+    ret str(n)
 }
 
 fun format_f64(n: f64): str {

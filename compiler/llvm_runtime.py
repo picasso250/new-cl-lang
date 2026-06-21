@@ -118,6 +118,11 @@ class RuntimeEmitter:
                 ir.FunctionType(ir.VoidType(), [str_ptr, ir.IntType(64)]),
                 name="__nc_u64_to_str_out",
             )
+            self.ctx.f32_to_str_fn = ir.Function(
+                self.ctx.module,
+                ir.FunctionType(ir.VoidType(), [str_ptr, ir.FloatType()]),
+                name="__nc_f32_to_str_out",
+            )
             self.ctx.f64_to_str_fn = ir.Function(
                 self.ctx.module,
                 ir.FunctionType(ir.VoidType(), [str_ptr, ir.DoubleType()]),

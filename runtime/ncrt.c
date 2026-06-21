@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <math.h>
 #include <sys/stat.h>
 #ifdef _WIN32
 #include <direct.h>
@@ -283,11 +284,80 @@ void __nc_u64_to_str_out(str* out, uint64_t n) {
     *out = (str){buf, (uint64_t)len};
 }
 
-void __nc_f64_to_str_out(str* out, double n) {
-    uint8_t* buf = (uint8_t*)__nc_gc_alloc(64);
-    int len = snprintf((char*)buf, 64, "%g", n);
+static void __nc_float_text_out(str* out, const char* text, int len) {
     if (len < 0) len = 0;
+    uint8_t* buf = (uint8_t*)__nc_gc_alloc((size_t)len + 1);
+    if (len) memcpy(buf, text, (size_t)len);
+    buf[len] = 0;
     *out = (str){buf, (uint64_t)len};
+}
+
+static int __nc_same_f32(float a, float b) {
+    return memcmp(&a, &b, sizeof(float)) == 0;
+}
+
+static int __nc_same_f64(double a, double b) {
+    return memcmp(&a, &b, sizeof(double)) == 0;
+}
+
+void __nc_f32_to_str_out(str* out, float n) {
+    char best[64];
+    int best_len = snprintf(best, sizeof(best), "%.9g", (double)n);
+    if (isfinite((double)n)) {
+        for (int precision = 1; precision <= 9; precision++) {
+            char candidate[64];
+            int len = snprintf(candidate, sizeof(candidate), "%.*g", precision, (double)n);
+            if (len < 0 || (size_t)len >= sizeof(candidate)) continue;
+            float reparsed = strtof(candidate, NULL);
+            if (__nc_same_f32(n, reparsed)) {
+                memcpy(best, candidate, (size_t)len + 1);
+                best_len = len;
+                break;
+            }
+        }
+    }
+    __nc_float_text_out(out, best, best_len);
+}
+
+void __nc_f64_to_str_out(str* out, double n) {
+    char best[64];
+    int best_len = snprintf(best, sizeof(best), "%.17g", n);
+    if (isfinite(n)) {
+        for (int precision = 1; precision <= 17; precision++) {
+            char candidate[64];
+            int len = snprintf(candidate, sizeof(candidate), "%.*g", precision, n);
+            if (len < 0 || (size_t)len >= sizeof(candidate)) continue;
+            double reparsed = strtod(candidate, NULL);
+            if (__nc_same_f64(n, reparsed)) {
+                memcpy(best, candidate, (size_t)len + 1);
+                best_len = len;
+                break;
+            }
+        }
+    }
+    __nc_float_text_out(out, best, best_len);
+}
+
+float __nc_strict_str_to_f32(const uint8_t* ptr, uint64_t len) {
+    if (!ptr && len != 0) return 0.0f;
+    char* buf = (char*)malloc((size_t)len + 1);
+    if (!buf) __nc_abort_oom();
+    if (len) memcpy(buf, ptr, (size_t)len);
+    buf[len] = 0;
+    float value = strtof(buf, NULL);
+    free(buf);
+    return value;
+}
+
+double __nc_strict_str_to_f64(const uint8_t* ptr, uint64_t len) {
+    if (!ptr && len != 0) return 0.0;
+    char* buf = (char*)malloc((size_t)len + 1);
+    if (!buf) __nc_abort_oom();
+    if (len) memcpy(buf, ptr, (size_t)len);
+    buf[len] = 0;
+    double value = strtod(buf, NULL);
+    free(buf);
+    return value;
 }
 
 void __nc_rune_to_str_out(str* out, uint32_t r) {

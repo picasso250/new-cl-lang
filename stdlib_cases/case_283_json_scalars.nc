@@ -3,7 +3,7 @@ import json
 # STDOUT: 0
 # STDOUT: 1
 # STDOUT: 1
-# STDOUT: -1250
+# STDOUT: -1.25e+03
 # STDOUT: hi
 
 fun main() {

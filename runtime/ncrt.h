@@ -61,8 +61,11 @@ void __nc_str_slice_copy_out(str* out, const str* s, uint64_t start, uint64_t en
 void __nc_i32_to_str_out(str* out, int n);
 void __nc_i64_to_str_out(str* out, int64_t n);
 void __nc_u64_to_str_out(str* out, uint64_t n);
+void __nc_f32_to_str_out(str* out, float n);
 void __nc_f64_to_str_out(str* out, double n);
 void __nc_rune_to_str_out(str* out, uint32_t r);
+float __nc_strict_str_to_f32(const uint8_t* ptr, uint64_t len);
+double __nc_strict_str_to_f64(const uint8_t* ptr, uint64_t len);
 int __nc_str_to_i32_ptr(const str* s);
 int __nc_str_eq_ptr(const str* a, const str* b);
 void __nc_cstr_to_str_out(str* out, const char* cstr);

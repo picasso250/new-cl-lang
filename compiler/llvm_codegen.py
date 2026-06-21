@@ -214,6 +214,7 @@ class LLVMCodegen:
         self.i32_to_str_fn = None
         self.i64_to_str_fn = None
         self.u64_to_str_fn = None
+        self.f32_to_str_fn = None
         self.f64_to_str_fn = None
         self.rune_to_str_fn = None
         self.str_to_i32_fn = None
@@ -1087,10 +1088,12 @@ class LLVMCodegen:
             as_i32 = self.builder.zext(self.bool_value(val), ir.IntType(32), name="bool.i32")
             return self.builder.call(self.printf, [fmt, as_i32])
         if typ in ("f32", "f64"):
-            fmt = self.global_c_string("%g" + line, "fmt_float")
-            if typ == "f32":
-                val = self.builder.fpext(val, ir.DoubleType())
-            return self.builder.call(self.printf, [fmt, val])
+            s = self.emit_f32_value_to_str(val) if typ == "f32" else self.emit_f64_value_to_str(val)
+            fmt = self.global_c_string("%.*s" + line, "fmt_float")
+            ptr = self.builder.extract_value(s, 0)
+            length64 = self.builder.extract_value(s, 1)
+            length32 = self.builder.trunc(length64, ir.IntType(32))
+            return self.builder.call(self.printf, [fmt, length32, ptr])
         if typ in INT_TYPES:
             fmt = self.global_c_string("%lld" + line, "fmt_int")
             if val.type.width < 64:
@@ -1118,7 +1121,7 @@ class LLVMCodegen:
         if typ in FLOAT_TYPES:
             value = self.emit_expr(arg_expr)
             if typ == "f32":
-                value = self.builder.fpext(value, ir.DoubleType())
+                return self.emit_f32_value_to_str(value)
             return self.emit_f64_value_to_str(value)
         raise NotImplementedError(f"LLVM backend cannot convert {typ} to str")
 
@@ -1253,6 +1256,9 @@ class LLVMCodegen:
 
     def emit_u64_value_to_str(self, value):
         return self.string_emitter.emit_u64_value_to_str(value)
+
+    def emit_f32_value_to_str(self, value):
+        return self.string_emitter.emit_f32_value_to_str(value)
 
     def emit_rune_value_to_str(self, value):
         return self.string_emitter.emit_rune_value_to_str(value)

@@ -43,6 +43,7 @@ class CodegenContext(Protocol):
     i32_to_str_fn: ir.Function | None
     i64_to_str_fn: ir.Function | None
     u64_to_str_fn: ir.Function | None
+    f32_to_str_fn: ir.Function | None
     f64_to_str_fn: ir.Function | None
     rune_to_str_fn: ir.Function | None
     str_to_i32_fn: ir.Function | None

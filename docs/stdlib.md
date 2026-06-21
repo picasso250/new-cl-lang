@@ -88,11 +88,13 @@ v1 不提供 `os.setenv`、`os.unsetenv`、`os.chdir`。
 - `strconv.atoi(s): i32`
 - `strconv.itoa(n): str`
 - `strconv.parse_i32(s): i32`
+- `strconv.parse_f32(s): f32`
 - `strconv.parse_f64(s): f64`
 - `strconv.format_i32(n): str`
+- `strconv.format_f32(n): str`
 - `strconv.format_f64(n): str`
 
-`parse_i32` 支持可选 `+`/`-` 和十进制数字；空串、只有符号、非数字字符和溢出都会 `err "strconv.parse_i32 failed"`。`parse_f64` 支持可选符号、整数部分和小数部分，至少需要一个数字；v1 不支持 exponent，非法输入会 `err "strconv.parse_f64 failed"`。
+`parse_i32` 支持可选 `+`/`-` 和十进制数字；空串、只有符号、非数字字符和溢出都会 `err "strconv.parse_i32 failed"`。`parse_f32` / `parse_f64` 支持严格十进制浮点文本：可选 `+`/`-`、整数部分和小数部分、可选 `e`/`E` exponent，至少需要一个数字并必须整串消费；不接受前后空白、`nan`、`inf`、hex float、下划线或 locale 小数点，非法输入会分别 `err "strconv.parse_f32 failed"` / `err "strconv.parse_f64 failed"`。`format_f32` / `format_f64` 输出可 round-trip 的短十进制文本；当前实现通过 ncrt C helper 搜索可 round-trip 的 `%g` 候选，后续可替换为 Ryu/Dragonbox 族固定时间 shortest 实现。
 
 ### math
 
@@ -139,7 +141,7 @@ v1 不提供 `os.setenv`、`os.unsetenv`、`os.chdir`。
 - `json.object_get(v, key): json.Value`
 - `json.object_set(v, key, item)`
 
-`json.Value` 是动态 DOM 值，`kind` 编号为 `0=null`、`1=bool`、`2=number`、`3=string`、`4=array`、`5=object`。`parse` 支持常用 JSON：对象、数组、字符串、数字、`true`、`false`、`null`、空白、常见字符串转义和基本 `\uXXXX` 转义；非法输入会 `err "json.parse failed"`。`stringify` 输出紧凑 JSON，并按 JSON 规则转义字符串。
+`json.Value` 是动态 DOM 值，`kind` 编号为 `0=null`、`1=bool`、`2=number`、`3=string`、`4=array`、`5=object`。`parse` 支持常用 JSON：对象、数组、字符串、JSON number、`true`、`false`、`null`、空白、常见字符串转义和基本 `\uXXXX` 转义；数字转换复用 `strconv.parse_f64`，非法输入会 `err "json.parse failed"`。`stringify` 输出紧凑 JSON，并按 JSON 规则转义字符串，number 输出复用 `strconv.format_f64`。
 
 v1 不提供 `json.decode[T]`、`json.encode[T]`、字段标签或 struct 自动映射。需要类型化数据时，先用动态 `Value` API 手写转换。
 

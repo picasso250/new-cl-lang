@@ -819,7 +819,17 @@ class Parser:
                     self.expect(TokenKind.RPAREN)
                     return self.span(FunctionCall(name, args, type_args), start)
                 if self.peek().kind == TokenKind.LBRACE:
-                    name = f"{name}[{','.join(type_args)}]"
+                    brace_save = self.pos
+                    self.advance()
+                    is_struct_literal = self.peek().kind == TokenKind.RBRACE
+                    if self.peek().kind == TokenKind.IDENT:
+                        self.advance()
+                        is_struct_literal = self.peek().kind == TokenKind.COLON
+                    self.pos = brace_save
+                    if is_struct_literal:
+                        name = f"{name}[{','.join(type_args)}]"
+                    else:
+                        self.pos = save
                 else:
                     self.pos = save
             # 前瞻避免混淆 if 块：需 { 后首个 IDENT 之后是 :

@@ -44,6 +44,12 @@ class StringEmitter:
         self.ctx.builder.call(self.ctx.u64_to_str_fn, [out, value])
         return self.ctx.builder.load(out, name="u64.str")
 
+    def emit_f32_value_to_str(self, value):
+        self.ctx.ensure_ncrt_runtime()
+        out = self.ctx.alloca_at_entry("__nc_f32_str_out", STR_TYPE)
+        self.ctx.builder.call(self.ctx.f32_to_str_fn, [out, value])
+        return self.ctx.builder.load(out, name="f32.str")
+
     def emit_rune_value_to_str(self, value):
         self.ctx.ensure_ncrt_runtime()
         out = self.ctx.alloca_at_entry("__nc_rune_str_out", STR_TYPE)
