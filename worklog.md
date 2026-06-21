@@ -230,3 +230,7 @@
 - 2026-06-21: 预备实现统一包围逗号列表尾逗号：允许 `() / [] / {}` 包围的逗号分隔列表使用尾逗号，不改变 `for i, item in` 这类非包围语法逗号。why：多行编辑和生成代码更友好，parser 成本低且不影响 AST/typecheck/codegen 语义。
 
 - 2026-06-21: 已实现统一包围逗号列表尾逗号：parser 新增包围逗号列表辅助逻辑，覆盖函数类型、泛型参数/实参、函数/方法参数与调用、struct/enum 声明、struct literal/new literal、数组/切片 literal，并保留空洞逗号和非包围 `for i, item in` 拒绝行为。同步 design.md，新增 case_315~318 覆盖正向与错误路径。验证：python -m py_compile compiler\parser.py；python tests\test_language_cases.py 通过 269/269；python tests\test_stdlib.py 通过 67/67；python -m pytest tests\test_llvm_backend.py tests\test_type_ref.py tests\test_builtin_boundary.py tests\test_projects.py -q 通过 58 passed, 1 skipped。
+
+- 2026-06-21: 预备实现右侧值自足的类型省略首批能力：默认参数可由默认值推导参数类型，非空 slice literal 可写 []{...} 推元素类型；不做调用点反推、泛型实参推导、闭包参数上下文推导或 array 省略。why：默认参数和 slice literal 已有真实 case 暴露重复类型噪音，按 NC 显式可预测原则只收敛声明处自足的省略。
+
+- 2026-06-21: 已实现右侧值自足的类型省略首批能力：默认参数支持 name = expr 从默认值推导参数类型，无默认值参数仍必须显式类型；非空 slice literal 支持 []{...} 从首元素推导元素类型，空 slice 和 array 省略仍拒绝。同步 design.md，新增 case_319~327 并更新旧未类型默认参数错误预期。验证：python -m py_compile compiler\parser.py compiler\ast.py compiler\symtab.py compiler\typecheck.py compiler\generics.py；python tests\test_language_cases.py 通过 278/278；python tests\test_stdlib.py 通过 67/67；python -m pytest tests\test_llvm_backend.py tests\test_type_ref.py tests\test_builtin_boundary.py tests\test_projects.py -q 通过 58 passed, 1 skipped。

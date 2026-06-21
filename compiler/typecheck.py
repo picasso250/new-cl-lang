@@ -214,6 +214,11 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         if len(args) != expected:
             fail(f"{context}: expected {expected} args, got {len(args)}", node)
 
+    def require_concrete_param_type(param, context, node=None):
+        if param.type is None:
+            fail(f"{context}: parameter {param.name} requires a type or default value", node or param)
+        return param.type
+
     def required_param_count(params):
         count = 0
         for param in params:
@@ -228,6 +233,16 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 seen_default = True
             elif seen_default:
                 fail(f"{context}: required parameter {param.name} cannot follow default parameter", node)
+
+    def infer_default_param_type(param):
+        if param.type is not None:
+            return param.type
+        if param.default is None:
+            fail(f"parameter {param.name} requires a type or default value", param)
+        if param.default.type in (None, "void", "__nil"):
+            fail(f"default parameter {param.name}: cannot infer type from {param.default.type}", param.default)
+        param.type = param.default.type
+        return param.type
 
     def clone_default_expr(expr, replacements):
         cloned = copy.deepcopy(expr)
@@ -277,6 +292,11 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             default_expr = clone_default_expr(param.default, replacements)
             mark_default_arg_expr(default_expr)
             walk_expr(default_expr)
+            if param.type is None:
+                if default_expr.type in (None, "void", "__nil"):
+                    fail(f"default parameter {param.name}: cannot infer type from {default_expr.type}", default_expr)
+                param.type = default_expr.type
+            require_concrete_param_type(param, context, node)
             require_type(default_expr.type, param.type, f"default argument {param.name} to {context}", default_expr)
             args.append(default_expr)
             replacements[param.name] = default_expr
@@ -335,9 +355,12 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         if fn.receiver_name:
             symtab.declare(fn.receiver_name, fn.receiver_type)
         for param in fn.params:
-            if param.default is not None and not getattr(fn, "_generic_origin_kind", None):
+            if param.default is not None and (not getattr(fn, "_generic_origin_kind", None) or param.type is None):
                 walk_expr(param.default)
+                infer_default_param_type(param)
                 require_type(param.default.type, param.type, f"default parameter {param.name}", param.default)
+            else:
+                require_concrete_param_type(param, f"function {fn.name}", fn)
             symtab.declare(param.name, param.type)
         symtab.pop_scope()
 
@@ -481,6 +504,8 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         for param in fn.params:
             if param.default is not None:
                 fail("extern functions cannot have default parameters", param)
+            if param.type is None:
+                fail(f"extern function {fn.name}: parameter {param.name} requires a type", param)
         if getattr(fn, "trusted_stdlib", False):
             return
         ret = fn.return_type or "void"
@@ -786,12 +811,15 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             for param in node.params:
                 if param.default is not None:
                     fail("function expressions cannot have default parameters", param)
+                require_concrete_param_type(param, "function expression", node)
             prev_return_type = current_return_type
             if not node.return_type_explicit:
                 infer_function_expr_return(node)
             current_return_type = node.return_type or "void"
             symtab.push_scope()
             for pname, ptype in node.params:
+                if ptype is None:
+                    fail(f"function expression: parameter {pname} requires a type", node)
                 validate_map_type(ptype, node)
                 symtab.declare(pname, ptype)
             ctx = {"level": symtab._level, "captures": {}}
@@ -954,7 +982,17 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 require_type(elem.type, node.elem_type, "array element", elem)
             node.type = f"[{node.length}]{node.elem_type}"
         elif isinstance(node, SliceLiteral):
-            for elem in node.elements:
+            if node.elem_type is None:
+                if not node.elements:
+                    fail("slice literal: cannot infer element type from empty literal", node)
+                walk_expr(node.elements[0])
+                if node.elements[0].type in (None, "void", "__nil"):
+                    fail(f"slice literal: cannot infer element type from {node.elements[0].type}", node.elements[0])
+                node.elem_type = node.elements[0].type
+                rest = node.elements[1:]
+            else:
+                rest = node.elements
+            for elem in rest:
                 walk_expr(elem)
                 require_type(elem.type, node.elem_type, "slice element", elem)
             node.type = f"[]{node.elem_type}"
@@ -1092,6 +1130,8 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                     require_public_qualified(stmt.receiver_type, stmt)
                     validate_map_type(stmt.receiver_type, stmt)
                 for _pname, _ptype in stmt.params:
+                    if _ptype is None:
+                        continue
                     require_public_qualified(_ptype, stmt)
                     validate_map_type(_ptype, stmt)
                 symtab.push_scope()
@@ -1107,9 +1147,12 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 if stmt.receiver_name:
                     symtab.declare(stmt.receiver_name, stmt.receiver_type)
                 for param in stmt.params:
-                    if param.default is not None and not getattr(stmt, "_generic_origin_kind", None):
+                    if param.default is not None and (not getattr(stmt, "_generic_origin_kind", None) or param.type is None):
                         walk_expr(param.default)
+                        infer_default_param_type(param)
                         require_type(param.default.type, param.type, f"default parameter {param.name}", param.default)
+                    elif param.default is None:
+                        require_concrete_param_type(param, f"function {stmt.name}", stmt)
                     symtab.declare(param.name, param.type)
                 walk_stmts(stmt.body.statements)
                 if current_return_type != "void" and not ends_with_return(stmt.body.statements):
@@ -1219,9 +1262,12 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         if isinstance(fn_node, FunctionDeclaration) and fn_node.receiver_name:
             symtab.declare(fn_node.receiver_name, fn_node.receiver_type)
         for param in fn_node.params:
-            if getattr(param, "default", None) is not None and not getattr(fn_node, "_generic_origin_kind", None):
+            if getattr(param, "default", None) is not None and (not getattr(fn_node, "_generic_origin_kind", None) or param.type is None):
                 walk_expr(param.default)
+                infer_default_param_type(param)
                 require_type(param.default.type, param.type, f"default parameter {param.name}", param.default)
+            elif getattr(param, "default", None) is None:
+                require_concrete_param_type(param, display_name, fn_node)
             symtab.declare(param.name, param.type)
         walk_stmts(fn_node.body.statements)
 

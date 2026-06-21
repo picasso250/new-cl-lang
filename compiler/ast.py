@@ -176,7 +176,7 @@ class ExternBlock(Node):
 
 class Param(Node):
     """Function parameter with optional default expression."""
-    def __init__(self, name: str, type_name: str, default=None):
+    def __init__(self, name: str, type_name: str | None, default=None):
         self.name = name
         self.type = type_name
         self.default = default
@@ -186,8 +186,9 @@ class Param(Node):
         yield self.type
 
     def __repr__(self):
+        type_part = f": {self.type}" if self.type is not None else ""
         default = f" = {self.default}" if self.default is not None else ""
-        return f"{self.name}: {self.type}{default}"
+        return f"{self.name}{type_part}{default}"
 
 
 class EnumDecl(Node):
@@ -265,7 +266,7 @@ class ArrayLiteral(Node):
 
 class SliceLiteral(Node):
     """[]T { e1, e2, ... }"""
-    def __init__(self, elem_type: str, elements: list):
+    def __init__(self, elem_type: str | None, elements: list):
         self.elem_type = elem_type
         self.elements = elements
         self.type: str | None = None

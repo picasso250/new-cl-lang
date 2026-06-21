@@ -255,14 +255,20 @@ class Parser:
 
     def _parse_param(self, *, allow_default: bool) -> Param:
         pname = self.expect(TokenKind.IDENT).value
-        self.expect(TokenKind.COLON)
-        ptype = self._parse_type()
+        ptype = None
+        if self.peek().kind == TokenKind.COLON:
+            self.advance()
+            ptype = self._parse_type()
+        elif self.peek().kind != TokenKind.EQ:
+            raise ParseError("parameter type is required unless a default value is provided")
         default = None
         if self.peek().kind == TokenKind.EQ:
             if not allow_default:
                 raise ParseError("default parameters are not supported here")
             self.advance()
             default = self.parse_expression()
+        if ptype is None and default is None:
+            raise ParseError("parameter type is required unless a default value is provided")
         return Param(pname, ptype, default)
 
     def _parse_param_list(self, *, allow_default: bool) -> list[Param]:
@@ -844,7 +850,7 @@ class Parser:
                 if suffix is not None:
                     raise ParseError("array length literal cannot have a type suffix")
             self.expect(TokenKind.RBRACKET)
-            elem_type = self._parse_type()
+            elem_type = None if length is None and self.peek().kind == TokenKind.LBRACE else self._parse_type()
             self.expect(TokenKind.LBRACE)
             elements = self._parse_comma_list(TokenKind.RBRACE, self.parse_expression)
             self.expect(TokenKind.RBRACE)

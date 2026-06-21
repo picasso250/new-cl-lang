@@ -189,7 +189,8 @@ def monomorphize(program: Program) -> Program:
     def rewrite_node(n):
         if isinstance(n, FunctionDeclaration):
             for param in n.params:
-                param.type = rewrite_type(param.type)
+                if param.type is not None:
+                    param.type = rewrite_type(param.type)
             n.return_type = rewrite_type(n.return_type)
             n.receiver_type = rewrite_type(n.receiver_type)
         elif isinstance(n, StructDecl):
