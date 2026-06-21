@@ -14,6 +14,18 @@ def test_llvm_smoke_empty_main():
     assert (stdout, stderr, rc) == ("", "", 0)
 
 
+def test_empty_source_path_falls_back_to_memory():
+    source = """import io
+fun main() {
+    io.println(__FILE__)
+    io.println(__MODULE__)
+}
+"""
+    llvm_ir, link_libs, support_c_sources = compile_nc_sources_with_libs([("", source)])
+    stdout, stderr, rc = run_llvm_ir(llvm_ir, link_libs, support_c_sources)
+    assert (stdout.strip(), stderr.strip(), rc) == ("<memory>\n<memory>", "", 0)
+
+
 def test_llvm_os_args_and_env():
     source = """import io
 import os

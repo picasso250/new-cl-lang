@@ -5,7 +5,14 @@ def normalized_source_path(source_file) -> str:
     path = getattr(source_file, "path", "<memory>") or "<memory>"
     if not path.startswith("<"):
         path = os.path.relpath(os.path.abspath(path))
+        path = path.replace(os.sep, "/")
+        if os.altsep:
+            path = path.replace(os.altsep, "/")
     return path
+
+
+def source_module_name(source_file) -> str:
+    return getattr(source_file, "module_name", "<memory>") or "<memory>"
 
 
 def line_col_for_node(node) -> tuple[int, int]:

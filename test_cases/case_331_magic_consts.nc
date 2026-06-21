@@ -1,7 +1,8 @@
-# STDOUT: <memory>
-# STDOUT: 14
+# STDOUT: test_cases/case_331_magic_consts.nc
+# STDOUT: 15
 # STDOUT: 16
 # STDOUT: show
+# STDOUT: test_cases
 # STDOUT: Box.name
 # STDOUT: lambda 0
 
@@ -14,6 +15,7 @@ fun show() {
     io.println(__LINE__)
     io.println(__COL__)
     io.println(__FUNC__)
+    io.println(__MODULE__)
 }
 
 fun (b *Box) name() {

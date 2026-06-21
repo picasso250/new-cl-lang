@@ -4,7 +4,7 @@ from compiler.ast import *
 from compiler.lexer import Token, TokenKind
 
 
-MAGIC_CONSTS = {"__FILE__", "__LINE__", "__COL__", "__FUNC__"}
+MAGIC_CONSTS = {"__FILE__", "__LINE__", "__COL__", "__FUNC__", "__MODULE__"}
 
 
 class ParseError(Exception):

@@ -10,7 +10,7 @@ from compiler import compile_nc_sources_with_libs, run_llvm_ir
 
 
 Expected = tuple[str, str, int]
-Case = tuple[str, str, Expected]
+Case = tuple[str, str, str, Expected]
 
 
 def discover_cases(case_dir: str) -> list[Case]:
@@ -20,7 +20,7 @@ def discover_cases(case_dir: str) -> list[Case]:
             source = f.read()
         expected = parse_expected(source)
         fname = os.path.basename(path)
-        cases.append((fname, source, expected))
+        cases.append((path, fname, source, expected))
     return cases
 
 
@@ -37,9 +37,9 @@ def parse_expected(source: str) -> Expected:
     return stdout, stderr, rc
 
 
-def compile_and_run(source: str) -> Expected:
+def compile_and_run(path: str, source: str) -> Expected:
     try:
-        llvm_ir, link_libs, support_c_sources = compile_nc_sources_with_libs([("<memory>", source)])
+        llvm_ir, link_libs, support_c_sources = compile_nc_sources_with_libs([(path, source)])
     except Exception as e:
         return "__ERROR__", str(e), 0
     stdout, stderr, rc = run_llvm_ir(llvm_ir, link_libs, support_c_sources)
@@ -53,8 +53,8 @@ def case_ok(expected: Expected, actual: Expected) -> bool:
 
 
 def run_case(case: Case) -> tuple[str, Expected, Expected]:
-    fname, source, expected = case
-    return fname, expected, compile_and_run(source)
+    path, fname, source, expected = case
+    return fname, expected, compile_and_run(path, source)
 
 
 def worker_count() -> int:
@@ -98,7 +98,7 @@ def main(case_dir: str) -> None:
             source = f.read()
         expected = parse_expected(source)
         print(f"=== {fname} ===")
-        actual = compile_and_run(source)
+        actual = compile_and_run(path, source)
         print(f"expected: {repr(expected)}")
         print(f"actual:   {repr(actual)}")
         print("PASS" if case_ok(expected, actual) else "FAIL")

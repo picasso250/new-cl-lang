@@ -135,6 +135,8 @@ def parse_module_sources(sources: "list[tuple[str, str]]", *, trusted_stdlib: bo
     source_files = [SourceFile(filename, source, trusted_stdlib=trusted_stdlib) for filename, source in sources]
     name, root = module_name_from_sources(source_files)
     module = Module(name, root, source_files)
+    for source_file in source_files:
+        source_file.module_name = name
     token_lists = []
     imported_modules = set()
     for source_file in module.files:

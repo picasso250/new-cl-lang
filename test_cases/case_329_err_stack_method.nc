@@ -1,7 +1,7 @@
 # STDERR: error: method bad
 # STDERR: stack:
-# STDERR:   at Box.get (<memory>:13:9)
-# STDERR:   at main (<memory>:19:39)
+# STDERR:   at Box.get (test_cases/case_329_err_stack_method.nc:13:9)
+# STDERR:   at main (test_cases/case_329_err_stack_method.nc:19:39)
 # RC: 1
 
 import io

@@ -36,7 +36,7 @@ from compiler.llvm_method import MethodEmitter
 from compiler.llvm_runtime import RuntimeEmitter
 from compiler.llvm_slice import SliceEmitter
 from compiler.llvm_string import StringEmitter
-from compiler.source_location import line_col_for_node, normalized_source_path
+from compiler.source_location import line_col_for_node, normalized_source_path, source_module_name
 from compiler.target import TargetSpec, get_target
 from compiler.type_ref import parse_array_type, parse_fn_type, parse_map_type, parse_slice_type
 
@@ -751,6 +751,8 @@ class LLVMCodegen:
             return ir.Constant(ir.IntType(32), col)
         if node.name == "__FILE__":
             value = normalized_source_path(getattr(node, "source_file", None))
+        elif node.name == "__MODULE__":
+            value = source_module_name(getattr(node, "source_file", None))
         elif node.name == "__FUNC__":
             value = self.current_frame_name
         else:

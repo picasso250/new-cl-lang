@@ -1,8 +1,8 @@
 # STDERR: error: bad
 # STDERR: stack:
-# STDERR:   at fail (<memory>:11:5)
-# STDERR:   at wrap (<memory>:15:9)
-# STDERR:   at main (<memory>:19:16)
+# STDERR:   at fail (test_cases/case_328_err_stack_propagate.nc:11:5)
+# STDERR:   at wrap (test_cases/case_328_err_stack_propagate.nc:15:9)
+# STDERR:   at main (test_cases/case_328_err_stack_propagate.nc:19:16)
 # RC: 1
 
 import io

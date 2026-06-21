@@ -12,6 +12,11 @@ class SourceFile:
     source: str
     ast: Program | None = None
     trusted_stdlib: bool = False
+    module_name: str = "<memory>"
+
+    def __post_init__(self):
+        if not self.path:
+            self.path = "<memory>"
 
 
 @dataclass

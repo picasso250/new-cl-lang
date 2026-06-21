@@ -39,7 +39,22 @@ def test_multifile_inferred_return_run():
 def test_magic_file_uses_declaring_source_file():
     result = run_nc("run", os.path.join("test_cases", "project_331_magic_file"))
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == os.path.join("test_cases", "project_331_magic_file", "other.nc")
+    assert result.stdout.strip() == "test_cases/project_331_magic_file/other.nc"
+
+
+def test_magic_module_uses_declaring_module():
+    with tempfile.TemporaryDirectory() as tmp:
+        main = os.path.join(tmp, "main")
+        helper = os.path.join(tmp, "helper")
+        os.mkdir(main)
+        os.mkdir(helper)
+        write_file(os.path.join(main, "main.nc"), "import io\nimport helper\nfun main() { io.println(__MODULE__); io.println(helper.name()) }\n")
+        write_file(os.path.join(helper, "helper.nc"), "fun name(): str { ret __MODULE__ }\n")
+
+        result = run_nc("run", main)
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip().splitlines() == ["main", "helper"]
 
 
 def test_default_build_outputs_llvm_ir_obj_and_exe():

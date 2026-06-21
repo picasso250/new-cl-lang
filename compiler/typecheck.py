@@ -602,6 +602,26 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
     def is_assignment_forbidden(name):
         return any(name in scope for scope in narrowed_assign_forbidden)
 
+    def is_upper_const_name(name: str) -> bool:
+        has_letter = False
+        for ch in name:
+            if "A" <= ch <= "Z":
+                has_letter = True
+                continue
+            if "0" <= ch <= "9" or ch == "_":
+                continue
+            return False
+        return has_letter
+
+    def require_mutable_binding(target):
+        if isinstance(target, Identifier):
+            try:
+                sym = symtab.lookup(target.name)
+            except NameError:
+                return
+            if getattr(sym, "immutable", False):
+                fail(f"cannot assign to const binding '{target.name}'", target)
+
     def walk_expr(node):
         nonlocal current_return_type, current_callable, fallible_op_depth
         if isinstance(node, IntegerLiteral):
@@ -623,7 +643,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         elif isinstance(node, NilLiteral):
             node.type = "__nil"
         elif isinstance(node, MagicConst):
-            if node.name in {"__FILE__", "__FUNC__"}:
+            if node.name in {"__FILE__", "__FUNC__", "__MODULE__"}:
                 if node.name == "__FUNC__" and current_callable is None:
                     fail("__FUNC__ is only available inside functions", node)
                 node.type = "str"
@@ -1061,12 +1081,13 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 if stmt.type == "void" or stmt.type == "__nil":
                     fail(f"let {stmt.name}: cannot bind void value", stmt)
                 require_type(stmt.initializer.type, stmt.type, f"let {stmt.name}", stmt)
-                symtab.declare(stmt.name, stmt.type)
+                symtab.declare(stmt.name, stmt.type, immutable=is_upper_const_name(stmt.name))
             elif isinstance(stmt, ExpressionStatement):
                 walk_expr(stmt.expr)
             elif isinstance(stmt, Assignment):
                 walk_expr(stmt.target)
                 require_assignable(stmt.target)
+                require_mutable_binding(stmt.target)
                 if isinstance(stmt.target, Identifier) and is_assignment_forbidden(stmt.target.name):
                     fail(f"cannot assign to narrowed nullable pointer '{stmt.target.name}' inside non-nil block", stmt.target)
                 if isinstance(stmt.target, Identifier) and getattr(stmt.target, "is_capture", False):
@@ -1117,6 +1138,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             elif isinstance(stmt, Update):
                 walk_expr(stmt.target)
                 require_assignable(stmt.target)
+                require_mutable_binding(stmt.target)
                 if isinstance(stmt.target, Identifier) and is_assignment_forbidden(stmt.target.name):
                     fail(f"cannot assign to narrowed nullable pointer '{stmt.target.name}' inside non-nil block", stmt.target)
                 if isinstance(stmt.target, Identifier) and getattr(stmt.target, "is_capture", False):
