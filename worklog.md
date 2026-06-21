@@ -226,3 +226,7 @@
 - 2026-06-21: 预备修复字段访问后索引解析：`p.s[i]`、`arr.items[i]`、`obj.entries[i]` 不应被误判为模块泛型函数值或调用，括号只能作为临时绕路，不应成为语言要求。why：字段索引是基础 postfix 链，当前 json 标准库防御式括号暴露 parser 泛型限定名分支过宽。
 
 - 2026-06-21: 已修复字段访问后索引解析：parser 的模块泛型限定名分支现在只接受已 import 模块名前缀，普通 `p.s[i]`、`arr.items[i]`、`obj.entries[i]` 和 `lit[i]` 走正常索引后缀；新增 case_314_postfix_field_index 覆盖该组合。design.md 无需更新。验证：python tests\test_language_cases.py 通过 265/265；python tests\test_stdlib.py 单 worker 通过 67/67；python -m pytest tests\test_llvm_backend.py tests\test_type_ref.py tests\test_builtin_boundary.py tests\test_projects.py -q --basetemp=.tmp\pytest 通过 58 passed, 1 skipped。
+
+- 2026-06-21: 预备实现统一包围逗号列表尾逗号：允许 `() / [] / {}` 包围的逗号分隔列表使用尾逗号，不改变 `for i, item in` 这类非包围语法逗号。why：多行编辑和生成代码更友好，parser 成本低且不影响 AST/typecheck/codegen 语义。
+
+- 2026-06-21: 已实现统一包围逗号列表尾逗号：parser 新增包围逗号列表辅助逻辑，覆盖函数类型、泛型参数/实参、函数/方法参数与调用、struct/enum 声明、struct literal/new literal、数组/切片 literal，并保留空洞逗号和非包围 `for i, item in` 拒绝行为。同步 design.md，新增 case_315~318 覆盖正向与错误路径。验证：python -m py_compile compiler\parser.py；python tests\test_language_cases.py 通过 269/269；python tests\test_stdlib.py 通过 67/67；python -m pytest tests\test_llvm_backend.py tests\test_type_ref.py tests\test_builtin_boundary.py tests\test_projects.py -q 通过 58 passed, 1 skipped。

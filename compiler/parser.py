@@ -38,6 +38,18 @@ class Parser:
         node.span = (start.pos, self.tokens[self.pos - 1].pos)
         return node
 
+    def _parse_comma_list(self, end_kind: TokenKind, parse_item):
+        items = []
+        if self.peek().kind != end_kind:
+            while True:
+                items.append(parse_item())
+                if self.peek().kind != TokenKind.COMMA:
+                    break
+                self.advance()
+                if self.peek().kind == end_kind:
+                    break
+        return items
+
     # ========== 程序入口 ==========
 
     def parse_program(self) -> Program:
@@ -180,12 +192,7 @@ class Parser:
         if self.peek().kind == TokenKind.FUN:
             self.advance()
             self.expect(TokenKind.LPAREN)
-            params = []
-            if self.peek().kind != TokenKind.RPAREN:
-                params.append(self._parse_type())
-                while self.peek().kind == TokenKind.COMMA:
-                    self.advance()
-                    params.append(self._parse_type())
+            params = self._parse_comma_list(TokenKind.RPAREN, self._parse_type)
             self.expect(TokenKind.RPAREN)
             ret = self._parse_type()
             return f"fn({','.join(params)})->{ret}"
@@ -214,12 +221,7 @@ class Parser:
 
     def _parse_type_arg_list(self) -> list[str]:
         self.expect(TokenKind.LBRACKET)
-        args = []
-        if self.peek().kind != TokenKind.RBRACKET:
-            args.append(self._parse_type())
-            while self.peek().kind == TokenKind.COMMA:
-                self.advance()
-                args.append(self._parse_type())
+        args = self._parse_comma_list(TokenKind.RBRACKET, self._parse_type)
         self.expect(TokenKind.RBRACKET)
         return args
 
@@ -246,6 +248,8 @@ class Parser:
                 if self.peek().kind != TokenKind.COMMA:
                     break
                 self.advance()
+                if self.peek().kind == TokenKind.RBRACKET:
+                    break
         self.expect(TokenKind.RBRACKET)
         return params, constraints
 
@@ -264,12 +268,15 @@ class Parser:
     def _parse_param_list(self, *, allow_default: bool) -> list[Param]:
         params = []
         if self.peek().kind != TokenKind.RPAREN:
-            params.append(self._parse_param(allow_default=allow_default))
-            while self.peek().kind == TokenKind.COMMA:
-                self.advance()
+            while True:
                 if not allow_default and self.peek().kind in (TokenKind.DOT, TokenKind.DOTDOT):
                     raise ParseError("extern v1 does not support varargs")
                 params.append(self._parse_param(allow_default=allow_default))
+                if self.peek().kind != TokenKind.COMMA:
+                    break
+                self.advance()
+                if self.peek().kind == TokenKind.RPAREN:
+                    break
         return params
 
     def _parse_function(self):
@@ -403,17 +410,10 @@ class Parser:
         self.expect(TokenKind.LBRACE)
         fields = []
         embedded_fields = set()
-        if self.peek().kind != TokenKind.RBRACE:
-            fname, ftype, embedded = self._parse_struct_field()
+        for fname, ftype, embedded in self._parse_comma_list(TokenKind.RBRACE, self._parse_struct_field):
             fields.append((fname, ftype))
             if embedded:
                 embedded_fields.add(fname)
-            while self.peek().kind == TokenKind.COMMA:
-                self.advance()
-                fname, ftype, embedded = self._parse_struct_field()
-                fields.append((fname, ftype))
-                if embedded:
-                    embedded_fields.add(fname)
         self.expect(TokenKind.RBRACE)
         stmt = StructDecl(name, fields, type_params, type_param_constraints, embedded_fields)
         self.match(TokenKind.SEMI)
@@ -428,6 +428,16 @@ class Parser:
             raise ParseError("embedded struct field must be a named type")
         field_name = name_or_type.split(".")[-1]
         return field_name, name_or_type, True
+
+    def _parse_call_args(self):
+        return self._parse_comma_list(TokenKind.RPAREN, self.parse_expression)
+
+    def _parse_struct_literal_fields(self):
+        def parse_field():
+            fname = self.expect(TokenKind.IDENT).value
+            self.expect(TokenKind.COLON)
+            return fname, self.parse_expression()
+        return self._parse_comma_list(TokenKind.RBRACE, parse_field)
 
     def _parse_iface(self):
         self.advance()
@@ -466,12 +476,7 @@ class Parser:
         self.advance()  # 吞 enum
         name = self.expect(TokenKind.IDENT).value
         self.expect(TokenKind.LBRACE)
-        variants = []
-        if self.peek().kind != TokenKind.RBRACE:
-            variants.append(self.expect(TokenKind.IDENT).value)
-            while self.peek().kind == TokenKind.COMMA:
-                self.advance()
-                variants.append(self.expect(TokenKind.IDENT).value)
+        variants = self._parse_comma_list(TokenKind.RBRACE, lambda: self.expect(TokenKind.IDENT).value)
         self.expect(TokenKind.RBRACE)
         stmt = EnumDecl(name, variants)
         self.match(TokenKind.SEMI)
@@ -573,12 +578,7 @@ class Parser:
                     if hasattr(start_expr, "span"):
                         expr.span = (start_expr.span[0], self.tokens[self.pos - 1].pos)
                     continue
-                args = []
-                if self.peek().kind != TokenKind.RPAREN:
-                    args.append(self.parse_expression())
-                    while self.peek().kind == TokenKind.COMMA:
-                        self.advance()
-                        args.append(self.parse_expression())
+                args = self._parse_call_args()
                 self.expect(TokenKind.RPAREN)
                 if isinstance(start_expr, Identifier):
                     expr = FunctionCall(start_expr.name, args, getattr(start_expr, "generic_type_args", []))
@@ -629,40 +629,19 @@ class Parser:
                     type_args = self._parse_type_arg_list()
                     if self.peek().kind == TokenKind.LPAREN:
                         self.advance()
-                        args = []
-                        if self.peek().kind != TokenKind.RPAREN:
-                            args.append(self.parse_expression())
-                            while self.peek().kind == TokenKind.COMMA:
-                                self.advance()
-                                args.append(self.parse_expression())
+                        args = self._parse_call_args()
                         self.expect(TokenKind.RPAREN)
                         expr = FunctionCall(qname, args, type_args)
                     elif self.peek().kind not in (TokenKind.LBRACE,):
                         expr = GenericFunctionValue(qname, type_args)
                     elif self.peek().kind == TokenKind.LBRACE:
                         self.advance()
-                        fields = []
-                        if self.peek().kind != TokenKind.RBRACE:
-                            fname = self.expect(TokenKind.IDENT).value
-                            self.expect(TokenKind.COLON)
-                            fval = self.parse_expression()
-                            fields.append((fname, fval))
-                            while self.peek().kind == TokenKind.COMMA:
-                                self.advance()
-                                fname = self.expect(TokenKind.IDENT).value
-                                self.expect(TokenKind.COLON)
-                                fval = self.parse_expression()
-                                fields.append((fname, fval))
+                        fields = self._parse_struct_literal_fields()
                         self.expect(TokenKind.RBRACE)
                         expr = StructLiteral(f"{qname}[{','.join(type_args)}]", fields)
                 elif self.peek().kind == TokenKind.LPAREN:
                     self.advance()
-                    args = []
-                    if self.peek().kind != TokenKind.RPAREN:
-                        args.append(self.parse_expression())
-                        while self.peek().kind == TokenKind.COMMA:
-                            self.advance()
-                            args.append(self.parse_expression())
+                    args = self._parse_call_args()
                     self.expect(TokenKind.RPAREN)
                     if isinstance(expr, Identifier) and expr.name in self.imported_modules:
                         expr = FunctionCall(f"{expr.name}.{field}", args)
@@ -795,18 +774,7 @@ class Parser:
             if self.peek().kind == TokenKind.LBRACKET:
                 name = f"{name}[{','.join(self._parse_type_arg_list())}]"
             self.expect(TokenKind.LBRACE)
-            fields = []
-            if self.peek().kind != TokenKind.RBRACE:
-                fname = self.expect(TokenKind.IDENT).value
-                self.expect(TokenKind.COLON)
-                fval = self.parse_expression()
-                fields.append((fname, fval))
-                while self.peek().kind == TokenKind.COMMA:
-                    self.advance()
-                    fname = self.expect(TokenKind.IDENT).value
-                    self.expect(TokenKind.COLON)
-                    fval = self.parse_expression()
-                    fields.append((fname, fval))
+            fields = self._parse_struct_literal_fields()
             self.expect(TokenKind.RBRACE)
             return StructLiteral(name, fields, heap=True)
 
@@ -825,18 +793,7 @@ class Parser:
                     return EnumRef(qname, variant)
                 if self.peek().kind == TokenKind.LBRACE:
                     self.advance()
-                    fields = []
-                    if self.peek().kind != TokenKind.RBRACE:
-                        fname = self.expect(TokenKind.IDENT).value
-                        self.expect(TokenKind.COLON)
-                        fval = self.parse_expression()
-                        fields.append((fname, fval))
-                        while self.peek().kind == TokenKind.COMMA:
-                            self.advance()
-                            fname = self.expect(TokenKind.IDENT).value
-                            self.expect(TokenKind.COLON)
-                            fval = self.parse_expression()
-                            fields.append((fname, fval))
+                    fields = self._parse_struct_literal_fields()
                     self.expect(TokenKind.RBRACE)
                     return self.span(StructLiteral(qname, fields), start)
                 return self.span(Identifier(qname), start)
@@ -852,12 +809,7 @@ class Parser:
                 type_args = self._parse_type_arg_list()
                 if self.peek().kind == TokenKind.LPAREN:
                     self.advance()
-                    args = []
-                    if self.peek().kind != TokenKind.RPAREN:
-                        args.append(self.parse_expression())
-                        while self.peek().kind == TokenKind.COMMA:
-                            self.advance()
-                            args.append(self.parse_expression())
+                    args = self._parse_call_args()
                     self.expect(TokenKind.RPAREN)
                     return self.span(FunctionCall(name, args, type_args), start)
                 if self.peek().kind == TokenKind.LBRACE:
@@ -877,18 +829,7 @@ class Parser:
                 self.pos = save  # 回退
                 if is_struct:
                     self.advance()  # 吞 {
-                    fields = []
-                    if self.peek().kind != TokenKind.RBRACE:
-                        fname = self.expect(TokenKind.IDENT).value
-                        self.expect(TokenKind.COLON)
-                        fval = self.parse_expression()
-                        fields.append((fname, fval))
-                        while self.peek().kind == TokenKind.COMMA:
-                            self.advance()
-                            fname = self.expect(TokenKind.IDENT).value
-                            self.expect(TokenKind.COLON)
-                            fval = self.parse_expression()
-                            fields.append((fname, fval))
+                    fields = self._parse_struct_literal_fields()
                     self.expect(TokenKind.RBRACE)
                     return self.span(StructLiteral(name, fields), start)
             return self.span(Identifier(name), start)
@@ -905,12 +846,7 @@ class Parser:
             self.expect(TokenKind.RBRACKET)
             elem_type = self._parse_type()
             self.expect(TokenKind.LBRACE)
-            elements = []
-            if self.peek().kind != TokenKind.RBRACE:
-                elements.append(self.parse_expression())
-                while self.peek().kind == TokenKind.COMMA:
-                    self.advance()
-                    elements.append(self.parse_expression())
+            elements = self._parse_comma_list(TokenKind.RBRACE, self.parse_expression)
             self.expect(TokenKind.RBRACE)
             if length is None:
                 return self.span(SliceLiteral(elem_type, elements), start)
