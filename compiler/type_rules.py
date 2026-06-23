@@ -247,13 +247,61 @@ class TypeRules:
         if err is not None:
             self.fail(f"comparison: type {err} is not comparable", node)
 
+    def ord_error_type(self, t, seen=None):
+        if t in NUMERIC_TYPES:
+            return None
+        if seen is None:
+            seen = set()
+        if t in seen:
+            return t
+        seen.add(t)
+        try:
+            sym = self.symtab.lookup(t)
+        except NameError:
+            return t
+        if sym.nc_type != "struct":
+            return t
+        resolved = self._resolve_struct_method(t, "__lt__", seen)
+        if resolved is None:
+            return t
+        _path, _receiver_base, ret_type, params = resolved
+        if len(params) != 1:
+            return t
+        _pname, ptype = params[0]
+        if ptype != t:
+            return t
+        if ret_type is not None and ret_type != "bool":
+            return t
+        return None
+
+    def _resolve_struct_method(self, type_name, method_name, seen):
+        methods = getattr(self.symtab, "_methods", {})
+        if type_name in methods and method_name in methods[type_name]:
+            ret_type, params = methods[type_name][method_name]
+            return [], type_name, ret_type, params
+        matches = []
+        for embed_name, embed_type in getattr(self.symtab, "_struct_embeds", {}).get(type_name, {}).items():
+            embed_base = embed_type[1:] if embed_type.startswith("*") else embed_type
+            if embed_base in seen:
+                continue
+            if embed_base in methods and method_name in methods[embed_base]:
+                ret_type, params = methods[embed_base][method_name]
+                matches.append(([embed_name], embed_base, ret_type, params))
+            nested = self._resolve_struct_method(embed_base, method_name, seen.copy())
+            if nested is not None:
+                path, receiver_base, ret_type, params = nested
+                matches.append(([embed_name] + path, receiver_base, ret_type, params))
+        if len(matches) == 1:
+            return matches[0]
+        return None
+
     def constraint_error_type(self, t, constraint):
         if constraint == "any":
             return None
         if constraint == EQ_CONSTRAINT:
             return self.comparable_error_type(t)
         if constraint == ORD_CONSTRAINT:
-            return None if t in NUMERIC_TYPES else t
+            return self.ord_error_type(t)
         if constraint == HASH_CONSTRAINT:
             return self.hash_comparable_error_type(t)
         if constraint == ZERO_CONSTRAINT:

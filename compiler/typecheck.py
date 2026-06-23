@@ -50,6 +50,11 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         ">=": "__ge__",
     }
     ORDER_OPERATOR_METHODS = {"__lt__", "__le__", "__gt__", "__ge__"}
+    DERIVED_ORDER_FROM_LT = {
+        "<=": ("right", True),
+        ">": ("right", False),
+        ">=": ("left", True),
+    }
 
     def line_col(text: str | None, pos: int) -> tuple[int, int]:
         if text is None:
@@ -169,6 +174,19 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         _pname, ptype = params[0]
         require_type(ptype, type_name, f"operator method {receiver_base}.{method_name} parameter", node)
         expected_ret = "bool" if method_name in ORDER_OPERATOR_METHODS else type_name
+        if ret_type is None:
+            ret_type = resolve_method_return(receiver_base, method_name, node)
+        require_type(ret_type, expected_ret, f"operator method {receiver_base}.{method_name} return", node)
+        return path, receiver_base, ret_type
+
+    def validate_unary_operator_method(type_name: str, method_name: str, node):
+        resolved = resolve_method_call(node, type_name, method_name)
+        if resolved is None:
+            return None
+        path, receiver_base, (ret_type, params) = resolved
+        if len(params) != 0:
+            fail(f"operator method {receiver_base}.{method_name}: expected no parameters", node)
+        expected_ret = type_name
         if ret_type is None:
             ret_type = resolve_method_return(receiver_base, method_name, node)
         require_type(ret_type, expected_ret, f"operator method {receiver_base}.{method_name} return", node)
@@ -732,6 +750,15 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                     fail(f"unary operator ~: expected integer operand, got {node.operand.type}", node)
                 node.type = node.operand.type
             elif node.op == "-":
+                if node.operand.type in getattr(symtab, "_structs", {}):
+                    overload = validate_unary_operator_method(node.operand.type, "__neg__", node)
+                    if overload is not None:
+                        path, receiver_base, ret_type = overload
+                        node.overload_method = "__neg__"
+                        node.overload_receiver_path = path
+                        node.overload_receiver_base = receiver_base
+                        node.type = ret_type
+                        return
                 if not is_numeric_type(node.operand.type):
                     fail(f"unary operator -: expected numeric operand, got {node.operand.type}", node)
                 node.type = node.operand.type
@@ -779,6 +806,18 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                             node.overload_receiver_base = receiver_base
                             node.type = "bool"
                             return
+                        if node.op in DERIVED_ORDER_FROM_LT:
+                            overload = validate_operator_method(node.left.type, "__lt__", node)
+                            if overload is not None:
+                                path, receiver_base, _ret_type = overload
+                                receiver_side, negate = DERIVED_ORDER_FROM_LT[node.op]
+                                node.overload_method = "__lt__"
+                                node.overload_receiver_path = path
+                                node.overload_receiver_base = receiver_base
+                                node.overload_receiver_side = receiver_side
+                                node.overload_negate = negate
+                                node.type = "bool"
+                                return
                     fail(f"comparison: expected numeric operands, got {node.left.type} and {node.right.type}", node)
                 require_type(node.right.type, node.left.type, "comparison", node)
                 node.type = "bool"

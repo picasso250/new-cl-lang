@@ -716,6 +716,15 @@ class LLVMCodegen:
             ptr, elem_type = self.emit_lvalue(node)
             return self.builder.load(ptr, name="idx")
         if isinstance(node, UnaryOp):
+            if getattr(node, "overload_method", None):
+                receiver_expr = node.operand
+                for field in getattr(node, "overload_receiver_path", []):
+                    receiver_expr = FieldAccess(receiver_expr, field)
+                return self.method_emitter.emit_unary_operator_method_call(
+                    receiver_expr,
+                    node.overload_method,
+                    getattr(node, "overload_receiver_base", node.operand.type),
+                )
             val = self.emit_expr(node.operand)
             if node.op == "!":
                 return self.builder.not_(self.bool_value(val))
@@ -875,11 +884,15 @@ class LLVMCodegen:
 
     def emit_binary(self, node: BinaryOp):
         if getattr(node, "overload_method", None):
-            receiver_expr = node.left
+            receiver_expr = node.right if getattr(node, "overload_receiver_side", "left") == "right" else node.left
+            rhs_expr = node.left if getattr(node, "overload_receiver_side", "left") == "right" else node.right
             for field in getattr(node, "overload_receiver_path", []):
                 receiver_expr = FieldAccess(receiver_expr, field)
-            return self.emit_operator_method_call(receiver_expr, node.overload_method, node.right,
-                                                  getattr(node, "overload_receiver_base", node.left.type))
+            value = self.emit_operator_method_call(receiver_expr, node.overload_method, rhs_expr,
+                                                   getattr(node, "overload_receiver_base", node.left.type))
+            if getattr(node, "overload_negate", False):
+                return self.builder.not_(self.bool_value(value))
+            return value
         left = self.emit_expr(node.left)
         right = self.emit_expr(node.right)
         typ = node.left.type

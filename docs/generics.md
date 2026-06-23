@@ -16,7 +16,7 @@
 ## 约束族
 
 - `types.Eq`：支持 `==` / `!=` 的类型。
-- `types.Ord`：支持 `<` / `>` / `<=` / `>=` 的类型，当前为数值类型。
+- `types.Ord`：支持 `<` / `>` / `<=` / `>=` 的类型，当前为数值类型或带合法 `__lt__` 的 struct。
 - `types.Hash`：可作为 `map[K,V]` key 的类型，要求 equality 是稳定等价关系；float 不满足。
 - `types.Zero`：有零值的类型。
 
@@ -37,7 +37,7 @@
 | `map[K,V]` | no | no | no | yes | map 零值为空/nil map |
 | `fun(T) R` | no | no | no | yes | 函数值不参与 equality |
 | `iface` | no | no | no | yes | 接口值不参与 equality |
-| `struct` | if all fields Eq | no | if all fields Hash | if all fields Zero | 字段递归判断 |
+| `struct` | if all fields Eq | if valid `__lt__` | if all fields Hash | if all fields Zero | Eq/Hash/Zero 字段递归判断；Ord 由特殊方法决定 |
 | `void` | no | no | no | no | 不能作为值类型 |
 
 ## 标准库使用

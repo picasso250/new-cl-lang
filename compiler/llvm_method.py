@@ -34,6 +34,12 @@ class MethodEmitter:
         args = [self.emit_receiver_arg(receiver_expr, receiver_base), self.ctx.emit_coerced_expr(rhs, receiver_base)]
         return self.ctx.builder.call(fn, args)
 
+    def emit_unary_operator_method_call(self, receiver_expr, method_name: str, receiver_base: str):
+        name = safe_user_ident(f"{receiver_base}_{method_name}")
+        fn = self.ctx.module.globals[name]
+        args = [self.emit_receiver_arg(receiver_expr, receiver_base)]
+        return self.ctx.builder.call(fn, args)
+
     def emit_operator_method_value(self, value, value_type: str, method_name: str, rhs, receiver_base: str):
         name = safe_user_ident(f"{receiver_base}_{method_name}")
         fn = self.ctx.module.globals[name]

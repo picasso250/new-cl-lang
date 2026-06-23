@@ -537,6 +537,8 @@ class BinaryOp(Node):
         self.overload_method: str | None = None
         self.overload_receiver_path: list[str] = []
         self.overload_receiver_base: str | None = None
+        self.overload_receiver_side: str = "left"
+        self.overload_negate: bool = False
 
     def __repr__(self):
         return f"BinOp({self.left} {self.op} {self.right})"
@@ -548,6 +550,9 @@ class UnaryOp(Node):
         self.op = op
         self.operand = operand
         self.type: str | None = None
+        self.overload_method: str | None = None
+        self.overload_receiver_path: list[str] = []
+        self.overload_receiver_base: str | None = None
 
     def __repr__(self):
         return f"UnaryOp({self.op}{self.operand})"
