@@ -210,6 +210,15 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             fail("function expressions cannot be fallible in v1", node)
         current_callable.fallible = True
 
+    def walk_expr_outside_fallible_op(expr):
+        nonlocal fallible_op_depth
+        prev = fallible_op_depth
+        try:
+            fallible_op_depth = 0
+            walk_expr(expr)
+        finally:
+            fallible_op_depth = prev
+
     def require_arg_count(args, expected, context, node=None):
         if len(args) != expected:
             fail(f"{context}: expected {expected} args, got {len(args)}", node)
@@ -776,7 +785,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         elif isinstance(node, FunctionCall):
             require_public_qualified(node.name, node)
             for arg in node.args:
-                walk_expr(arg)
+                walk_expr_outside_fallible_op(arg)
             if node.name == "__nc_bytes_alloc" and not getattr(getattr(node, "source_file", None), "trusted_stdlib", False):
                 fail("__nc_bytes_alloc is only available to trusted stdlib", node)
             if parse_map_type(node.name) is not None:
@@ -957,9 +966,9 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 return
             node.type = fields[node.field]
         elif isinstance(node, MethodCall):
-            walk_expr(node.obj)
+            walk_expr_outside_fallible_op(node.obj)
             for arg in node.args:
-                walk_expr(arg)
+                walk_expr_outside_fallible_op(arg)
             obj_type = node.obj.type
             if obj_type == "str" and node.method == "c_str":
                 require_arg_count(node.args, 0, "method c_str", node)
