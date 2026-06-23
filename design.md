@@ -216,6 +216,7 @@ why：
 
 - `if` 是表达式。
 - `match` 是表达式。
+- `match error` 使用字符串字面量按错误 message 完整匹配，并且必须有 `else`。
 - 条件循环写作 `for condition { ... }`。
 - slice 遍历写作 `for i, item in items`，`i` 为 `i32`。
 - map 遍历写作 `for key, value in m`，key/value 类型分别来自 `map[K,V]`。
@@ -352,6 +353,7 @@ fun main() {
 - `try value = call() { ... } else e { ... }` 是语句；成功值只在成功块内可见，错误对象只在错误块内可见。
 - `try call() { ... } else e { ... }` 用于返回 `void` 的可错调用。
 - `try` 省略 `else` 时，失败行为等同于 `!!`。
+- `else e` 中可用 `match e { "message" -> expr; else -> expr }` 按错误 message 完整字符串相等分类；错误匹配只接受字符串字面量 pattern。
 - `defer` 按 LIFO 执行；`ret`、`err` 和函数正常退出都必须执行已登记 defer。
 - `defer` 中禁止 `err` 和 `??`，避免清理路径产生双重错误出口。
 
@@ -360,6 +362,7 @@ fun main() {
 - v1 可错 callable 只覆盖普通函数和 struct 方法。
 - extern、iface 方法、函数值和闭包不支持可错。
 - `!!` 和 main 未捕获错误打印 `error: message`、`stack:` 与 `at function (path:line:col)` frame；标准库 frame 不折叠。
+- `match error` 是 v1 的最小错误分类能力，不开放 message 读取、wrap、code/tag 或自定义错误类型。
 - 不提供 `throw`、`try/catch`、panic 或 recover。
 
 why：

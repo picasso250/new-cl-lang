@@ -73,6 +73,9 @@ class ControlExprEmitter:
 
     def match_condition(self, scrutinee, scrutinee_type, pattern):
         pattern_value = self.ctx.emit_expr(pattern)
+        if scrutinee_type == "error":
+            message = self.ctx.builder.extract_value(scrutinee, 0, name="error.match.message")
+            return self.ctx.emit_str_eq(message, pattern_value)
         if scrutinee_type == "str":
             return self.ctx.emit_str_eq(scrutinee, pattern_value)
         if scrutinee_type in FLOAT_TYPES:

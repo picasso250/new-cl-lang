@@ -486,12 +486,14 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             fail("match expression: expected at least one arm", node)
 
         scrut_type = node.scrutinee.type
+        is_error_match = scrut_type == "error"
         enum_variants = None
-        try:
-            if symtab.lookup(scrut_type).nc_type == "enum":
-                enum_variants = symtab.lookup_enum(scrut_type)
-        except NameError:
-            enum_variants = None
+        if not is_error_match:
+            try:
+                if symtab.lookup(scrut_type).nc_type == "enum":
+                    enum_variants = symtab.lookup_enum(scrut_type)
+            except NameError:
+                enum_variants = None
 
         result_type = None
         seen_else = False
@@ -507,8 +509,13 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                     fail("match expression: else must be the last arm", body)
             else:
                 walk_expr(pattern)
-                match_pattern_key(pattern)
-                require_type(pattern.type, scrut_type, "match pattern", pattern)
+                if is_error_match:
+                    if not isinstance(pattern, StringLiteral):
+                        fail(f"match error pattern: expected str literal, got {pattern.type}", pattern)
+                    require_type(pattern.type, "str", "match error pattern", pattern)
+                else:
+                    match_pattern_key(pattern)
+                    require_type(pattern.type, scrut_type, "match pattern", pattern)
                 key = match_pattern_key(pattern)
                 if key in seen_patterns:
                     fail("match expression: duplicate pattern", pattern)
@@ -522,6 +529,8 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 require_type(body.type, result_type, "match expression arms", body)
 
         if not seen_else:
+            if is_error_match:
+                fail("match expression: error match requires else", node)
             if enum_variants is None:
                 fail("match expression: non-enum match requires else", node)
             missing = enum_variants - seen_enum_variants

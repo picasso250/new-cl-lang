@@ -21,24 +21,35 @@ let if else fun ret err try struct iface enum match for in break new defer nil i
 
 ## 错误处理
 
-NC 采用 Go 风格的显式错误返回，但不采用源码双返回。可错调用不能裸用，必须在调用点写清楚：`??` 传播，`!!` 表示必须成功，`try` 拆出成功分支和错误分支。
+NC 采用 Go 风格的显式错误返回，但不采用源码双返回，也不把错误处理写成一串重复的 `if err != nil`。可错调用不能裸用，必须在调用点写清楚：`??` 传播，`!!` 表示必须成功，`try` 拆出成功分支和错误分支，`match e` 对错误分类。
 
 ```nc
 import fs
 import io
 
+fun load_config(): str {
+    if !fs.exists("config.nc") {
+        err "config missing"
+    }
+    ret fs.read_file("config.nc")??
+}
+
 fun main() {
-    try text = fs.read_file("config.nc") {
+    try text = load_config() {
         io.println(text)
     } else e {
-        io.println("load failed")
+        let message = match e {
+            "config missing" -> "create config.nc first"
+            else -> "load failed"
+        }
+        io.println(message)
     }
 }
 ```
 
-`try` 是语句：成功值只在成功块内可见，`else e` 的错误对象只在错误块内可见。省略 `else` 时，失败行为等同于 `!!`：打印错误和 NC 调用栈后退出。
+`try` 是语句：成功值只在成功块内可见，`else e` 的错误对象只在错误块内可见。省略 `else` 时，失败行为等同于 `!!`：打印错误和 NC 调用栈后退出。`match e` 使用字符串字面量按错误 message 完整匹配，并且必须有 `else`。
 
-当前边界：v1 可错 callable 只覆盖普通函数和 struct 方法；extern、iface 方法、函数值和闭包暂不支持可错。`error` 是 opaque 内建错误对象，当前不提供公开 inspect/wrap API。
+当前边界：v1 可错 callable 只覆盖普通函数和 struct 方法；extern、iface 方法、函数值和闭包暂不支持可错。`error` 是 opaque 内建错误对象；message match 是当前最小错误分类能力，暂不提供公开 inspect/wrap/code/tag API。
 
 ## 快速开始
 
