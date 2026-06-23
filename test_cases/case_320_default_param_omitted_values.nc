@@ -5,6 +5,8 @@ import io
 # STDOUT: 3
 # STDOUT: 7
 # STDOUT: 1
+# STDOUT: 42
+# STDOUT: 42
 
 struct Box { value: i32 }
 
@@ -29,10 +31,20 @@ fun take_map(m = map[str,i32]()): i32 {
     m["a"]
 }
 
+fun take_i64(x = i64(42)): i64 {
+    x
+}
+
+fun take_string(s = str(42)): str {
+    s
+}
+
 fun main() {
     io.println(take_str())
     io.println(take_scalar())
     io.println(take_slice())
     io.println(take_struct())
     io.println(take_map())
+    io.println(take_i64())
+    io.println(take_string())
 }

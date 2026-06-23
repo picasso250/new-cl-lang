@@ -6,7 +6,7 @@
 
 import copy
 
-from compiler.builtins import SCALAR_TYPES, STRINGIFIABLE_TYPES, infer_builtin_call
+from compiler.builtins import NUMERIC_TYPES, SCALAR_TYPES, STRINGIFIABLE_TYPES, infer_builtin_call
 from compiler.type_ref import parse_fn_type, parse_map_type, parse_slice_type
 from compiler.type_rules import TypeRules
 
@@ -243,6 +243,43 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             elif seen_default:
                 fail(f"{context}: required parameter {param.name} cannot follow default parameter", node)
 
+    def is_allowed_default_call(node):
+        if parse_map_type(node.name) is not None:
+            return True
+        return node.name in (NUMERIC_TYPES | {"str", "rune"})
+
+    def validate_default_expr_shape(expr, param_name):
+        if isinstance(expr, FunctionExpr):
+            return
+        if isinstance(expr, FunctionCall):
+            if not is_allowed_default_call(expr):
+                fail(f"default parameter {param_name}: function calls are not allowed", expr)
+        elif isinstance(expr, MethodCall):
+            fail(f"default parameter {param_name}: method calls are not allowed", expr)
+        elif isinstance(expr, FallibleOp):
+            fail(f"default parameter {param_name}: fallible operations are not allowed", expr)
+        if not hasattr(expr, "__dict__"):
+            return
+        for key, value in expr.__dict__.items():
+            if key in {"source_file", "type", "fallible", "is_closure_call", "closure_param_types"}:
+                continue
+            if isinstance(value, list):
+                for item in value:
+                    if isinstance(item, tuple):
+                        for part in item:
+                            validate_default_expr_value(part, param_name)
+                    else:
+                        validate_default_expr_value(item, param_name)
+            elif isinstance(value, tuple):
+                for item in value:
+                    validate_default_expr_value(item, param_name)
+            else:
+                validate_default_expr_value(value, param_name)
+
+    def validate_default_expr_value(value, param_name):
+        if hasattr(value, "__dict__"):
+            validate_default_expr_shape(value, param_name)
+
     def infer_default_param_type(param):
         if param.type is not None:
             return param.type
@@ -299,6 +336,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             if param.default is None:
                 fail(f"{context}: missing argument {param.name}", node)
             default_expr = clone_default_expr(param.default, replacements)
+            validate_default_expr_shape(default_expr, param.name)
             mark_default_arg_expr(default_expr)
             walk_expr(default_expr)
             if param.type is None:
@@ -365,6 +403,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             symtab.declare(fn.receiver_name, fn.receiver_type)
         for param in fn.params:
             if param.default is not None and (not getattr(fn, "_generic_origin_kind", None) or param.type is None):
+                validate_default_expr_shape(param.default, param.name)
                 walk_expr(param.default)
                 infer_default_param_type(param)
                 require_type(param.default.type, param.type, f"default parameter {param.name}", param.default)
@@ -1191,6 +1230,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                     symtab.declare(stmt.receiver_name, stmt.receiver_type)
                 for param in stmt.params:
                     if param.default is not None and (not getattr(stmt, "_generic_origin_kind", None) or param.type is None):
+                        validate_default_expr_shape(param.default, param.name)
                         walk_expr(param.default)
                         infer_default_param_type(param)
                         require_type(param.default.type, param.type, f"default parameter {param.name}", param.default)
@@ -1306,6 +1346,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             symtab.declare(fn_node.receiver_name, fn_node.receiver_type)
         for param in fn_node.params:
             if getattr(param, "default", None) is not None and (not getattr(fn_node, "_generic_origin_kind", None) or param.type is None):
+                validate_default_expr_shape(param.default, param.name)
                 walk_expr(param.default)
                 infer_default_param_type(param)
                 require_type(param.default.type, param.type, f"default parameter {param.name}", param.default)
