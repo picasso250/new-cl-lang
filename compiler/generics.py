@@ -78,7 +78,8 @@ def _substitute_node(node, subst: dict[str, str]):
         elif isinstance(n, StructLiteral):
             n.name = _sub_type(n.name, subst)
         elif isinstance(n, MapLiteral):
-            n.map_type = _sub_type(n.map_type, subst)
+            if n.map_type is not None:
+                n.map_type = _sub_type(n.map_type, subst)
         elif isinstance(n, FunctionCall):
             _normalize_call_type_args(n)
             n.type_args = [_sub_type(t, subst) for t in n.type_args]
@@ -201,7 +202,8 @@ def monomorphize(program: Program) -> Program:
         elif isinstance(n, StructLiteral):
             n.name = rewrite_type(n.name)
         elif isinstance(n, MapLiteral):
-            n.map_type = rewrite_type(n.map_type)
+            if n.map_type is not None:
+                n.map_type = rewrite_type(n.map_type)
         elif isinstance(n, FunctionCall):
             _normalize_call_type_args(n)
             if n.name in generic_funcs and not n.type_args:

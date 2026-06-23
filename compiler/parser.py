@@ -813,6 +813,13 @@ class Parser:
                 entries = self._parse_map_literal_entries()
                 self.expect(TokenKind.RBRACE)
                 return self.span(MapLiteral(f"map[{','.join(type_args)}]", entries), start)
+            if name == "map" and self.peek().kind == TokenKind.LBRACE:
+                self.advance()
+                if self.peek().kind == TokenKind.RBRACE:
+                    raise ParseError("map literal: cannot infer key/value types from empty literal; use map[K,V]{}")
+                entries = self._parse_map_literal_entries()
+                self.expect(TokenKind.RBRACE)
+                return self.span(MapLiteral(None, entries), start)
             if (self.peek().kind == TokenKind.DOT
                     and self.pos + 2 < len(self.tokens)
                     and self.tokens[self.pos + 1].kind == TokenKind.IDENT

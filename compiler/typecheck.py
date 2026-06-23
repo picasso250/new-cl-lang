@@ -1073,8 +1073,19 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 require_type(elem.type, node.elem_type, "slice element", elem)
             node.type = f"[]{node.elem_type}"
         elif isinstance(node, MapLiteral):
-            key_type, value_type = validate_map_type(node.map_type, node)
-            for key, value in node.entries:
+            if node.map_type is None:
+                if not node.entries:
+                    fail("map literal: cannot infer key/value types from empty literal", node)
+                first_key, first_value = node.entries[0]
+                walk_expr(first_key)
+                walk_expr(first_value)
+                node.map_type = f"map[{first_key.type},{first_value.type}]"
+                key_type, value_type = validate_map_type(node.map_type, node)
+                rest = node.entries[1:]
+            else:
+                key_type, value_type = validate_map_type(node.map_type, node)
+                rest = node.entries
+            for key, value in rest:
                 walk_expr(key)
                 require_type(key.type, key_type, "map literal key", key)
                 walk_expr(value)

@@ -277,8 +277,8 @@ class SliceLiteral(Node):
 
 
 class MapLiteral(Node):
-    """map[K,V] { key: value, ... }"""
-    def __init__(self, map_type: str, entries: list):
+    """map[K,V] { key: value, ... } or inferred map { key: value, ... }"""
+    def __init__(self, map_type: str | None, entries: list):
         self.map_type = map_type
         self.entries = entries  # [(key_expr, value_expr), ...]
         self.type: str | None = None

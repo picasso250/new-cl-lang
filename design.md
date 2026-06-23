@@ -87,8 +87,18 @@ fun(T) R
 - 非空 slice literal 可写作 `[]{...}` 并从首元素推导元素类型；空 slice literal 仍必须写 `[]T{}`。
 - `map[K,V]` 是语言内建泛型 map。
 - map literal 写作 `map[K,V]{key: value, ...}`；空 map literal 写作 `map[K,V]{}`。
+- 非空 map literal 可写作 `map{key: value, ...}` 并从首个 key/value 推导 key/value 类型；空 map literal 仍必须写 `map[K,V]{}`。
 - 函数值类型写作 `fun(params) Ret`。
 - `map[K,V]` 的 key 必须是非 float 的可哈希比较类型；value 必须是有零值的 sized 类型。
+
+简单推断原则：
+
+- 类型可在声明本体内简单推出时，可省略类型声明。
+- 表达式自足推断只使用当前声明自带的 initializer、默认值或 literal，不从赋值目标、调用点、泛型实参或后续使用反推。
+- 函数返回类型可由函数体内部非递归返回路径或尾表达式推导；递归函数仍必须显式返回类型，避免返回类型推导成环。
+- 无后缀字面量默认类型为：整数 `i32`、浮点 `f64`、字符串 `str`、bool `bool`。
+- 非空 slice/map literal 从首个元素或首个 key/value 推导具体类型；后续元素或 entry 必须同类型，不做隐式数值提升或共同类型搜索。
+- struct literal 仍必须写具体类型名，例如 `Point { x: 1 }`；不通过目标类型反推 `{ x: 1 }`，也不引入匿名 struct。
 
 why：
 
@@ -96,6 +106,7 @@ why：
 - nullable pointer 显式表达风险。
 - `rune` 独立于 numeric，避免字符和整数混用。
 - 函数类型使用 `fun` 语法，和函数声明保持一致。
+- 简单推断只消除重复标注，不引入跨位置推断，保持错误定位和类型检查可预测。
 
 ## 零值
 
