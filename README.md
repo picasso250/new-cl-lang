@@ -29,21 +29,13 @@ import io
 
 fun load_config(): str {
     if !fs.exists("config.nc") {
-        err "config missing"
+        err "config missing" # err 关键字
     }
-    ret fs.read_file("config.nc")??
+    ret fs.read_file("config.nc")?? # 等同于 go 的 if err != nil { return nil, err }
 }
 
 fun main() {
-    try text = load_config() {
-        io.println(text)
-    } else e {
-        let message = match e {
-            "config missing" -> "create config.nc first"
-            else -> "load failed"
-        }
-        io.println(message)
-    }
+    let text = load_config()!! # 等同于 go 的 if err != nil { log.Fatal(...) }
 }
 ```
 
