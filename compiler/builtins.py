@@ -52,12 +52,6 @@ def infer_builtin_call(node, require_arg_count, require_type, fail) -> str | Non
         key_type, _value_type = map_args
         require_type(args[1].type, key_type, "delete key", args[1])
         return "void"
-    map_args = parse_map_type(name)
-    if map_args is not None:
-        require_arg_count(args, 0, name, node)
-        if len(map_args) != 2:
-            fail(f"map: expected 2 type args, got {len(map_args)}", node)
-        return name
     if name == "str":
         require_arg_count(args, 1, "str", node)
         if args[0].type == "[]u8":

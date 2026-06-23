@@ -84,7 +84,7 @@ def test_llvm_uses_external_ncrt_runtime():
     llvm_ir = compile_nc_to_llvm_ir("""import io
 import runtime
 fun main() {
-    let m = map[str,str]()
+    let m = map[str,str]{}
     m["a"] = "b"
     io.println(m["a"])
     runtime.gc_live()

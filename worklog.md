@@ -254,3 +254,7 @@
 - 2026-06-23: 预备收窄默认参数表达式边界：默认值从普通表达式收敛为无调用的值构造表达式，禁止普通函数调用、方法调用和可错操作，但保留 literal、前序参数引用、struct/slice/map 构造、函数值和显式类型转换。why：P2 暴露默认值、调用点补齐、泛型惰性实例化和可错 ABI 叠加后复杂度过宽；按 case 驱动保留已证明有用的默认值能力。
 
 - 2026-06-23: 已收窄默认参数表达式边界：design.md 删除“普通表达式”默认值边界，默认参数现在拒绝普通函数调用、方法调用和 `??`/`!!`/`is err` 可错操作；保留 slice/map/struct 构造、具名/泛型/匿名函数值和显式类型转换。新增 case_342~347 覆盖直接调用、方法调用、三种可错操作和嵌套调用拒绝，并更新 case_320/323。验证：python -B -m py_compile compiler\typecheck.py；python tests\test_language_cases.py 通过 298/298；python tests\test_stdlib.py 通过 68/68；python -m pytest tests\test_llvm_backend.py tests\test_type_ref.py tests\test_builtin_boundary.py tests\test_projects.py -q 通过 61 passed, 1 skipped。
+
+- 2026-06-23: 预备将 map 构造从 `map[K,V]()` 迁移为字面量 `map[K,V]{...}` / `map[K,V]{}`，并删除旧 `()` 构造边界。why：map 是容器值，字面量能表达初始化内容；项目不向前兼容旧语法，旧空构造不应保留为例外。
+
+- 2026-06-23: 已将 map 构造迁移为字面量：新增 MapLiteral AST/parser/typecheck/LLVM lowering，支持 `map[K,V]{key: value, ...}` 与 `map[K,V]{}`，重复 key 按从左到右插入由后者覆盖；删除 `map[K,V]()` builtin 构造入口并迁移现有 cases/default 参数用例。同步 design.md/docs/stdlib.md，新增 case_290~294 覆盖正向、类型错误、非法类型参数和旧构造删除。验证：python -B -m py_compile compiler\parser.py compiler\ast.py compiler\typecheck.py compiler\llvm_codegen.py compiler\llvm_map.py compiler\builtins.py compiler\symtab.py compiler\generics.py compiler\__init__.py；python tests\test_language_cases.py 通过 298/298；python tests\test_stdlib.py 通过 73/73；python -m pytest tests\test_llvm_backend.py tests\test_type_ref.py tests\test_builtin_boundary.py tests\test_projects.py -q 通过 61 passed, 1 skipped。

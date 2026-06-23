@@ -165,7 +165,7 @@ v1 不提供 `json.decode[T]`、`json.encode[T]`、字段标签或 struct 自动
 - `min(a, b)` / `max(a, b)`：要求两侧为完全相同的数值类型，返回同类型。
 - `abs(x)`：支持有符号整数与浮点类型，返回同类型。
 - `size_of(T)`：编译期内建表达式，只接受类型实参，返回 `u64`。
-- `map[K,V]()`：内建泛型 map 构造形式。
+- `map[K,V]{key: value, ...}` / `map[K,V]{}`：内建泛型 map 字面量构造形式。
 - 显式转换：`str(...)`、`i32(...)`、`rune(...)` 等目标类型函数式转换。
 - `str([]u8)` 会复制字节到新的 `str` buffer 并补 NUL；v1 不验证 UTF-8。
 - `str(*i8)` / `str(?*i8)` / `str(*u8)` / `str(?*u8)` 会复制 NUL 结尾 C 字符串到新的 `str`；nil 返回空字符串。
@@ -178,7 +178,7 @@ v1 不提供 `json.decode[T]`、`json.encode[T]`、字段标签或 struct 自动
 
 ## map 边界
 
-- `map[K,V]` 是内建泛型 map 类型，构造语法为 `map[K,V]()`.
+- `map[K,V]` 是内建泛型 map 类型，构造语法为 `map[K,V]{key: value, ...}` 或空字面量 `map[K,V]{}`.
 - key 必须是 hash-comparable：非 float 的可比较类型，包括整数、bool、rune、str、enum、指针、nullable pointer，以及字段递归满足该规则的 struct。
 - value 必须是有零值的 sized 类型；`void`、非空指针和递归包含无零值字段的 struct 不可作为 value。
 - `m[k]` 要求 `k: K`，返回 `V`；缺失 key 返回 `V` 的零值。

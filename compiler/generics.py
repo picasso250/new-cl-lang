@@ -7,7 +7,7 @@ import re
 
 from compiler.ast import (
     FunctionCall, FunctionDeclaration, GenericFunctionValue, Identifier, IndexAccess,
-    Program, SizeOfType, StructDecl, StructLiteral,
+    MapLiteral, Program, SizeOfType, StructDecl, StructLiteral,
 )
 from compiler.constraints import satisfies_constraint
 from compiler.type_ref import parse_type_app, rewrite_type as rewrite_type_ref
@@ -77,6 +77,8 @@ def _substitute_node(node, subst: dict[str, str]):
             n.type_param_constraints = {}
         elif isinstance(n, StructLiteral):
             n.name = _sub_type(n.name, subst)
+        elif isinstance(n, MapLiteral):
+            n.map_type = _sub_type(n.map_type, subst)
         elif isinstance(n, FunctionCall):
             _normalize_call_type_args(n)
             n.type_args = [_sub_type(t, subst) for t in n.type_args]
@@ -198,6 +200,8 @@ def monomorphize(program: Program) -> Program:
             n.embedded_fields = set(getattr(n, "embedded_fields", set()))
         elif isinstance(n, StructLiteral):
             n.name = rewrite_type(n.name)
+        elif isinstance(n, MapLiteral):
+            n.map_type = rewrite_type(n.map_type)
         elif isinstance(n, FunctionCall):
             _normalize_call_type_args(n)
             if n.name in generic_funcs and not n.type_args:

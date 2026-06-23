@@ -448,6 +448,13 @@ class Parser:
             return fname, self.parse_expression()
         return self._parse_comma_list(TokenKind.RBRACE, parse_field)
 
+    def _parse_map_literal_entries(self):
+        def parse_entry():
+            key = self.parse_expression()
+            self.expect(TokenKind.COLON)
+            return key, self.parse_expression()
+        return self._parse_comma_list(TokenKind.RBRACE, parse_entry)
+
     def _parse_iface(self):
         self.advance()
         name = self.expect(TokenKind.IDENT).value
@@ -798,6 +805,14 @@ class Parser:
             name = start.value
             if name in MAGIC_CONSTS:
                 return self.span(MagicConst(name), start)
+            if (name == "map"
+                    and self.peek().kind == TokenKind.LBRACKET
+                    and self._token_after_matching_bracket(self.pos).kind == TokenKind.LBRACE):
+                type_args = self._parse_type_arg_list()
+                self.expect(TokenKind.LBRACE)
+                entries = self._parse_map_literal_entries()
+                self.expect(TokenKind.RBRACE)
+                return self.span(MapLiteral(f"map[{','.join(type_args)}]", entries), start)
             if (self.peek().kind == TokenKind.DOT
                     and self.pos + 2 < len(self.tokens)
                     and self.tokens[self.pos + 1].kind == TokenKind.IDENT

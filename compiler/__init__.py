@@ -10,7 +10,7 @@ from compiler.llvm_codegen import build_llvm_ir, generate_llvm_ir, run_llvm_ir
 from compiler.source import Module, SourceFile, annotate_source_file, module_name_from_sources
 from compiler.ast import (
     Program, ImportDecl, FunctionDeclaration, StructDecl, IfaceDecl, EnumDecl, FunctionCall, SizeOfType,
-    GenericFunctionValue, Identifier, StructLiteral, EnumRef, TypeAlias, FunctionExpr, ExternBlock,
+    GenericFunctionValue, Identifier, StructLiteral, MapLiteral, EnumRef, TypeAlias, FunctionExpr, ExternBlock,
 )
 from compiler.type_ref import rewrite_type
 from compiler.target import get_target
@@ -93,6 +93,8 @@ def _expand_type_aliases_in_module(module: Module):
             node.return_type = expand_type(node.return_type)
         elif isinstance(node, StructLiteral):
             node.name = expand_type(node.name)
+        elif isinstance(node, MapLiteral):
+            node.map_type = expand_type(node.map_type)
         elif isinstance(node, FunctionCall):
             node.type_args = [expand_type(a) for a in node.type_args]
         elif isinstance(node, GenericFunctionValue):
@@ -252,6 +254,8 @@ def _rewrite_module_names(module: Module, entry: bool):
             node.name = q(node.name)
         elif isinstance(node, StructLiteral):
             node.name = q(node.name)
+        elif isinstance(node, MapLiteral):
+            node.map_type = _qual_type(node.map_type, module.name, local_names)
         elif isinstance(node, EnumRef):
             node.enum_name = q(node.enum_name)
         for value in list(node.__dict__.values()):

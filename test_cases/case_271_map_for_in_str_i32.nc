@@ -3,7 +3,7 @@ import io
 # STDOUT: 6
 
 fun main() {
-    let m = map[str,i32]()
+    let m = map[str,i32]{}
     m["a"] = 1
     m["bb"] = 2
     m["ccc"] = 3

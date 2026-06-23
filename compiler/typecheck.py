@@ -24,7 +24,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         EnumDecl, EnumRef, ForIn,
         IfExpr, BlockExpr, MatchExpr, IntegerLiteral, FloatLiteral, StringLiteral, InterpolatedString, RuneLiteral, BoolLiteral, NilLiteral, MagicConst, BinaryOp, UnaryOp, FunctionCall, SizeOfType, Identifier,
         ExternBlock, FunctionExpr, GenericFunctionValue,
-        ArrayLiteral, SliceLiteral, IndexAccess, SliceExpr, MethodCall, Defer, Break, FallibleOp
+        ArrayLiteral, SliceLiteral, MapLiteral, IndexAccess, SliceExpr, MethodCall, Defer, Break, FallibleOp
     )
 
     current_return_type = "void"
@@ -244,8 +244,6 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 fail(f"{context}: required parameter {param.name} cannot follow default parameter", node)
 
     def is_allowed_default_call(node):
-        if parse_map_type(node.name) is not None:
-            return True
         return node.name in (NUMERIC_TYPES | {"str", "rune"})
 
     def validate_default_expr_shape(expr, param_name):
@@ -827,8 +825,6 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 walk_expr_outside_fallible_op(arg)
             if node.name == "__nc_bytes_alloc" and not getattr(getattr(node, "source_file", None), "trusted_stdlib", False):
                 fail("__nc_bytes_alloc is only available to trusted stdlib", node)
-            if parse_map_type(node.name) is not None:
-                validate_map_type(node.name, node)
             builtin_type = infer_builtin_call(node, require_arg_count, require_type, fail)
             if builtin_type is not None:
                 node.type = builtin_type
@@ -1076,6 +1072,14 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 walk_expr(elem)
                 require_type(elem.type, node.elem_type, "slice element", elem)
             node.type = f"[]{node.elem_type}"
+        elif isinstance(node, MapLiteral):
+            key_type, value_type = validate_map_type(node.map_type, node)
+            for key, value in node.entries:
+                walk_expr(key)
+                require_type(key.type, key_type, "map literal key", key)
+                walk_expr(value)
+                require_type(value.type, value_type, "map literal value", value)
+            node.type = node.map_type
         elif isinstance(node, IndexAccess):
             walk_expr(node.obj)
             walk_expr(node.index)
@@ -1484,6 +1488,8 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             return mark_direct_fallible(node.obj) or any(mark_direct_fallible(arg) for arg in node.args)
         if isinstance(node, (ArrayLiteral, SliceLiteral)):
             return any(mark_direct_fallible(elem) for elem in node.elements)
+        if isinstance(node, MapLiteral):
+            return any(mark_direct_fallible(k) or mark_direct_fallible(v) for k, v in node.entries)
         if isinstance(node, IndexAccess):
             return mark_direct_fallible(node.obj) or mark_direct_fallible(node.index)
         if isinstance(node, SliceExpr):

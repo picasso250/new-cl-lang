@@ -6,7 +6,7 @@
 import io
 
 fun main() {
-    let m = map[str,i32]()
+    let m = map[str,i32]{}
     m["a"] = 10
     m["b"] = 20
     io.println(len(m))

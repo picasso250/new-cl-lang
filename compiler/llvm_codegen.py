@@ -16,7 +16,7 @@ from compiler.ast import (
     Defer, ExternBlock, ExpressionStatement, EnumDecl, EnumRef, FieldAccess, FloatLiteral, FunctionCall,
     FunctionExpr, GenericFunctionValue, ErrReturn, FallibleOp,
     ForIn, FunctionDeclaration, Identifier, IfExpr, IfaceDecl, ImportDecl, IndexAccess, IntegerLiteral,
-    MatchExpr, MethodCall, NilLiteral, MagicConst, Return, SizeOfType, SliceExpr, SliceLiteral, StringLiteral, InterpolatedString, RuneLiteral, StructDecl,
+    MapLiteral, MatchExpr, MethodCall, NilLiteral, MagicConst, Return, SizeOfType, SliceExpr, SliceLiteral, StringLiteral, InterpolatedString, RuneLiteral, StructDecl,
     StructLiteral, UnaryOp, VariableDeclaration, ForCondition,
 )
 from compiler.llvm_layout import (
@@ -93,6 +93,10 @@ def _collect_llvm_inputs(program) -> _LLVMInputs:
         elif isinstance(node, (ArrayLiteral, SliceLiteral)):
             for elem in node.elements:
                 collect_closure_expr(elem)
+        elif isinstance(node, MapLiteral):
+            for key, value in node.entries:
+                collect_closure_expr(key)
+                collect_closure_expr(value)
         elif isinstance(node, SliceExpr):
             collect_closure_expr(node.array)
             if node.start:
@@ -695,6 +699,8 @@ class LLVMCodegen:
             return value
         if isinstance(node, SliceLiteral):
             return self.emit_slice_literal(node)
+        if isinstance(node, MapLiteral):
+            return self.emit_map_literal(node)
         if isinstance(node, SliceExpr):
             return self.emit_slice_expr(node)
         if isinstance(node, IndexAccess):
@@ -999,8 +1005,6 @@ class LLVMCodegen:
             arg = self.emit_expr(node.args[0])
             cap64 = self.builder.extract_value(arg, 2)
             return self.builder.trunc(cap64, ir.IntType(32))
-        if parse_map_type(node.name) is not None:
-            return self.emit_map_new(node.name)
         if node.name == "delete":
             if len(node.args) != 2:
                 raise RuntimeError("delete expects two arguments")
@@ -1215,8 +1219,8 @@ class LLVMCodegen:
     def map_value(self, desc, entries, cap, length):
         return self.map_emitter.map_value(desc, entries, cap, length)
 
-    def emit_map_new(self, map_type):
-        return self.map_emitter.emit_map_new(map_type)
+    def emit_map_literal(self, node: MapLiteral):
+        return self.map_emitter.emit_map_literal(node)
 
     def map_pointer_for_expr(self, map_expr):
         return self.map_emitter.map_pointer_for_expr(map_expr)

@@ -7,7 +7,7 @@ struct Key { id: i32, name: str }
 struct Val { count: i32, label: str }
 
 fun main() {
-    let m = map[Key,Val]()
+    let m = map[Key,Val]{}
     m[Key { id: 7, name: "a" }] = Val { count: 3, label: "ok" }
     let v = m[Key { id: 7, name: "a" }]
     io.println(v.label)

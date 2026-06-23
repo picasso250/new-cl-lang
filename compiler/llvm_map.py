@@ -24,11 +24,13 @@ class MapEmitter:
         value = self.ctx.builder.insert_value(value, ir.Constant(ir.IntType(64), 0), [4], name="map.tombstones")
         return value
 
-    def emit_map_new(self, map_type):
+    def emit_map_literal(self, node):
         self.ctx.ensure_ncrt_runtime()
-        slot = self.ctx.alloca_at_entry("__nc_map_new", MAP_TYPE)
-        self.ctx.builder.call(self.ctx.map_init_fn, [slot, self.map_desc(map_type)])
-        return self.ctx.builder.load(slot, name="map.new")
+        slot = self.ctx.alloca_at_entry("__nc_map_lit", MAP_TYPE)
+        self.ctx.builder.call(self.ctx.map_init_fn, [slot, self.map_desc(node.map_type)])
+        for key_expr, value_expr in node.entries:
+            self.emit_map_set_to_ptr(slot, node.map_type, key_expr, value_expr)
+        return self.ctx.builder.load(slot, name="map.lit")
 
     def map_pointer_for_expr(self, map_expr):
         try:
@@ -75,6 +77,12 @@ class MapEmitter:
     def emit_map_set(self, map_expr, key_expr, value_expr, assign_op="="):
         self.ctx.ensure_ncrt_runtime()
         map_ptr, map_type = self.ctx.emit_lvalue(map_expr)
+        map_args = parse_map_type(map_type)
+        if map_args is None:
+            raise NotImplementedError(f"LLVM backend cannot map-set {map_type}")
+        return self.emit_map_set_to_ptr(map_ptr, map_type, key_expr, value_expr, assign_op)
+
+    def emit_map_set_to_ptr(self, map_ptr, map_type, key_expr, value_expr, assign_op="="):
         map_args = parse_map_type(map_type)
         if map_args is None:
             raise NotImplementedError(f"LLVM backend cannot map-set {map_type}")

@@ -117,7 +117,7 @@ def build_symbol_table(program: "Program") -> SymbolTable:
         Assignment, Update, Block, ForCondition, FunctionDeclaration, Return, ErrReturn,
         StructDecl, IfaceDecl, EnumDecl, ForIn, ImportDecl, ExternBlock,
         IfExpr, BlockExpr, MatchExpr, BinaryOp, UnaryOp, FunctionCall, FunctionExpr,
-        ArrayLiteral, IndexAccess, MethodCall, FieldAccess, StructLiteral, Defer, FallibleOp
+        ArrayLiteral, IndexAccess, MethodCall, FieldAccess, StructLiteral, MapLiteral, Defer, FallibleOp
     )
     table = SymbolTable()
 
@@ -257,6 +257,10 @@ def build_symbol_table(program: "Program") -> SymbolTable:
         elif isinstance(node, StructLiteral):
             for _fn, fv in node.fields:
                 _walk_expr(fv)
+        elif isinstance(node, MapLiteral):
+            for key, value in node.entries:
+                _walk_expr(key)
+                _walk_expr(value)
 
     walk_stmts(program.statements)
     return table

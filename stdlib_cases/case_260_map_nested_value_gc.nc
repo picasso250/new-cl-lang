@@ -5,7 +5,7 @@ import runtime
 struct Box { s: str }
 
 fun main() {
-    let m = map[str,Box]()
+    let m = map[str,Box]{}
     m["x"] = Box { s: str(12345) }
     runtime.gc_collect()
     let b = m["x"]

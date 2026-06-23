@@ -26,7 +26,7 @@ fun take_struct(b = Box { value: 7 }): i32 {
     b.value
 }
 
-fun take_map(m = map[str,i32]()): i32 {
+fun take_map(m = map[str,i32]{}): i32 {
     m["a"] = 1
     m["a"]
 }

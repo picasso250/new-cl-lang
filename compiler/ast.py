@@ -276,6 +276,18 @@ class SliceLiteral(Node):
         return f"SliceLit([]{self.elem_type} {{ {es} }})"
 
 
+class MapLiteral(Node):
+    """map[K,V] { key: value, ... }"""
+    def __init__(self, map_type: str, entries: list):
+        self.map_type = map_type
+        self.entries = entries  # [(key_expr, value_expr), ...]
+        self.type: str | None = None
+
+    def __repr__(self):
+        entries = ', '.join(f'{k}: {v}' for k, v in self.entries)
+        return f"MapLit({self.map_type} {{ {entries} }})"
+
+
 class IndexAccess(Node):
     """expr[index]"""
     def __init__(self, obj, index):

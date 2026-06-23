@@ -57,7 +57,7 @@ fun main() {
         8,
         9,
     }
-    let m = map[str,i32,]()
+    let m = map[str,i32,]{}
     m["a"] = 10
     let c = Color::Green
 
