@@ -815,6 +815,10 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 if (is_pointer_type(node.left.type) or is_pointer_type(node.right.type)
                         or is_nullable_pointer_type(node.left.type) or is_nullable_pointer_type(node.right.type)):
                     fail(f"pointer type {node.left.type}: operator {node.op} is not allowed", node)
+                if node.left.type == "str" or node.right.type == "str":
+                    require_type(node.right.type, node.left.type, "comparison", node)
+                    node.type = "bool"
+                    return
                 if not (is_numeric_type(node.left.type) and is_numeric_type(node.right.type)):
                     if node.left.type in getattr(symtab, "_structs", {}) and node.right.type == node.left.type:
                         method_name = OPERATOR_METHODS[node.op]

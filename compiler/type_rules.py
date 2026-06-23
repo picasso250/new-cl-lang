@@ -248,7 +248,7 @@ class TypeRules:
             self.fail(f"comparison: type {err} is not comparable", node)
 
     def ord_error_type(self, t, seen=None):
-        if t in NUMERIC_TYPES:
+        if t in NUMERIC_TYPES or t == "str":
             return None
         if seen is None:
             seen = set()

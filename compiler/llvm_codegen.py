@@ -957,6 +957,10 @@ class LLVMCodegen:
             if node.op == "!=":
                 return self.builder.not_(eq)
             return eq
+        if typ == "str" and node.op in ("<", "<=", ">", ">="):
+            cmp_value = self.emit_str_cmp(left, right)
+            pred = {"<": "<", "<=": "<=", ">": ">", ">=": ">="}[node.op]
+            return self.builder.icmp_signed(pred, cmp_value, ir.Constant(ir.IntType(32), 0), name="str.ord")
         if typ in STRUCT_FIELDS and node.op in ("==", "!="):
             eq = self.emit_struct_eq(left, right, typ)
             if node.op == "!=":
@@ -1438,6 +1442,9 @@ class LLVMCodegen:
 
     def emit_str_eq(self, left, right):
         return self.string_emitter.emit_str_eq(left, right)
+
+    def emit_str_cmp(self, left, right):
+        return self.string_emitter.emit_str_cmp(left, right)
 
     def emit_struct_eq(self, left, right, typ):
         result = ir.Constant(ir.IntType(1), 1)

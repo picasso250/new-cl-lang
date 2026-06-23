@@ -148,7 +148,7 @@ v1 不提供 `json.decode[T]`、`json.encode[T]`、字段标签或 struct 自动
 ### types
 
 - `types.Eq`：泛型约束，支持 `==` / `!=` 的类型。
-- `types.Ord`：泛型约束，支持 `<` / `>` / `<=` / `>=` 的类型，当前为数值类型或带合法 `__lt__` 的 struct。
+- `types.Ord`：泛型约束，支持 `<` / `>` / `<=` / `>=` 的类型，当前为数值类型、`str` 或带合法 `__lt__` 的 struct；`str` 按 UTF-8 原始字节序比较，不做 Unicode collation 或 locale 排序。
 - `types.Hash`：泛型约束，可作为 `map` key 的类型。
 - `types.Zero`：泛型约束，有零值的类型。
 

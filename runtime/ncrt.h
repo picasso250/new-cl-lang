@@ -80,6 +80,7 @@ float __nc_strict_str_to_f32(const uint8_t* ptr, uint64_t len);
 double __nc_strict_str_to_f64(const uint8_t* ptr, uint64_t len);
 int __nc_str_to_i32_ptr(const str* s);
 int __nc_str_eq_ptr(const str* a, const str* b);
+int32_t __nc_str_cmp_ptr(const str* a, const str* b);
 void __nc_cstr_to_str_out(str* out, const char* cstr);
 void __nc_os_set_args(int argc, char** argv);
 int32_t __nc_argc(void);

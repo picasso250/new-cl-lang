@@ -235,6 +235,18 @@ int __nc_str_eq_ptr(const str* a, const str* b) {
     return __nc_str_eq(*a, *b);
 }
 
+int32_t __nc_str_cmp_ptr(const str* a, const str* b) {
+    uint64_t n = a->len < b->len ? a->len : b->len;
+    if (n != 0) {
+        int cmp = memcmp(a->ptr, b->ptr, (size_t)n);
+        if (cmp < 0) return -1;
+        if (cmp > 0) return 1;
+    }
+    if (a->len < b->len) return -1;
+    if (a->len > b->len) return 1;
+    return 0;
+}
+
 void __nc_slice_copy_raw(nc_slice_raw* out, const void* src, uint64_t len, uint64_t elem_size) {
     out->ptr = NULL;
     out->len = len;

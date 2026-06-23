@@ -264,6 +264,7 @@ struct 嵌入规则：
 
 - 必须显式写类型实参。
 - v1 支持 `any` 和标准库约束 `types.Eq`、`types.Ord`、`types.Hash`、`types.Zero`。
+- `types.Ord` 支持数值类型、`str` 和具备合法 `__lt__` 的 struct；`str` 按 UTF-8 原始字节序比较，不做 Unicode collation 或 locale 排序。
 - 实例化后按普通声明检查和生成代码。
 - 已完全实例化的泛型函数可作为函数值使用：`less[i32]` 的类型是对应的 `fun(...) R`。
 - 递归函数需要显式返回类型，避免返回类型推导成环。

@@ -135,3 +135,18 @@ class StringEmitter:
         right_ptr = self.ctx.value_to_stack_ptr(right, STR_TYPE, "__nc_str_eq_right")
         eq = self.ctx.builder.call(fn, [left_ptr, right_ptr], name="str.eq.i32")
         return self.ctx.builder.icmp_signed("!=", eq, ir.Constant(ir.IntType(32), 0), name="str.eq")
+
+    def emit_str_cmp(self, left, right):
+        self.ctx.ensure_ncrt_runtime()
+        fn = (
+            ir.Function(
+                self.ctx.module,
+                ir.FunctionType(ir.IntType(32), [STR_TYPE.as_pointer(), STR_TYPE.as_pointer()]),
+                name="__nc_str_cmp_ptr",
+            )
+            if "__nc_str_cmp_ptr" not in self.ctx.module.globals
+            else self.ctx.module.globals["__nc_str_cmp_ptr"]
+        )
+        left_ptr = self.ctx.value_to_stack_ptr(left, STR_TYPE, "__nc_str_cmp_left")
+        right_ptr = self.ctx.value_to_stack_ptr(right, STR_TYPE, "__nc_str_cmp_right")
+        return self.ctx.builder.call(fn, [left_ptr, right_ptr], name="str.cmp")

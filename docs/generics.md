@@ -16,7 +16,7 @@
 ## 约束族
 
 - `types.Eq`：支持 `==` / `!=` 的类型。
-- `types.Ord`：支持 `<` / `>` / `<=` / `>=` 的类型，当前为数值类型或带合法 `__lt__` 的 struct。
+- `types.Ord`：支持 `<` / `>` / `<=` / `>=` 的类型，当前为数值类型、`str` 或带合法 `__lt__` 的 struct；`str` 按 UTF-8 原始字节序比较，不做 Unicode collation 或 locale 排序。
 - `types.Hash`：可作为 `map[K,V]` key 的类型，要求 equality 是稳定等价关系；float 不满足。
 - `types.Zero`：有零值的类型。
 
@@ -27,7 +27,7 @@
 | signed/unsigned integer | yes | yes | yes | yes | 包括 `i8..i64`、`u8..u64` |
 | float | yes | yes | no | yes | `f32`、`f64` 不可作 map key |
 | `bool` | yes | no | yes | yes |  |
-| `str` | yes | no | yes | yes | 当前不纳入默认排序 |
+| `str` | yes | yes | yes | yes | UTF-8 字节序，不做 Unicode collation 或 locale 排序 |
 | `rune` | yes | no | yes | yes | 不当作普通 numeric 使用 |
 | `enum` | yes | no | yes | yes |  |
 | `*T` | yes | no | yes | no | 非空指针没有零值 |
