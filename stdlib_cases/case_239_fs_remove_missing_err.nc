@@ -3,7 +3,8 @@ import io
 
 # STDOUT: fs.remove failed
 fun main() {
-    if fs.remove("__nc_case_239_missing.txt") is err {
+    try fs.remove("__nc_case_239_missing.txt") {
+    } else e {
         io.println("fs.remove failed")
     }
 }

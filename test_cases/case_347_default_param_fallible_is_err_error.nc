@@ -1,13 +1,10 @@
-# ERROR: default parameter ok: fallible operations are not allowed
+# ERROR: Expected TokenKind.LBRACE
 
 fun fail(): i32 {
     err "bad"
 }
 
-fun bad(ok: bool = fail() is err): bool {
-    ok
-}
-
 fun main() {
-    bad()
+    if fail() is err {
+    }
 }

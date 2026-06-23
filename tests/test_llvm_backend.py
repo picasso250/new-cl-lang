@@ -65,12 +65,14 @@ fun main() {{
     assert (stdout.strip(), stderr.strip(), rc) == ("hello", "", 0)
 
 
-def test_llvm_fs_read_failure_is_err(tmp_path):
+def test_llvm_fs_read_failure_try(tmp_path):
     path = str(tmp_path / "missing.txt").replace("\\", "/")
     source = f"""import fs
 import io
 fun main() {{
-    if fs.read_file("{path}") is err {{
+    try content = fs.read_file("{path}") {{
+        io.println(content)
+    }} else e {{
         io.println("fs.read_file failed")
     }}
 }}

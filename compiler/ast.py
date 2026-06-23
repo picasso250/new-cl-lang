@@ -333,6 +333,23 @@ class Defer(Node):
         return f"Defer({self.body})"
 
 
+class TryStatement(Node):
+    """try name = call() { ok } else err_name { err }"""
+    def __init__(self, call, success_block: Block, success_name: str | None = None,
+                 error_name: str | None = None, error_block: Block | None = None):
+        self.call = call
+        self.success_name = success_name
+        self.success_block = success_block
+        self.error_name = error_name
+        self.error_block = error_block
+        self.type: str | None = None
+
+    def __repr__(self):
+        bind = f"{self.success_name} = " if self.success_name else ""
+        else_part = f" else {self.error_name} {self.error_block}" if self.error_block else ""
+        return f"Try({bind}{self.call} {self.success_block}{else_part})"
+
+
 class FunctionDeclaration(Node):
     """fun name(params): return_type { body }
        或  fun (r *T) name(params): return_type { body }"""
@@ -405,7 +422,7 @@ class Return(Node):
 
 
 class FallibleOp(Node):
-    """expr??, expr!!, expr is err"""
+    """expr??, expr!!"""
     def __init__(self, expr, op: str):
         self.expr = expr
         self.op = op

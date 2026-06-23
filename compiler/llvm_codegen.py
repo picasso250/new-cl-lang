@@ -17,7 +17,7 @@ from compiler.ast import (
     FunctionExpr, GenericFunctionValue, ErrReturn, FallibleOp,
     ForIn, FunctionDeclaration, Identifier, IfExpr, IfaceDecl, ImportDecl, IndexAccess, IntegerLiteral,
     MapLiteral, MatchExpr, MethodCall, NilLiteral, MagicConst, Return, SizeOfType, SliceExpr, SliceLiteral, StringLiteral, InterpolatedString, RuneLiteral, StructDecl,
-    StructLiteral, UnaryOp, VariableDeclaration, ForCondition,
+    StructLiteral, TryStatement, UnaryOp, VariableDeclaration, ForCondition,
 )
 from compiler.llvm_layout import (
     ENUM_VARIANTS, FLOAT_TYPES, I8PTR, IFACE_METHODS, INT_TYPES,
@@ -179,6 +179,13 @@ def _collect_llvm_inputs(program) -> _LLVMInputs:
         elif isinstance(stmt, Defer):
             for child in stmt.body.statements:
                 collect_closure_stmt(child)
+        elif isinstance(stmt, TryStatement):
+            collect_closure_expr(stmt.call)
+            for child in stmt.success_block.statements:
+                collect_closure_stmt(child)
+            if stmt.error_block:
+                for child in stmt.error_block.statements:
+                    collect_closure_stmt(child)
         elif isinstance(stmt, Block):
             for child in stmt.statements:
                 collect_closure_stmt(child)
@@ -565,6 +572,9 @@ class LLVMCodegen:
         if isinstance(stmt, ErrReturn):
             self.function_emitter.emit_error_return_value(self.emit_coerced_expr(stmt.expr, "error"), stmt)
             return
+        if isinstance(stmt, TryStatement):
+            self.emit_try_statement(stmt)
+            return
         if isinstance(stmt, Defer):
             self.emit_defer(stmt)
             return
@@ -574,6 +584,45 @@ class LLVMCodegen:
             self.builder.branch(self.break_stack[-1])
             return
         raise NotImplementedError(f"LLVM backend does not support statement: {type(stmt).__name__}")
+
+    def emit_try_statement(self, stmt: TryStatement):
+        status, value_slot, error_slot, success_type = self.emit_fallible_call_raw(stmt.call)
+        err_bb = self.func.append_basic_block("try.err")
+        ok_bb = self.func.append_basic_block("try.ok")
+        end_bb = self.func.append_basic_block("try.end")
+        saved_vars = dict(self.vars)
+        self.builder.cbranch(status, err_bb, ok_bb)
+
+        self.builder.position_at_end(err_bb)
+        err_value = self.builder.load(error_slot, name="try.err.value")
+        path, line, col = self.function_emitter.node_location(stmt)
+        err_value = self.emit_error_append_frame(err_value, self.current_frame_name, path, line, col)
+        if stmt.error_block is None:
+            self.emit_print_error(err_value)
+            self.emit_exit(1)
+            self.builder.unreachable()
+        else:
+            err_slot = self.alloca_at_entry(safe_user_ident(stmt.error_name), llvm_type("error"))
+            self.root_slots_for_type(err_slot, "error")
+            self.builder.store(err_value, err_slot)
+            self.vars[stmt.error_name] = (err_slot, "error")
+            self.emit_block(stmt.error_block)
+            if not self.builder.block.is_terminated:
+                self.builder.branch(end_bb)
+        self.vars = dict(saved_vars)
+
+        self.builder.position_at_end(ok_bb)
+        if stmt.success_name is not None:
+            ok_slot = self.alloca_at_entry(safe_user_ident(stmt.success_name), llvm_type(success_type))
+            self.root_slots_for_type(ok_slot, success_type)
+            self.builder.store(self.builder.load(value_slot, name="try.ok.value"), ok_slot)
+            self.vars[stmt.success_name] = (ok_slot, success_type)
+        self.emit_block(stmt.success_block)
+        if not self.builder.block.is_terminated:
+            self.builder.branch(end_bb)
+        self.vars = saved_vars
+
+        self.builder.position_at_end(end_bb)
 
     def emit_defer(self, stmt: Defer):
         if self.emitting_defer:

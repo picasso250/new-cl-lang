@@ -9,7 +9,9 @@ fun risky(path: str): str {
 }
 
 fun main() {
-    if risky("") is err {
+    try value = risky("") {
+        io.println(value)
+    } else e {
         io.println("error: bad path")
     }
 }

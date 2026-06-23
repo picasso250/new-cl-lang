@@ -8,7 +8,9 @@ fun fail() {
 }
 
 fun main() {
-    if fail() is err {
+    try fail() {
+        io.println(0)
+    } else e {
         runtime.gc_collect()
         io.println(1)
     }

@@ -115,7 +115,7 @@ def build_symbol_table(program: "Program") -> SymbolTable:
     from compiler.ast import (
         Program, VariableDeclaration, ExpressionStatement,
         Assignment, Update, Block, ForCondition, FunctionDeclaration, Return, ErrReturn,
-        StructDecl, IfaceDecl, EnumDecl, ForIn, ImportDecl, ExternBlock,
+        StructDecl, IfaceDecl, EnumDecl, ForIn, ImportDecl, ExternBlock, TryStatement,
         IfExpr, BlockExpr, MatchExpr, BinaryOp, UnaryOp, FunctionCall, FunctionExpr,
         ArrayLiteral, IndexAccess, MethodCall, FieldAccess, StructLiteral, MapLiteral, Defer, FallibleOp
     )
@@ -174,6 +174,18 @@ def build_symbol_table(program: "Program") -> SymbolTable:
                     table._extern_functions.add(fn.name)
             elif isinstance(stmt, (ForCondition, Block, ForIn)):
                 _descend_stmt(stmt)
+            elif isinstance(stmt, TryStatement):
+                _walk_expr(stmt.call)
+                table.push_scope()
+                if stmt.success_name is not None:
+                    table.declare(stmt.success_name, "i32")
+                walk_stmts(stmt.success_block.statements)
+                table.pop_scope()
+                if stmt.error_block is not None:
+                    table.push_scope()
+                    table.declare(stmt.error_name, "error")
+                    walk_stmts(stmt.error_block.statements)
+                    table.pop_scope()
             elif isinstance(stmt, ExpressionStatement):
                 _walk_expr(stmt.expr)
             elif isinstance(stmt, Assignment):

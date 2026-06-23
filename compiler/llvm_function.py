@@ -232,8 +232,6 @@ class FunctionEmitter:
 
     def emit_fallible_op(self, node):
         status, value_slot, error_slot, success_type = self.emit_fallible_call_raw(node.expr)
-        if node.op == "is_err":
-            return status
         err_bb = self.ctx.func.append_basic_block("fallible.err")
         ok_bb = self.ctx.func.append_basic_block("fallible.ok")
         self.ctx.builder.cbranch(status, err_bb, ok_bb)

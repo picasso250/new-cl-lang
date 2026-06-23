@@ -9,7 +9,8 @@ fun main() {
     if fs.exists(b) { fs.remove(b)!! }
     fs.write_file(a, "a")!!
     fs.write_file(b, "b")!!
-    if fs.rename(a, b) is err {
+    try fs.rename(a, b) {
+    } else e {
         io.println("fs.rename failed")
     }
     fs.remove(a)!!

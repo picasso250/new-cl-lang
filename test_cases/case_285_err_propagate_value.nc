@@ -11,7 +11,9 @@ fun wrap(): i32 {
 }
 
 fun main() {
-    if wrap() is err {
+    try value = wrap() {
+        io.println(value)
+    } else e {
         io.println("bad")
     }
 }

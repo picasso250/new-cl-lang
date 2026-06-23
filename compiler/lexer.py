@@ -19,7 +19,7 @@ class TokenKind(Enum):
     FUN = auto()
     RET = auto()
     ERR = auto()
-    IS = auto()
+    TRY = auto()
     STRUCT = auto()
     IFACE = auto()
     ENUM = auto()
@@ -100,7 +100,7 @@ KEYWORDS = {
     "fun": TokenKind.FUN,
     "ret": TokenKind.RET,
     "err": TokenKind.ERR,
-    "is": TokenKind.IS,
+    "try": TokenKind.TRY,
     "struct": TokenKind.STRUCT,
     "iface": TokenKind.IFACE,
     "enum": TokenKind.ENUM,

@@ -1,4 +1,4 @@
-# ERROR: fallible call fail must be handled with ??, !!, or is err
+# ERROR: fallible call fail must be handled with ??, !!, or try
 
 fun fail(): i32 {
     err "bad"

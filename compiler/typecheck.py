@@ -20,7 +20,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
     from compiler.ast import (
         Program, VariableDeclaration, ExpressionStatement,
         Assignment, Update, Block, ForCondition, FunctionDeclaration, Return, ErrReturn, ImportDecl,
-        StructDecl, IfaceDecl, StructLiteral, FieldAccess,
+        StructDecl, IfaceDecl, StructLiteral, FieldAccess, TryStatement,
         EnumDecl, EnumRef, ForIn,
         IfExpr, BlockExpr, MatchExpr, IntegerLiteral, FloatLiteral, StringLiteral, InterpolatedString, RuneLiteral, BoolLiteral, NilLiteral, MagicConst, BinaryOp, UnaryOp, FunctionCall, SizeOfType, Identifier,
         ExternBlock, FunctionExpr, GenericFunctionValue,
@@ -236,6 +236,17 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             walk_expr(expr)
         finally:
             fallible_op_depth = prev
+
+    def walk_fallible_call_for_try(call):
+        nonlocal fallible_op_depth
+        if not isinstance(call, (FunctionCall, MethodCall)):
+            fail(f"try requires a fallible function or method call, got {type(call).__name__}", call)
+        fallible_op_depth += 1
+        walk_expr(call)
+        fallible_op_depth -= 1
+        if not getattr(call, "fallible", False):
+            fail("try requires a fallible call", call)
+        return call.type
 
     def require_arg_count(args, expected, context, node=None):
         if len(args) != expected:
@@ -881,7 +892,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 fn_node = function_decls.get(node.name)
                 node.fallible = bool(getattr(fn_node, "fallible", False))
                 if node.fallible and fallible_op_depth <= 0:
-                    fail(f"fallible call {node.name} must be handled with ??, !!, or is err", node)
+                    fail(f"fallible call {node.name} must be handled with ??, !!, or try", node)
             else:
                 try:
                     sym = symtab.lookup(node.name)
@@ -905,14 +916,12 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             walk_expr(node.expr)
             fallible_op_depth -= 1
             if not getattr(node.expr, "fallible", False):
-                fail(f"{node.op if node.op != 'is_err' else 'is err'} requires a fallible call", node)
+                fail(f"{node.op} requires a fallible call", node)
             if node.op == "??":
                 mark_current_fallible(node)
                 node.type = node.expr.type
             elif node.op == "!!":
                 node.type = node.expr.type
-            elif node.op == "is_err":
-                node.type = "bool"
             else:
                 fail(f"unknown fallible operator {node.op}", node)
         elif isinstance(node, SizeOfType):
@@ -1086,7 +1095,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 fn_node = method_decls.get((receiver_base, node.method))
                 node.fallible = bool(getattr(fn_node, "fallible", False))
                 if node.fallible and fallible_op_depth <= 0:
-                    fail(f"fallible call {receiver_base}.{node.method} must be handled with ??, !!, or is err", node)
+                    fail(f"fallible call {receiver_base}.{node.method} must be handled with ??, !!, or try", node)
             else:
                 fail(f"{obj_type}: method {node.method} not found", node)
         elif isinstance(node, ArrayLiteral):
@@ -1318,6 +1327,23 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 walk_expr(stmt.expr)
                 require_error_type(stmt.expr.type, "err", stmt)
                 mark_current_fallible(stmt)
+            elif isinstance(stmt, TryStatement):
+                success_type = walk_fallible_call_for_try(stmt.call)
+                if success_type == "void":
+                    if stmt.success_name is not None:
+                        fail("try: void fallible call cannot bind a success value", stmt)
+                elif stmt.success_name is None:
+                    fail(f"try: fallible call returning {success_type} requires a success binding", stmt)
+                symtab.push_scope()
+                if stmt.success_name is not None:
+                    symtab.declare(stmt.success_name, success_type)
+                walk_stmts(stmt.success_block.statements)
+                symtab.pop_scope()
+                if stmt.error_block is not None:
+                    symtab.push_scope()
+                    symtab.declare(stmt.error_name, "error")
+                    walk_stmts(stmt.error_block.statements)
+                    symtab.pop_scope()
             elif isinstance(stmt, StructDecl):
                 validate_struct_embedding(stmt)
                 for _fname, _ftype in stmt.fields:
@@ -1517,6 +1543,8 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             return mark_direct_fallible(node.target)
         if isinstance(node, Return):
             return bool(node.expr and mark_direct_fallible(node.expr))
+        if isinstance(node, TryStatement):
+            return mark_direct_fallible(node.success_block) or bool(node.error_block and mark_direct_fallible(node.error_block))
         if isinstance(node, IfExpr):
             return (mark_direct_fallible(node.condition)
                     or mark_direct_fallible(node.then_block)

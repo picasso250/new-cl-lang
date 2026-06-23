@@ -13,7 +13,9 @@ fun (b *Box) get(): i32 {
 
 fun main() {
     let b = new Box { value: -1 }
-    if b.get() is err {
+    try value = b.get() {
+        io.println(value)
+    } else e {
         io.println("method bad")
     }
 }

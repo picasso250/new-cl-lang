@@ -103,6 +103,8 @@ class Parser:
             return self._parse_for()
         if t.kind == TokenKind.ERR:
             return self._parse_err_return()
+        if t.kind == TokenKind.TRY:
+            return self._parse_try()
         if t.kind == TokenKind.DEFER:
             return self._parse_defer()
         if t.kind == TokenKind.TYPE:
@@ -378,6 +380,24 @@ class Parser:
         start = self.advance()
         body = self._parse_block()
         return self.span(Defer(body), start)
+
+    def _parse_try(self):
+        start = self.advance()
+        success_name = None
+        if self.peek().kind == TokenKind.IDENT and self.pos + 1 < len(self.tokens) and self.tokens[self.pos + 1].kind == TokenKind.EQ:
+            success_name = self.advance().value
+            self.advance()
+        call = self.parse_expression()
+        success_block = self._parse_block()
+        error_name = None
+        error_block = None
+        if self.peek().kind == TokenKind.ELSE:
+            self.advance()
+            error_name = self.expect(TokenKind.IDENT).value
+            error_block = self._parse_block()
+        stmt = TryStatement(call, success_block, success_name, error_name, error_block)
+        self.match(TokenKind.SEMI)
+        return self.span(stmt, start)
 
     def _parse_for(self):
         self.advance()  # 吞 for
@@ -675,12 +695,6 @@ class Parser:
                 start_pos = getattr(expr, "span", (self.peek().pos, self.peek().pos))[0]
                 self.advance()
                 expr = FallibleOp(expr, "!!")
-                expr.span = (start_pos, self.tokens[self.pos - 1].pos)
-            elif self.peek().kind == TokenKind.IS:
-                start_pos = getattr(expr, "span", (self.peek().pos, self.peek().pos))[0]
-                self.advance()
-                self.expect(TokenKind.ERR)
-                expr = FallibleOp(expr, "is_err")
                 expr.span = (start_pos, self.tokens[self.pos - 1].pos)
             else:
                 break

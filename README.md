@@ -16,8 +16,29 @@ NC 是一个“更好的 C”实验编译器：以 LLVM 为后端，自带构建
 NC 刻意控制关键字数量，让语言表面保持小而直接。当前保留词只有：
 
 ```text
-let if else fun ret err is struct iface enum match for in break new defer nil import extern type true false
+let if else fun ret err try struct iface enum match for in break new defer nil import extern type true false
 ```
+
+## 错误处理
+
+NC 采用 Go 风格的显式错误返回，但不采用源码双返回。可错调用不能裸用，必须在调用点写清楚：`??` 传播，`!!` 表示必须成功，`try` 拆出成功分支和错误分支。
+
+```nc
+import fs
+import io
+
+fun main() {
+    try text = fs.read_file("config.nc") {
+        io.println(text)
+    } else e {
+        io.println("load failed")
+    }
+}
+```
+
+`try` 是语句：成功值只在成功块内可见，`else e` 的错误对象只在错误块内可见。省略 `else` 时，失败行为等同于 `!!`：打印错误和 NC 调用栈后退出。
+
+当前边界：v1 可错 callable 只覆盖普通函数和 struct 方法；extern、iface 方法、函数值和闭包暂不支持可错。`error` 是 opaque 内建错误对象，当前不提供公开 inspect/wrap API。
 
 ## 快速开始
 
