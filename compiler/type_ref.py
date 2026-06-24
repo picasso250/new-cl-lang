@@ -1,8 +1,8 @@
-"""Internal helpers for NC type strings.
+"""Internal helpers for NC type references.
 
-The public AST still stores type annotations as strings.  This module is the
-single parser/formatter for those strings so passes do not slice type syntax by
-hand.
+TypeRef is the structured representation used by the frontend.  The compiler
+still keeps a canonical string form for ABI names, map descriptors and a few
+legacy codegen paths; user diagnostics should use format_type_ref_user().
 """
 
 from __future__ import annotations
@@ -10,37 +10,84 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-@dataclass(frozen=True)
-class NamedType:
+class TypeRefBase:
+    def __str__(self):
+        return format_type_ref_user(self)
+
+    def __eq__(self, other):
+        try:
+            return type_key(self) == type_key(other)
+        except TypeParseError:
+            return False
+
+    def __hash__(self):
+        return hash(type_key(self))
+
+    def startswith(self, prefix):
+        return type_key(self).startswith(prefix)
+
+    def endswith(self, suffix):
+        return type_key(self).endswith(suffix)
+
+    def lstrip(self, chars=None):
+        return type_key(self).lstrip(chars)
+
+    def split(self, sep=None, maxsplit=-1):
+        return type_key(self).split(sep, maxsplit)
+
+    def rsplit(self, sep=None, maxsplit=-1):
+        return type_key(self).rsplit(sep, maxsplit)
+
+    def __len__(self):
+        return len(type_key(self))
+
+    def __getitem__(self, item):
+        return type_key(self)[item]
+
+    def __iter__(self):
+        return iter(type_key(self))
+
+    def __contains__(self, item):
+        return item in type_key(self)
+
+    def __add__(self, other):
+        return type_key(self) + other
+
+    def __radd__(self, other):
+        return other + type_key(self)
+
+
+@dataclass(frozen=True, eq=False)
+class NamedType(TypeRefBase):
     name: str
 
 
-@dataclass(frozen=True)
-class PointerType:
+@dataclass(frozen=True, eq=False)
+class PointerType(TypeRefBase):
     inner: "TypeRef"
     nullable: bool = False
 
 
-@dataclass(frozen=True)
-class SliceType:
+@dataclass(frozen=True, eq=False)
+class SliceType(TypeRefBase):
     elem: "TypeRef"
 
 
-@dataclass(frozen=True)
-class ArrayTypeRef:
+@dataclass(frozen=True, eq=False)
+class ArrayTypeRef(TypeRefBase):
     length: int
     elem: "TypeRef"
 
 
-@dataclass(frozen=True)
-class FunctionType:
+@dataclass(frozen=True, eq=False)
+class FunctionType(TypeRefBase):
     params: tuple["TypeRef", ...]
     ret: "TypeRef"
     fallible: bool = False
 
 
-@dataclass(frozen=True)
-class GenericType:
+@dataclass(frozen=True, eq=False)
+class GenericType(TypeRefBase):
     base: "TypeRef"
     args: tuple["TypeRef", ...]
 
@@ -87,7 +134,11 @@ def _find_matching(s: str, start: int, open_ch: str, close_ch: str) -> int:
 
 
 def parse_type_ref(t: str | None) -> TypeRef | None:
-    if t is None or not isinstance(t, str):
+    if t is None:
+        return t
+    if isinstance(t, (NamedType, PointerType, SliceType, ArrayTypeRef, FunctionType, GenericType)):
+        return t
+    if not isinstance(t, str):
         return t
     t = t.strip()
     if t.startswith("?*"):
@@ -143,7 +194,44 @@ def format_type_ref(ref) -> str | None:
     raise TypeParseError(f"unknown type ref {ref!r}")
 
 
-def rewrite_type(t, fn):
+def format_type_ref_user(ref) -> str | None:
+    ref = parse_type_ref(ref)
+    if ref is None or not isinstance(ref, (NamedType, PointerType, SliceType, ArrayTypeRef, FunctionType, GenericType)):
+        return ref
+    if isinstance(ref, NamedType):
+        return ref.name
+    if isinstance(ref, PointerType):
+        return ("?*" if ref.nullable else "*") + format_type_ref_user(ref.inner)
+    if isinstance(ref, SliceType):
+        return "[]" + format_type_ref_user(ref.elem)
+    if isinstance(ref, ArrayTypeRef):
+        return f"[{ref.length}]{format_type_ref_user(ref.elem)}"
+    if isinstance(ref, FunctionType):
+        suffix = " err" if ref.fallible else ""
+        return f"fun({', '.join(format_type_ref_user(p) for p in ref.params)}) {format_type_ref_user(ref.ret)}{suffix}"
+    if isinstance(ref, GenericType):
+        return f"{format_type_ref_user(ref.base)}[{','.join(format_type_ref_user(a) for a in ref.args)}]"
+    raise TypeParseError(f"unknown type ref {ref!r}")
+
+
+def ensure_type_ref(t):
+    return parse_type_ref(t)
+
+
+def type_key(t) -> str | None:
+    return format_type_ref(parse_type_ref(t))
+
+
+def same_type(a, b) -> bool:
+    return type_key(a) == type_key(b)
+
+
+def type_name(t) -> str | None:
+    ref = parse_type_ref(t)
+    return ref.name if isinstance(ref, NamedType) else None
+
+
+def rewrite_type_ref(t, fn):
     ref = parse_type_ref(t)
 
     def walk(r):
@@ -164,7 +252,11 @@ def rewrite_type(t, fn):
             return GenericType(walk(r.base), tuple(walk(a) for a in r.args))
         return r
 
-    return format_type_ref(walk(ref))
+    return walk(ref)
+
+
+def rewrite_type(t, fn):
+    return format_type_ref(rewrite_type_ref(t, fn))
 
 
 def parse_type_app(t: str) -> tuple[str, list[str]] | None:
@@ -207,4 +299,34 @@ def parse_array_type(t: str):
     ref = parse_type_ref(t)
     if isinstance(ref, ArrayTypeRef):
         return ref.length, format_type_ref(ref.elem)
+    return None
+
+
+def as_pointer_type(t):
+    ref = parse_type_ref(t)
+    return ref if isinstance(ref, PointerType) else None
+
+
+def as_slice_type(t):
+    ref = parse_type_ref(t)
+    return ref if isinstance(ref, SliceType) else None
+
+
+def as_array_type(t):
+    ref = parse_type_ref(t)
+    return ref if isinstance(ref, ArrayTypeRef) else None
+
+
+def as_function_type(t):
+    ref = parse_type_ref(t)
+    return ref if isinstance(ref, FunctionType) else None
+
+
+def as_map_type(t):
+    ref = parse_type_ref(t)
+    if (isinstance(ref, GenericType)
+            and isinstance(ref.base, NamedType)
+            and ref.base.name == "map"
+            and len(ref.args) == 2):
+        return ref.args
     return None

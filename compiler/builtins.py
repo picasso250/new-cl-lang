@@ -4,7 +4,7 @@ This is the temporary boundary between language core, runtime test hooks,
 and functions that should eventually move behind std imports.
 """
 
-from compiler.type_ref import parse_map_type
+from compiler.type_ref import PointerType, SliceType, as_map_type, as_pointer_type, as_slice_type, parse_type_ref
 
 
 NUMERIC_TYPES = {"i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64"}
@@ -22,31 +22,32 @@ def infer_builtin_call(node, require_arg_count, require_type, fail) -> str | Non
         return "void"
     if name == "append":
         require_arg_count(args, 2, "append", node)
-        if not args[0].type.startswith("[]"):
+        slice_type = as_slice_type(args[0].type)
+        if slice_type is None:
             fail(f"append: expected slice, got {args[0].type}", node)
-        require_type(args[1].type, args[0].type[2:], "append element", node)
+        require_type(args[1].type, slice_type.elem, "append element", node)
         return args[0].type
     if name == "cap":
         require_arg_count(args, 1, "cap", node)
-        if not args[0].type.startswith("[]"):
+        if as_slice_type(args[0].type) is None:
             fail(f"cap: expected slice, got {args[0].type}", node)
         return "i32"
     if name == "copy":
         require_arg_count(args, 2, "copy", node)
-        if not args[0].type.startswith("[]"):
+        if as_slice_type(args[0].type) is None:
             fail(f"copy dst: expected slice, got {args[0].type}", node)
-        if not args[1].type.startswith("[]"):
+        if as_slice_type(args[1].type) is None:
             fail(f"copy src: expected slice, got {args[1].type}", node)
         require_type(args[1].type, args[0].type, "copy src", args[1])
         return "i32"
     if name == "clear":
         require_arg_count(args, 1, "clear", node)
-        if not (args[0].type.startswith("[]") or parse_map_type(args[0].type) is not None):
+        if not (as_slice_type(args[0].type) is not None or as_map_type(args[0].type) is not None):
             fail(f"clear: expected slice or map, got {args[0].type}", node)
         return "void"
     if name == "delete":
         require_arg_count(args, 2, "delete", node)
-        map_args = parse_map_type(args[0].type)
+        map_args = as_map_type(args[0].type)
         if map_args is None:
             fail(f"delete: expected map, got {args[0].type}", node)
         key_type, _value_type = map_args
@@ -56,7 +57,8 @@ def infer_builtin_call(node, require_arg_count, require_type, fail) -> str | Non
         require_arg_count(args, 1, "str", node)
         if args[0].type == "[]u8":
             return "str"
-        if args[0].type in {"*i8", "?*i8", "*u8", "?*u8"}:
+        ptr = as_pointer_type(args[0].type)
+        if ptr is not None and ptr.inner in {"i8", "u8"}:
             return "str"
         if args[0].type not in STRINGIFIABLE_TYPES:
             fail(f"str: cannot convert {args[0].type} to str", node)
@@ -100,7 +102,7 @@ def infer_builtin_call(node, require_arg_count, require_type, fail) -> str | Non
     if name == "len":
         require_arg_count(args, 1, "len", node)
         arg_type = args[0].type
-        if not (arg_type == "str" or parse_map_type(arg_type) is not None or arg_type.startswith("[]")):
+        if not (arg_type == "str" or as_map_type(arg_type) is not None or as_slice_type(arg_type) is not None):
             fail(f"len: expected str, map, or slice, got {arg_type}", node)
         return "i32"
     return None

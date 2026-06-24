@@ -2,6 +2,7 @@
 
 from compiler.ast import *
 from compiler.lexer import Token, TokenKind
+from compiler.type_ref import ArrayTypeRef, FunctionType, GenericType, NamedType, PointerType, SliceType, format_type_ref
 
 
 MAGIC_CONSTS = {"__FILE__", "__LINE__", "__COL__", "__FUNC__", "__MODULE__"}
@@ -189,22 +190,22 @@ class Parser:
         self.match(TokenKind.SEMI)
         return self.span(ExternBlock(lib, funcs), start)
 
-    def _parse_type(self) -> str:
+    def _parse_type(self):
         if self.peek().kind == TokenKind.QUESTION:
             self.advance()
             self.expect(TokenKind.STAR)
-            return "?*" + self._parse_type()
+            return PointerType(self._parse_type(), nullable=True)
         if self.peek().kind == TokenKind.FUN:
             self.advance()
             self.expect(TokenKind.LPAREN)
             params = self._parse_comma_list(TokenKind.RPAREN, self._parse_type)
             self.expect(TokenKind.RPAREN)
             ret = self._parse_type()
-            suffix = " err" if self.match(TokenKind.ERR) else ""
-            return f"fn({','.join(params)})->{ret}{suffix}"
+            fallible = self.match(TokenKind.ERR)
+            return FunctionType(tuple(params), ret, fallible)
         if self.peek().kind == TokenKind.STAR:
             self.advance()
-            return "*" + self._parse_type()
+            return PointerType(self._parse_type(), nullable=False)
         if self.peek().kind == TokenKind.LBRACKET:
             self.advance()
             length = None
@@ -215,15 +216,15 @@ class Parser:
                     raise ParseError("array length literal cannot have a type suffix")
             self.expect(TokenKind.RBRACKET)
             elem = self._parse_type()
-            return f"[]{elem}" if length is None else f"[{length}]{elem}"
+            return SliceType(elem) if length is None else ArrayTypeRef(int(length), elem)
         name = self.expect(TokenKind.IDENT).value
         if self.peek().kind == TokenKind.DOT:
             self.advance()
             name = f"{name}.{self.expect(TokenKind.IDENT).value}"
         if self.peek().kind == TokenKind.LBRACKET:
             args = self._parse_type_arg_list()
-            return f"{name}[{','.join(args)}]"
-        return name
+            return GenericType(NamedType(name), tuple(args))
+        return NamedType(name)
 
     def _parse_type_arg_list(self) -> list[str]:
         self.expect(TokenKind.LBRACKET)
@@ -303,7 +304,7 @@ class Parser:
             rtype = self._parse_type()
             self.expect(TokenKind.RPAREN)
             receiver_name = rname
-            receiver_type = "*" + rtype
+            receiver_type = PointerType(rtype, nullable=False)
         name = self.expect(TokenKind.IDENT).value
         type_params, type_param_constraints = self._parse_type_params()
         self.expect(TokenKind.LPAREN)
@@ -457,10 +458,12 @@ class Parser:
         name_or_type = self._parse_type()
         if self.peek().kind == TokenKind.COLON:
             self.advance()
-            return name_or_type, self._parse_type(), False
-        if not isinstance(name_or_type, str):
+            if not isinstance(name_or_type, NamedType):
+                raise ParseError("field name must be an identifier")
+            return name_or_type.name, self._parse_type(), False
+        if not isinstance(name_or_type, NamedType):
             raise ParseError("embedded struct field must be a named type")
-        field_name = name_or_type.split(".")[-1]
+        field_name = name_or_type.name.split(".")[-1]
         return field_name, name_or_type, True
 
     def _parse_call_args(self):
@@ -696,7 +699,7 @@ class Parser:
                         self.advance()
                         fields = self._parse_struct_literal_fields()
                         self.expect(TokenKind.RBRACE)
-                        expr = StructLiteral(f"{qname}[{','.join(type_args)}]", fields)
+                        expr = StructLiteral(format_type_ref(GenericType(NamedType(qname), tuple(type_args))), fields)
                 elif self.peek().kind == TokenKind.LPAREN:
                     self.advance()
                     args = self._parse_call_args()
@@ -840,7 +843,7 @@ class Parser:
                 self.advance()
                 name = f"{name}.{self.expect(TokenKind.IDENT).value}"
             if self.peek().kind == TokenKind.LBRACKET:
-                name = f"{name}[{','.join(self._parse_type_arg_list())}]"
+                name = format_type_ref(GenericType(NamedType(name), tuple(self._parse_type_arg_list())))
             self.expect(TokenKind.LBRACE)
             fields = self._parse_struct_literal_fields()
             self.expect(TokenKind.RBRACE)
@@ -858,7 +861,7 @@ class Parser:
                 self.expect(TokenKind.LBRACE)
                 entries = self._parse_map_literal_entries()
                 self.expect(TokenKind.RBRACE)
-                return self.span(MapLiteral(f"map[{','.join(type_args)}]", entries), start)
+                return self.span(MapLiteral(GenericType(NamedType("map"), tuple(type_args)), entries), start)
             if name == "map" and self.peek().kind == TokenKind.LBRACE:
                 self.advance()
                 if self.peek().kind == TokenKind.RBRACE:
@@ -906,7 +909,7 @@ class Parser:
                         is_struct_literal = self.peek().kind == TokenKind.COLON
                     self.pos = brace_save
                     if is_struct_literal:
-                        name = f"{name}[{','.join(type_args)}]"
+                        name = format_type_ref(GenericType(NamedType(name), tuple(type_args)))
                     else:
                         self.pos = save
                 else:

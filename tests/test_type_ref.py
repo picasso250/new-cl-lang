@@ -3,6 +3,7 @@ import pytest
 from compiler import _expand_type_str
 from compiler.type_ref import (
     format_type_ref,
+    format_type_ref_user,
     parse_array_type,
     parse_fn_type,
     parse_map_type,
@@ -37,6 +38,12 @@ def test_type_ref_extractors_handle_nested_types():
     assert parse_slice_type("[]foo.Box[str]") == "foo.Box[str]"
     assert parse_type_app("foo.Box[Box[str]]") == ("foo.Box", ["Box[str]"])
     assert parse_map_type("map[str,Box[i32]]") == ["str", "Box[i32]"]
+
+
+def test_type_ref_internal_and_user_function_formats():
+    ref = parse_type_ref("fn(i32,map[str,[]i32])->str err")
+    assert format_type_ref(ref) == "fn(i32,map[str,[]i32])->str err"
+    assert format_type_ref_user(ref) == "fun(i32, map[str,[]i32]) str err"
 
 
 def test_rewrite_type_rewrites_only_named_components():

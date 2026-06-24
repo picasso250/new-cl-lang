@@ -38,7 +38,7 @@ from compiler.llvm_slice import SliceEmitter
 from compiler.llvm_string import StringEmitter
 from compiler.source_location import line_col_for_node, normalized_source_path, source_module_name
 from compiler.target import TargetSpec, get_target
-from compiler.type_ref import parse_array_type, parse_fn_type, parse_map_type, parse_slice_type
+from compiler.type_ref import parse_array_type, parse_fn_type, parse_map_type, parse_slice_type, type_key
 
 
 @dataclass
@@ -335,8 +335,9 @@ class LLVMCodegen:
 
     def reject_direct_recursive_structs(self):
         def inline_struct_deps(nc_type: str) -> set[str]:
-            if nc_type in STRUCT_FIELDS:
-                return {nc_type}
+            nc_key = type_key(nc_type)
+            if nc_key in STRUCT_FIELDS:
+                return {nc_key}
             array_info = parse_array_type(nc_type)
             if array_info is not None:
                 _length, elem_type = array_info

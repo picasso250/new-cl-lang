@@ -1,6 +1,19 @@
 from llvmlite import ir
 
-from compiler.type_ref import parse_array_type, parse_fn_type, parse_map_type, parse_slice_type
+from compiler.type_ref import (
+    ArrayTypeRef,
+    FunctionType,
+    PointerType,
+    SliceType,
+    as_map_type,
+    format_type_ref,
+    parse_array_type,
+    parse_fn_type,
+    parse_map_type,
+    parse_slice_type,
+    parse_type_ref,
+    type_key,
+)
 
 
 INT_TYPES = {
@@ -43,6 +56,8 @@ IFACE_TYPES: dict[str, ir.LiteralStructType] = {}
 
 def llvm_type(nc_type: str | None):
     nc_type = nc_type or "void"
+    ref = parse_type_ref(nc_type)
+    nc_key = type_key(ref)
     if nc_type == "void":
         return ir.VoidType()
     if nc_type in INT_TYPES:
@@ -53,7 +68,7 @@ def llvm_type(nc_type: str | None):
         return STR_TYPE
     if nc_type == "error":
         return ERROR_TYPE
-    if nc_type == "nc_map" or parse_map_type(nc_type) is not None:
+    if nc_type == "nc_map" or as_map_type(ref) is not None:
         return MAP_TYPE
     if nc_type in IFACE_METHODS:
         if nc_type not in IFACE_TYPES:
@@ -61,39 +76,36 @@ def llvm_type(nc_type: str | None):
         return IFACE_TYPES[nc_type]
     if nc_type in ("*void", "?*void"):
         return I8PTR
-    fn_info = parse_fn_type(nc_type)
-    if fn_info is not None:
-        arg_types, ret_type = fn_info
+    if isinstance(ref, FunctionType):
+        arg_types, ret_type = list(ref.params), ref.ret
         call_type = ir.FunctionType(
             llvm_type(ret_type),
             [I8PTR] + [llvm_type(arg_type) for arg_type in arg_types],
         ).as_pointer()
         return ir.LiteralStructType([call_type, I8PTR])
-    if isinstance(nc_type, str) and nc_type.startswith("?*"):
-        return llvm_type(nc_type[2:]).as_pointer()
-    if isinstance(nc_type, str) and nc_type.startswith("*"):
-        return llvm_type(nc_type[1:]).as_pointer()
+    if isinstance(ref, PointerType):
+        return llvm_type(ref.inner).as_pointer()
     if nc_type in ENUM_VARIANTS:
         return ir.IntType(32)
     if nc_type in STRUCT_TYPES:
         return STRUCT_TYPES[nc_type]
-    slice_info = parse_slice_type(nc_type)
-    if slice_info is not None:
-        elem_type = slice_info
+    if isinstance(ref, SliceType):
+        elem_type = ref.elem
         return ir.LiteralStructType([
             llvm_type(elem_type).as_pointer(),
             ir.IntType(64),
             ir.IntType(64),
         ])
-    array_info = parse_array_type(nc_type)
-    if array_info is not None:
-        length, elem_type = array_info
+    if isinstance(ref, ArrayTypeRef):
+        length, elem_type = ref.length, ref.elem
         return ir.ArrayType(llvm_type(elem_type), length)
     raise NotImplementedError(f"LLVM backend does not support type: {nc_type}")
 
 
 class LLVMLayout:
     def sizeof_type(self, nc_type: str) -> int:
+        ref = parse_type_ref(nc_type)
+        nc_key = type_key(ref)
         if nc_type == "void":
             raise NotImplementedError("LLVM backend cannot sizeof void")
         if nc_type in ("i8", "u8", "bool"):
@@ -108,25 +120,25 @@ class LLVMLayout:
             return 16
         if nc_type == "error":
             return 40
-        if nc_type == "nc_map" or parse_map_type(nc_type) is not None:
+        if nc_type == "nc_map" or as_map_type(ref) is not None:
             return 40
-        if isinstance(nc_type, str) and (nc_type.startswith("*") or nc_type.startswith("?*")):
+        if isinstance(ref, PointerType):
             return 8
-        if parse_fn_type(nc_type) is not None:
+        if isinstance(ref, FunctionType):
             return 16
         if nc_type in IFACE_METHODS:
             return 16
-        if parse_slice_type(nc_type) is not None:
+        if isinstance(ref, SliceType):
             return 24
-        array_info = parse_array_type(nc_type)
-        if array_info is not None:
-            length, elem_type = array_info
+        if isinstance(ref, ArrayTypeRef):
+            length, elem_type = ref.length, ref.elem
             return length * self.aligned_sizeof_type(elem_type)
         if nc_type in STRUCT_FIELDS:
             return self.sizeof_fields([field_type for _field_name, field_type in STRUCT_FIELDS[nc_type]])
         raise NotImplementedError(f"LLVM backend cannot sizeof {nc_type}")
 
     def alignof_type(self, nc_type: str) -> int:
+        ref = parse_type_ref(nc_type)
         if nc_type == "void":
             raise NotImplementedError("LLVM backend cannot alignof void")
         if nc_type in ("i8", "u8", "bool"):
@@ -135,17 +147,16 @@ class LLVMLayout:
             return 2
         if nc_type in ("i32", "u32", "f32", "rune") or nc_type in ENUM_VARIANTS:
             return 4
-        if nc_type in ("i64", "u64", "f64", "str", "error", "nc_map") or parse_map_type(nc_type) is not None:
+        if nc_type in ("i64", "u64", "f64", "str", "error", "nc_map") or as_map_type(ref) is not None:
             return 8
-        if isinstance(nc_type, str) and (nc_type.startswith("*") or nc_type.startswith("?*")):
+        if isinstance(ref, PointerType):
             return 8
-        if parse_fn_type(nc_type) is not None or nc_type in IFACE_METHODS:
+        if isinstance(ref, FunctionType) or nc_type in IFACE_METHODS:
             return 8
-        if parse_slice_type(nc_type) is not None:
+        if isinstance(ref, SliceType):
             return 8
-        array_info = parse_array_type(nc_type)
-        if array_info is not None:
-            _length, elem_type = array_info
+        if isinstance(ref, ArrayTypeRef):
+            _length, elem_type = ref.length, ref.elem
             return self.alignof_type(elem_type)
         if nc_type in STRUCT_FIELDS:
             aligns = [self.alignof_type(field_type) for _field_name, field_type in STRUCT_FIELDS[nc_type]]

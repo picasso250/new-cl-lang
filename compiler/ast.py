@@ -4,15 +4,17 @@ from __future__ import annotations
 
 from typing import Any
 
+from compiler.type_ref import format_type_ref_user
+
 
 class Node:
-    type: str | None
+    type: Any
     span: tuple[int, int] | None
     source_file: Any
     generic_type_args: list[Any]
     generic_type_args_candidate: list[Any]
     is_capture: bool
-    capture_type: str | None
+    capture_type: Any
 
 
 class Program(Node):
@@ -411,7 +413,7 @@ class GenericFunctionValue(Node):
         self.fallible = False
 
     def __repr__(self):
-        args = f"[{','.join(self.type_args)}]" if self.type_args else ""
+        args = f"[{','.join(str(a) for a in self.type_args)}]" if self.type_args else ""
         return f"GenericFunValue({self.name}{args})"
 
 

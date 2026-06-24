@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 import os
 
 from compiler.ast import Program
+from compiler.type_ref import TypeRefBase
 
 
 @dataclass
@@ -51,7 +52,7 @@ def module_name_from_sources(sources: list[SourceFile]) -> tuple[str, str]:
 
 def annotate_source_file(node, source_file: SourceFile):
     """Attach source-file ownership to every AST node in a parsed file."""
-    if not hasattr(node, "__dict__"):
+    if isinstance(node, TypeRefBase) or not hasattr(node, "__dict__"):
         return
     node.source_file = source_file
     for value in list(node.__dict__.values()):

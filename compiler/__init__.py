@@ -12,7 +12,7 @@ from compiler.ast import (
     Program, ImportDecl, FunctionDeclaration, StructDecl, IfaceDecl, EnumDecl, FunctionCall, SizeOfType,
     GenericFunctionValue, Identifier, StructLiteral, MapLiteral, EnumRef, TypeAlias, FunctionExpr, ExternBlock,
 )
-from compiler.type_ref import rewrite_type
+from compiler.type_ref import TypeRefBase, format_type_ref, rewrite_type_ref
 from compiler.target import get_target
 
 BUILTIN_MODULES = {"io", "runtime", "fs", "os", "strings", "strconv", "math", "sort", "types", "linux", "json"}
@@ -27,9 +27,9 @@ def _require_ast(source_file: SourceFile) -> Program:
     return source_file.ast
 
 
-def _expand_type_str(t: str, aliases: dict[str, str], stack: list[str]) -> str:
-    """递归展开类型字符串中的别名。"""
-    if not isinstance(t, str):
+def _expand_type_str(t, aliases: dict[str, object], stack: list[str]):
+    """递归展开类型中的别名。"""
+    if t is None:
         return t
 
     def expand_name(name: str) -> str:
@@ -42,12 +42,12 @@ def _expand_type_str(t: str, aliases: dict[str, str], stack: list[str]) -> str:
         stack.pop()
         return result
 
-    return rewrite_type(t, expand_name)
+    return rewrite_type_ref(t, expand_name)
 
 
 def _expand_type_aliases_in_module(module: Module):
     """收集 TypeAlias 定义并从 AST 中展开。"""
-    aliases: dict[str, str] = {}
+    aliases: dict[str, object] = {}
 
     # 第一遍：收集别名定义并验证
     for source_file in module.files:
@@ -74,7 +74,7 @@ def _expand_type_aliases_in_module(module: Module):
         return _expand_type_str(t, aliases, [])
 
     def walk(node):
-        if not hasattr(node, "__dict__"):
+        if isinstance(node, TypeRefBase) or not hasattr(node, "__dict__"):
             return
         if isinstance(node, FunctionDeclaration):
             for param in node.params:
@@ -190,7 +190,7 @@ def _top_names(module: Module) -> set[str]:
 
 
 def _qual_type(nc_type, module_name: str, local_names: set[str]):
-    if not isinstance(nc_type, str):
+    if nc_type is None:
         return nc_type
 
     def qualify_name(name: str) -> str:
@@ -198,7 +198,7 @@ def _qual_type(nc_type, module_name: str, local_names: set[str]):
             return f"{module_name}.{name}"
         return name
 
-    return rewrite_type(nc_type, qualify_name)
+    return rewrite_type_ref(nc_type, qualify_name)
 
 
 def _rewrite_module_names(module: Module, entry: bool):
@@ -212,7 +212,7 @@ def _rewrite_module_names(module: Module, entry: bool):
         return name
 
     def walk(node):
-        if not hasattr(node, "__dict__"):
+        if isinstance(node, TypeRefBase) or not hasattr(node, "__dict__"):
             return
         if isinstance(node, FunctionDeclaration):
             if not node.receiver_name:

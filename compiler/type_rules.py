@@ -13,10 +13,10 @@ from compiler.type_ref import (
     NamedType,
     PointerType,
     SliceType,
+    as_map_type,
     format_type_ref,
-    parse_fn_type,
-    parse_map_type,
     parse_type_ref,
+    type_key,
 )
 
 
@@ -30,13 +30,18 @@ class TypeRules:
         self.require_public_qualified = require_public_qualified
 
     def is_pointer_type(self, t):
-        return isinstance(t, str) and t.startswith("*") and not t.startswith("?*")
+        ref = parse_type_ref(t)
+        return isinstance(ref, PointerType) and not ref.nullable
 
     def is_nullable_pointer_type(self, t):
-        return isinstance(t, str) and t.startswith("?*")
+        ref = parse_type_ref(t)
+        return isinstance(ref, PointerType) and ref.nullable
 
     def nonnullable_pointer_type(self, t):
-        return "*" + t[2:] if self.is_nullable_pointer_type(t) else t
+        ref = parse_type_ref(t)
+        if isinstance(ref, PointerType) and ref.nullable:
+            return PointerType(ref.inner, nullable=False)
+        return t
 
     def is_nil_type(self, t):
         return t == "__nil"
@@ -51,13 +56,14 @@ class TypeRules:
         return t == "rune"
 
     def is_iface_type(self, t):
-        return isinstance(t, str) and t in getattr(self.symtab, "_ifaces", {})
+        return type_key(t) in getattr(self.symtab, "_ifaces", {})
 
     def hash_comparable_error_type(self, t, seen=None):
         seen = seen or set()
-        if t in seen:
+        tk = type_key(t)
+        if tk in seen:
             return None
-        seen.add(t)
+        seen.add(tk)
         if t in FLOAT_TYPES:
             return t
         if t in NUMERIC_TYPES or t in {"bool", "str", "rune"}:
@@ -66,9 +72,7 @@ class TypeRules:
             return t
         if self.is_pointer_type(t) or self.is_nullable_pointer_type(t):
             return None
-        if parse_map_type(t) is not None:
-            return t
-        if parse_fn_type(t) is not None:
+        if as_map_type(t) is not None:
             return t
         ref = parse_type_ref(t)
         if isinstance(ref, SliceType) or isinstance(ref, ArrayTypeRef) or isinstance(ref, FunctionType):
@@ -76,13 +80,13 @@ class TypeRules:
         if self.is_iface_type(t):
             return t
         try:
-            sym = self.symtab.lookup(t)
+            sym = self.symtab.lookup(tk)
         except NameError:
             return t
         if sym.nc_type == "enum":
             return None
         if sym.nc_type == "struct":
-            for _fname, ftype in self.symtab.lookup_struct(t).items():
+            for _fname, ftype in self.symtab.lookup_struct(tk).items():
                 err = self.hash_comparable_error_type(ftype, seen)
                 if err is not None:
                     return err
@@ -96,9 +100,10 @@ class TypeRules:
 
     def zero_value_error_type(self, t, seen=None):
         seen = seen or set()
-        if t in seen:
+        tk = type_key(t)
+        if tk in seen:
             return None
-        seen.add(t)
+        seen.add(tk)
         if t == "void":
             return t
         if t in NUMERIC_TYPES or t in {"bool", "str", "rune"}:
@@ -107,9 +112,7 @@ class TypeRules:
             return t
         if self.is_nullable_pointer_type(t):
             return None
-        if parse_map_type(t) is not None:
-            return None
-        if parse_fn_type(t) is not None:
+        if as_map_type(t) is not None:
             return None
         ref = parse_type_ref(t)
         if isinstance(ref, SliceType):
@@ -121,13 +124,13 @@ class TypeRules:
         if self.is_iface_type(t):
             return None
         try:
-            sym = self.symtab.lookup(t)
+            sym = self.symtab.lookup(tk)
         except NameError:
             return t
         if sym.nc_type == "enum":
             return None
         if sym.nc_type == "struct":
-            for _fname, ftype in self.symtab.lookup_struct(t).items():
+            for _fname, ftype in self.symtab.lookup_struct(tk).items():
                 err = self.zero_value_error_type(ftype, seen)
                 if err is not None:
                     return err
@@ -140,7 +143,10 @@ class TypeRules:
             self.fail(f"map value type: expected zero-value type, got {err}", node)
 
     def validate_map_type(self, t, node=None):
-        map_args = parse_map_type(t)
+        map_args = as_map_type(t)
+        ref = parse_type_ref(t)
+        if map_args is None and isinstance(ref, GenericType) and isinstance(ref.base, NamedType) and ref.base.name == "map":
+            self.fail(f"map: expected 2 type args, got {len(ref.args)}", node)
         if map_args is None:
             return None
         if len(map_args) != 2:
@@ -219,9 +225,7 @@ class TypeRules:
             return t
         if self.is_pointer_type(t) or self.is_nullable_pointer_type(t):
             return None
-        if parse_map_type(t) is not None:
-            return t
-        if parse_fn_type(t) is not None:
+        if as_map_type(t) is not None:
             return t
         ref = parse_type_ref(t)
         if isinstance(ref, SliceType) or isinstance(ref, ArrayTypeRef) or isinstance(ref, FunctionType):
@@ -229,13 +233,13 @@ class TypeRules:
         if self.is_iface_type(t):
             return t
         try:
-            sym = self.symtab.lookup(t)
+            sym = self.symtab.lookup(type_key(t))
         except NameError:
             return t
         if sym.nc_type == "enum":
             return None
         if sym.nc_type == "struct":
-            for _fname, ftype in self.symtab.lookup_struct(t).items():
+            for _fname, ftype in self.symtab.lookup_struct(type_key(t)).items():
                 err = self.comparable_error_type(ftype, seen)
                 if err is not None:
                     return err
@@ -281,7 +285,8 @@ class TypeRules:
             return [], type_name, ret_type, params
         matches = []
         for embed_name, embed_type in getattr(self.symtab, "_struct_embeds", {}).get(type_name, {}).items():
-            embed_base = embed_type[1:] if embed_type.startswith("*") else embed_type
+            embed_ref = parse_type_ref(embed_type)
+            embed_base = format_type_ref(embed_ref.inner) if isinstance(embed_ref, PointerType) else format_type_ref(embed_ref)
             if embed_base in seen:
                 continue
             if embed_base in methods and method_name in methods[embed_base]:
@@ -324,8 +329,7 @@ class TypeRules:
             return True
         if t in {"i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "bool"}:
             return True
-        if isinstance(t, str) and t.startswith("*"):
-            return self.is_extern_abi_type(t[1:])
-        if isinstance(t, str) and t.startswith("?*"):
-            return self.is_extern_abi_type(t[2:])
+        ref = parse_type_ref(t)
+        if isinstance(ref, PointerType):
+            return self.is_extern_abi_type(ref.inner)
         return False

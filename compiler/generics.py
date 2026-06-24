@@ -10,7 +10,19 @@ from compiler.ast import (
     MapLiteral, Program, SizeOfType, StructDecl, StructLiteral,
 )
 from compiler.constraints import satisfies_constraint
-from compiler.type_ref import parse_type_app, rewrite_type as rewrite_type_ref
+from compiler.type_ref import (
+    ArrayTypeRef,
+    GenericType,
+    NamedType,
+    PointerType,
+    SliceType,
+    TypeRefBase,
+    format_type_ref,
+    parse_type_app,
+    parse_type_ref,
+    rewrite_type_ref,
+    type_key,
+)
 
 
 class GenericError(Exception):
@@ -18,7 +30,7 @@ class GenericError(Exception):
 
 
 def _mangle_type(t: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_]+", "_", t).strip("_")
+    return re.sub(r"[^A-Za-z0-9_]+", "_", type_key(t) or "").strip("_")
 
 
 def _instance_name(name: str, args: list[str]) -> str:
@@ -26,7 +38,7 @@ def _instance_name(name: str, args: list[str]) -> str:
 
 
 def _sub_type(t, subst: dict[str, str]):
-    if not isinstance(t, str):
+    if t is None:
         return t
     return rewrite_type_ref(t, lambda name: subst.get(name, name))
 
@@ -40,7 +52,7 @@ def _normalize_call_type_args(call: FunctionCall):
 
 
 def _walk_values(node, fn, *, skip_param_defaults: bool = False):
-    if not hasattr(node, "__dict__") or node.__class__.__name__ == "SourceFile":
+    if isinstance(node, TypeRefBase) or not hasattr(node, "__dict__") or node.__class__.__name__ == "SourceFile":
         return
     fn(node)
     for key, value in list(node.__dict__.items()):
@@ -169,25 +181,26 @@ def monomorphize(program: Program) -> Program:
         generated.append(inst)
 
     def rewrite_type(t):
-        if not isinstance(t, str):
+        if t is None:
             return t
-        for prefix in ("?*", "*", "[]"):
-            if t.startswith(prefix):
-                return prefix + rewrite_type(t[len(prefix):])
-        if t.startswith("[") and "]" in t:
-            head, tail = t.split("]", 1)
-            return head + "]" + rewrite_type(tail)
-        app = parse_type_app(t)
-        if app:
-            base, args = app
-            args = [rewrite_type(a) for a in args]
+        ref = parse_type_ref(t)
+        if isinstance(ref, PointerType):
+            return PointerType(rewrite_type(ref.inner), ref.nullable)
+        if isinstance(ref, SliceType):
+            return SliceType(rewrite_type(ref.elem))
+        if isinstance(ref, ArrayTypeRef):
+            return ArrayTypeRef(ref.length, rewrite_type(ref.elem))
+        if isinstance(ref, GenericType) and isinstance(ref.base, NamedType):
+            base = ref.base.name
+            args = [rewrite_type(a) for a in ref.args]
             if base == "map":
-                return f"map[{','.join(args)}]"
+                return GenericType(NamedType("map"), tuple(parse_type_ref(a) for a in args))
             request_struct(base, args)
-            return _instance_name(base, args)
-        if t in generic_structs:
-            raise GenericError(f"generic type {t} requires explicit type args")
-        return t
+            return NamedType(_instance_name(base, args))
+        t_s = type_key(ref)
+        if t_s in generic_structs:
+            raise GenericError(f"generic type {t_s} requires explicit type args")
+        return ref
 
     def rewrite_node(n):
         if isinstance(n, FunctionDeclaration):
@@ -211,7 +224,8 @@ def monomorphize(program: Program) -> Program:
             if n.type_args:
                 args = [rewrite_type(a) for a in n.type_args]
                 if n.name == "map":
-                    n.name = f"map[{','.join(args)}]"
+                    from compiler.type_ref import GenericType, NamedType, parse_type_ref
+                    n.name = format_type_ref(GenericType(NamedType("map"), tuple(parse_type_ref(a) for a in args)))
                     n.type_args = []
                     return
                 request_func(n.name, args)

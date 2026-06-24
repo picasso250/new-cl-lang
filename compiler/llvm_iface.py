@@ -7,6 +7,7 @@ from compiler.llvm_layout import (
     STRUCT_FIELD_INDEX, llvm_type,
 )
 from compiler.names import safe_user_ident
+from compiler.type_ref import PointerType, format_type_ref, parse_type_ref
 
 
 class IfaceEmitter:
@@ -78,9 +79,10 @@ class IfaceEmitter:
         ]
 
     def box_iface(self, value, source_type, iface_name):
-        if not isinstance(source_type, str) or not source_type.startswith("*") or source_type.startswith("?*"):
+        source_ref = parse_type_ref(source_type)
+        if not isinstance(source_ref, PointerType) or source_ref.nullable:
             raise RuntimeError(f"cannot box {source_type} as iface {iface_name}")
-        concrete = source_type[1:]
+        concrete = format_type_ref(source_ref.inner)
         vtable = self.get_iface_vtable(iface_name, concrete)
         iface_type = llvm_type(iface_name)
         boxed = ir.Constant(iface_type, ir.Undefined)
@@ -145,7 +147,8 @@ class IfaceEmitter:
         if safe_user_ident(f"{concrete}_{method_name}") in self.ctx.module.globals:
             return concrete, []
         for field_name, field_type in STRUCT_EMBEDS.get(concrete, {}).items():
-            embed_base = field_type[1:] if field_type.startswith("*") else field_type
+            field_ref = parse_type_ref(field_type)
+            embed_base = format_type_ref(field_ref.inner) if isinstance(field_ref, PointerType) else format_type_ref(field_ref)
             if safe_user_ident(f"{embed_base}_{method_name}") in self.ctx.module.globals:
                 return embed_base, [field_name]
             try:

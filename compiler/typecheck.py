@@ -7,7 +7,7 @@
 import copy
 
 from compiler.builtins import NUMERIC_TYPES, SCALAR_TYPES, STRINGIFIABLE_TYPES, infer_builtin_call
-from compiler.type_ref import is_fallible_fn_type, parse_fn_type, parse_map_type, parse_slice_type
+from compiler.type_ref import TypeRefBase, FunctionType, PointerType, format_type_ref, is_fallible_fn_type, parse_fn_type, parse_map_type, parse_slice_type, parse_type_ref
 from compiler.type_rules import TypeRules
 
 
@@ -88,21 +88,28 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
     def require_public_qualified(name, node=None):
         if getattr(node, "_default_arg_expr", False):
             return
-        if isinstance(name, str) and "." in name and name.rsplit(".", 1)[1].startswith("_"):
+        name_s = format_type_ref(name)
+        if isinstance(name_s, str) and "." in name_s and name_s.rsplit(".", 1)[1].startswith("_"):
             owner_name = getattr(node, "name", None)
             if isinstance(node, (StructDecl, IfaceDecl, FunctionDeclaration)) and isinstance(owner_name, str) and "." in owner_name:
-                if owner_name.rsplit(".", 1)[0] == name.rsplit(".", 1)[0].lstrip("*?[]"):
+                if owner_name.rsplit(".", 1)[0] == name_s.rsplit(".", 1)[0].lstrip("*?[]"):
                     return
             callable_name = getattr(current_callable, "name", None)
             if isinstance(callable_name, str) and "." in callable_name:
-                if callable_name.rsplit(".", 1)[0] == name.rsplit(".", 1)[0].lstrip("*?[]"):
+                if callable_name.rsplit(".", 1)[0] == name_s.rsplit(".", 1)[0].lstrip("*?[]"):
                     return
-            fail(f"symbol '{name}' is private", node)
+            fail(f"symbol '{name_s}' is private", node)
 
     type_rules = TypeRules(symtab, fail, require_public_qualified)
 
     def embedded_structs(type_name: str):
         return getattr(symtab, "_struct_embeds", {}).get(type_name, {})
+
+    def pointer_base_name(t):
+        ref = parse_type_ref(t)
+        if isinstance(ref, PointerType):
+            return format_type_ref(ref.inner)
+        return format_type_ref(ref)
 
     def promoted_field(type_name: str, field: str, seen=None):
         seen = seen or set()
@@ -111,7 +118,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         seen.add(type_name)
         matches = []
         for embed_name, embed_type in embedded_structs(type_name).items():
-            embed_base = embed_type[1:] if embed_type.startswith("*") else embed_type
+            embed_base = pointer_base_name(embed_type)
             try:
                 fields = symtab.lookup_struct(embed_base)
             except NameError:
@@ -131,7 +138,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         current_type = obj.type
         for field in path:
             access = FieldAccess(current, field)
-            base = current_type[1:] if isinstance(current_type, str) and current_type.startswith("*") else current_type
+            base = pointer_base_name(current_type)
             ftype = symtab.lookup_struct(base)[field]
             access.type = ftype
             current = access
@@ -146,7 +153,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         matches = []
         methods = getattr(symtab, "_methods", {})
         for embed_name, embed_type in embedded_structs(type_name).items():
-            embed_base = embed_type[1:] if embed_type.startswith("*") else embed_type
+            embed_base = pointer_base_name(embed_type)
             if embed_base in methods and method in methods[embed_base]:
                 matches.append(([embed_name], embed_base, methods[embed_base][method]))
             nested = promoted_method(embed_base, method, seen.copy())
@@ -298,7 +305,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
             fail(f"default parameter {param_name}: method calls are not allowed", expr)
         elif isinstance(expr, FallibleOp):
             fail(f"default parameter {param_name}: fallible operations are not allowed", expr)
-        if not hasattr(expr, "__dict__"):
+        if isinstance(expr, TypeRefBase) or not hasattr(expr, "__dict__"):
             return
         for key, value in expr.__dict__.items():
             if key in {"source_file", "type", "fallible", "is_closure_call", "closure_param_types"}:
@@ -317,7 +324,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 validate_default_expr_value(value, param_name)
 
     def validate_default_expr_value(value, param_name):
-        if hasattr(value, "__dict__"):
+        if not isinstance(value, TypeRefBase) and hasattr(value, "__dict__"):
             validate_default_expr_shape(value, param_name)
 
     def infer_default_param_type(param):
@@ -336,7 +343,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         def walk(n, repl):
             if isinstance(n, Identifier) and n.name in repl:
                 return copy.deepcopy(repl[n.name])
-            if not hasattr(n, "__dict__"):
+            if isinstance(n, TypeRefBase) or not hasattr(n, "__dict__"):
                 return n
             if isinstance(n, FunctionExpr):
                 shadowed = {p.name for p in n.params}
@@ -352,15 +359,15 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 out = []
                 for item in value:
                     if isinstance(item, tuple):
-                        out.append(tuple(walk(part, repl) if hasattr(part, "__dict__") else part for part in item))
-                    elif hasattr(item, "__dict__"):
+                        out.append(tuple(walk(part, repl) if not isinstance(part, TypeRefBase) and hasattr(part, "__dict__") else part for part in item))
+                    elif not isinstance(item, TypeRefBase) and hasattr(item, "__dict__"):
                         out.append(walk(item, repl))
                     else:
                         out.append(item)
                 return out
             if isinstance(value, tuple):
-                return tuple(walk(item, repl) if hasattr(item, "__dict__") else item for item in value)
-            if hasattr(value, "__dict__"):
+                return tuple(walk(item, repl) if not isinstance(item, TypeRefBase) and hasattr(item, "__dict__") else item for item in value)
+            if not isinstance(value, TypeRefBase) and hasattr(value, "__dict__"):
                 return walk(value, repl)
             return value
 
@@ -398,7 +405,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 for item in value:
                     walk(item)
                 return
-            if not hasattr(value, "__dict__") or value.__class__.__name__ == "SourceFile":
+            if isinstance(value, TypeRefBase) or not hasattr(value, "__dict__") or value.__class__.__name__ == "SourceFile":
                 return
             value._default_arg_expr = True
             for child in value.__dict__.values():
@@ -406,7 +413,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         walk(expr)
 
     def fn_type(params, ret_type):
-        return f"fn({','.join(params)})->{ret_type}"
+        return FunctionType(tuple(parse_type_ref(p) for p in params), parse_type_ref(ret_type))
 
     def ends_with_return(stmts):
         return bool(stmts) and isinstance(stmts[-1], (Return, ErrReturn))
