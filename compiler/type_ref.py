@@ -36,6 +36,7 @@ class ArrayTypeRef:
 class FunctionType:
     params: tuple["TypeRef", ...]
     ret: "TypeRef"
+    fallible: bool = False
 
 
 @dataclass(frozen=True)
@@ -106,8 +107,13 @@ def parse_type_ref(t: str | None) -> TypeRef | None:
             raise TypeParseError(f"invalid function type {t!r}")
         args_s = t[3:close]
         params = tuple(parse_type_ref(a) for a in split_top_level(args_s)) if args_s else ()
-        ret = parse_type_ref(t[close + 3:])
-        return FunctionType(params, ret)
+        ret_s = t[close + 3:].strip()
+        fallible = False
+        if ret_s.endswith(" err"):
+            fallible = True
+            ret_s = ret_s[:-4].strip()
+        ret = parse_type_ref(ret_s)
+        return FunctionType(params, ret, fallible)
     lb = t.find("[")
     if lb >= 0 and t.endswith("]"):
         close = _find_matching(t, lb, "[", "]")
@@ -130,7 +136,8 @@ def format_type_ref(ref) -> str | None:
     if isinstance(ref, ArrayTypeRef):
         return f"[{ref.length}]{format_type_ref(ref.elem)}"
     if isinstance(ref, FunctionType):
-        return f"fn({','.join(format_type_ref(p) for p in ref.params)})->{format_type_ref(ref.ret)}"
+        suffix = " err" if ref.fallible else ""
+        return f"fn({','.join(format_type_ref(p) for p in ref.params)})->{format_type_ref(ref.ret)}{suffix}"
     if isinstance(ref, GenericType):
         return f"{format_type_ref(ref.base)}[{','.join(format_type_ref(a) for a in ref.args)}]"
     raise TypeParseError(f"unknown type ref {ref!r}")
@@ -152,7 +159,7 @@ def rewrite_type(t, fn):
         if isinstance(r, ArrayTypeRef):
             return ArrayTypeRef(r.length, walk(r.elem))
         if isinstance(r, FunctionType):
-            return FunctionType(tuple(walk(p) for p in r.params), walk(r.ret))
+            return FunctionType(tuple(walk(p) for p in r.params), walk(r.ret), r.fallible)
         if isinstance(r, GenericType):
             return GenericType(walk(r.base), tuple(walk(a) for a in r.args))
         return r
@@ -172,6 +179,11 @@ def parse_fn_type(t: str):
     if isinstance(ref, FunctionType):
         return [format_type_ref(p) for p in ref.params], format_type_ref(ref.ret)
     return None
+
+
+def is_fallible_fn_type(t: str) -> bool:
+    ref = parse_type_ref(t)
+    return isinstance(ref, FunctionType) and ref.fallible
 
 
 def parse_slice_type(t: str):

@@ -147,7 +147,7 @@ class IfaceDecl(Node):
         self.embeds: list[Any] = embeds or []
 
     def __repr__(self):
-        ms = ', '.join(f'{n}({ps}): {rt}' for n, ps, rt in self.methods)
+        ms = ', '.join(f'{m[0]}({m[1]}): {m[2]}' + (' err' if len(m) > 3 and m[3] else '') for m in self.methods)
         es = ', '.join(self.embeds)
         return f"Iface({self.name} embeds [{es}] {{ {ms} }})"
 
@@ -356,13 +356,15 @@ class FunctionDeclaration(Node):
     def __init__(self, name: str, params: list, return_type: str | None, body: Block,
                  receiver_name: str | None = None, receiver_type: str | None = None,
                  return_type_explicit: bool = False, type_params: list[str] | None = None,
-                 type_param_constraints: dict[str, str] | None = None):
+                 type_param_constraints: dict[str, str] | None = None,
+                 fallible_explicit: bool = False):
         self.name = name
         self.extern_symbol: Any = None
         self.extern_lib: Any = None
         self.is_extern = False
         self.trusted_stdlib = False
         self.fallible = False
+        self.fallible_explicit = fallible_explicit
         self.params = params   # [Param, ...]
         self.return_type = return_type
         self.return_type_explicit = return_type_explicit
@@ -383,7 +385,7 @@ class FunctionDeclaration(Node):
 class FunctionExpr(Node):
     """fun(params): return_type { body } 作为表达式。"""
     def __init__(self, params: list, return_type: str | None, body: Block,
-                 return_type_explicit: bool = False):
+                 return_type_explicit: bool = False, fallible_explicit: bool = False):
         self.params = params
         self.return_type = return_type
         self.return_type_explicit = return_type_explicit
@@ -391,6 +393,7 @@ class FunctionExpr(Node):
         self.captures = []  # [(name, type), ...] filled by typecheck
         self.type: str | None = None
         self.fallible = False
+        self.fallible_explicit = fallible_explicit
         self.closure_id: int | None = None
 
     def __repr__(self):
@@ -430,6 +433,33 @@ class FallibleOp(Node):
 
     def __repr__(self):
         return f"FallibleOp({self.expr} {self.op})"
+
+
+class ErrorHandlerExpr(Node):
+    """expr err? name { handler }"""
+    def __init__(self, expr, error_name: str, handler_block: Block):
+        self.expr = expr
+        self.error_name = error_name
+        self.handler_block = handler_block
+        self.type: str | None = None
+        self.success_type: str | None = None
+
+    def __repr__(self):
+        return f"ErrorHandler({self.expr} err? {self.error_name} {self.handler_block})"
+
+
+class ErrorMatchExpr(Node):
+    """expr match? name { "message" -> expr; else -> expr }"""
+    def __init__(self, expr, error_name: str, arms: list[tuple]):
+        self.expr = expr
+        self.error_name = error_name
+        self.arms = arms
+        self.type: str | None = None
+        self.success_type: str | None = None
+
+    def __repr__(self):
+        arms = "; ".join(("else" if p is None else str(p)) + " -> " + str(b) for p, b in self.arms)
+        return f"ErrorMatch({self.expr} match? {self.error_name} {{ {arms} }})"
 
 
 # ===== 表达式 =====

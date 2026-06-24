@@ -17,7 +17,7 @@ from compiler.ast import (
     FunctionExpr, GenericFunctionValue, ErrReturn, FallibleOp,
     ForIn, FunctionDeclaration, Identifier, IfExpr, IfaceDecl, ImportDecl, IndexAccess, IntegerLiteral,
     MapLiteral, MatchExpr, MethodCall, NilLiteral, MagicConst, Return, SizeOfType, SliceExpr, SliceLiteral, StringLiteral, InterpolatedString, RuneLiteral, StructDecl,
-    StructLiteral, TryStatement, UnaryOp, VariableDeclaration, ForCondition,
+    StructLiteral, TryStatement, UnaryOp, VariableDeclaration, ForCondition, ErrorHandlerExpr, ErrorMatchExpr,
 )
 from compiler.llvm_layout import (
     ENUM_VARIANTS, FLOAT_TYPES, I8PTR, IFACE_METHODS, INT_TYPES,
@@ -624,6 +624,105 @@ class LLVMCodegen:
 
         self.builder.position_at_end(end_bb)
 
+    def bind_error_value(self, name: str, err_value):
+        err_slot = self.alloca_at_entry(safe_user_ident(name), llvm_type("error"))
+        self.root_slots_for_type(err_slot, "error")
+        self.builder.store(err_value, err_slot)
+        self.vars[name] = (err_slot, "error")
+
+    def emit_error_handler_expr(self, node: ErrorHandlerExpr):
+        status, value_slot, error_slot, success_type = self.emit_fallible_call_raw(node.expr)
+        err_bb = self.func.append_basic_block("errq.err")
+        ok_bb = self.func.append_basic_block("errq.ok")
+        end_bb = self.func.append_basic_block("errq.end")
+        incoming = []
+        saved_vars = dict(self.vars)
+        self.builder.cbranch(status, err_bb, ok_bb)
+
+        self.builder.position_at_end(err_bb)
+        err_value = self.builder.load(error_slot, name="errq.err.value")
+        path, line, col = self.function_emitter.node_location(node)
+        err_value = self.emit_error_append_frame(err_value, self.current_frame_name, path, line, col)
+        self.bind_error_value(node.error_name, err_value)
+        handler_val = self.control_expr_emitter.emit_block_value(node.handler_block)
+        handler_block = self.builder.block
+        if not self.builder.block.is_terminated:
+            self.builder.branch(end_bb)
+            incoming.append((handler_val, handler_block))
+        self.vars = dict(saved_vars)
+
+        self.builder.position_at_end(ok_bb)
+        if success_type == "void":
+            ok_val = ir.Constant(ir.IntType(1), 0)
+        else:
+            ok_val = self.builder.load(value_slot, name="errq.ok.value")
+        ok_block = self.builder.block
+        if not self.builder.block.is_terminated:
+            self.builder.branch(end_bb)
+            incoming.append((ok_val, ok_block))
+        self.vars = saved_vars
+
+        self.builder.position_at_end(end_bb)
+        if node.type == "void":
+            return ir.Constant(ir.IntType(1), 0)
+        phi = self.builder.phi(llvm_type(node.type))
+        for value, block in incoming:
+            phi.add_incoming(self.cast_to(value, node.type), block)
+        return phi
+
+    def emit_error_match_expr(self, node: ErrorMatchExpr):
+        status, value_slot, error_slot, success_type = self.emit_fallible_call_raw(node.expr)
+        err_bb = self.func.append_basic_block("matchq.err")
+        ok_bb = self.func.append_basic_block("matchq.ok")
+        end_bb = self.func.append_basic_block("matchq.end")
+        incoming = []
+        saved_vars = dict(self.vars)
+        self.builder.cbranch(status, err_bb, ok_bb)
+
+        self.builder.position_at_end(err_bb)
+        err_value = self.builder.load(error_slot, name="matchq.err.value")
+        path, line, col = self.function_emitter.node_location(node)
+        err_value = self.emit_error_append_frame(err_value, self.current_frame_name, path, line, col)
+        self.bind_error_value(node.error_name, err_value)
+        err_message = self.builder.extract_value(err_value, 0, name="matchq.message")
+        for i, (pattern, body) in enumerate(node.arms):
+            body_bb = self.func.append_basic_block(f"matchq.arm.{i}")
+            next_bb = self.func.append_basic_block(f"matchq.next.{i}")
+            if pattern is None:
+                self.builder.branch(body_bb)
+            else:
+                cond = self.emit_str_eq(err_message, self.emit_expr(pattern))
+                self.builder.cbranch(cond, body_bb, next_bb)
+            self.builder.position_at_end(body_bb)
+            body_val = self.emit_expr(body)
+            body_block = self.builder.block
+            if not self.builder.block.is_terminated:
+                self.builder.branch(end_bb)
+                incoming.append((body_val, body_block))
+            self.builder.position_at_end(next_bb)
+        if not self.builder.block.is_terminated:
+            self.builder.unreachable()
+        self.vars = dict(saved_vars)
+
+        self.builder.position_at_end(ok_bb)
+        if success_type == "void":
+            ok_val = ir.Constant(ir.IntType(1), 0)
+        else:
+            ok_val = self.builder.load(value_slot, name="matchq.ok.value")
+        ok_block = self.builder.block
+        if not self.builder.block.is_terminated:
+            self.builder.branch(end_bb)
+            incoming.append((ok_val, ok_block))
+        self.vars = saved_vars
+
+        self.builder.position_at_end(end_bb)
+        if node.type == "void":
+            return ir.Constant(ir.IntType(1), 0)
+        phi = self.builder.phi(llvm_type(node.type))
+        for value, block in incoming:
+            phi.add_incoming(self.cast_to(value, node.type), block)
+        return phi
+
     def emit_defer(self, stmt: Defer):
         if self.emitting_defer:
             self.emit_block(stmt.body)
@@ -726,6 +825,12 @@ class LLVMCodegen:
             ])
         if isinstance(node, MagicConst):
             return self.emit_magic_const(node)
+        if isinstance(node, Return):
+            self.emit_stmt(node)
+            return ir.Constant(ir.IntType(1), 0)
+        if isinstance(node, ErrReturn):
+            self.emit_stmt(node)
+            return ir.Constant(ir.IntType(1), 0)
         if isinstance(node, InterpolatedString):
             return self.emit_interpolated_string(node)
         if isinstance(node, EnumRef):
@@ -796,6 +901,10 @@ class LLVMCodegen:
             return self.emit_call(node)
         if isinstance(node, FallibleOp):
             return self.emit_fallible_op(node)
+        if isinstance(node, ErrorHandlerExpr):
+            return self.emit_error_handler_expr(node)
+        if isinstance(node, ErrorMatchExpr):
+            return self.emit_error_match_expr(node)
         if isinstance(node, SizeOfType):
             return ir.Constant(ir.IntType(64), self.sizeof_type(node.type_name))
         if isinstance(node, MethodCall):

@@ -217,6 +217,7 @@ why：
 - `if` 是表达式。
 - `match` 是表达式。
 - `match error` 使用字符串字面量按错误 message 完整匹配，并且必须有 `else`。
+- `ret`、`err` 等不会回到表达式汇合点的分支在内部视为 `never`，可与其他分支值类型合并；`never` 不作为用户可写类型暴露。
 - 条件循环写作 `for condition { ... }`。
 - slice 遍历写作 `for i, item in items`，`i` 为 `i32`。
 - map 遍历写作 `for key, value in m`，key/value 类型分别来自 `map[K,V]`。
@@ -328,17 +329,17 @@ why：
 我们要 Go 风格的显式错误返回，但不采用源码双返回：
 
 ```nc
-fun load(path: str): str {
+fun load(path: str): str err {
     if path == "" { err "empty path" }
     ret fs.read_file(path)??
 }
 
 fun main() {
-    try text = load("config.nc") {
-        io.println(text)
-    } else e {
+    let text = load("config.nc") err? e {
         io.println("load failed")
+        "default"
     }
+    io.println(text)
 }
 ```
 
@@ -347,10 +348,14 @@ fun main() {
 - `error` 是 opaque 内建错误对象，不等同于 `str`，不参与比较或 map key 哈希。
 - v1 允许 `str` 在 `err` 位置隐式构造为 `error`。
 - `err expr` 立即结束当前函数，执行已登记 defer，并把错误返回给调用者；错误对象记录当前 NC 调用栈 frame。
-- 函数是否可错由函数体推导；源码签名不标注可错。
-- 可错调用不能裸用，必须写 `??`、`!!` 或 `try`。
+- 函数是否可错由函数体推导；可在返回类型后写 `err` 作为显式可错断言，例如 `fun load(): str err { ... }`。
+- 函数值类型可写 `fun(T) R err` 表示可错函数类型；当前只作为类型边界解析，v1 不支持可错函数值 ABI。
+- 写了 `err` 标注但函数体不会把错误返回给调用者时，应报错。
+- 可错调用不能裸用，必须写 `??`、`!!`、`err?`、`match?` 或 `try`。
 - `call()??` 成功时产生成功值，出错时追加当前调用点 frame，并从当前函数继续 `err` 传播。
 - `call()!!` 成功时产生成功值，出错时打印错误与 NC 调用栈并退出进程。
+- `call() err? e { ... }` 成功时产生成功值，出错时绑定 `e: error` 并执行错误块；错误块尾表达式可作为 fallback，或用 `ret` / `err` 提前离开。
+- `call() match? e { "message" -> expr; else -> expr }` 成功时产生成功值，出错时按错误 message 完整字符串分类；pattern 只接受字符串字面量，并且必须有 `else`。
 - `try value = call() { ... } else e { ... }` 是语句；成功值只在成功块内可见，错误对象只在错误块内可见。
 - `try call() { ... } else e { ... }` 用于返回 `void` 的可错调用。
 - `try` 省略 `else` 时，失败行为等同于 `!!`。

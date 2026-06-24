@@ -25,19 +25,26 @@ class ControlExprEmitter:
         self.ctx.builder.position_at_end(then_bb)
         then_val = self.emit_block_value(node.then_block)
         then_block = self.ctx.builder.block
-        if not self.ctx.builder.block.is_terminated:
+        then_continues = not self.ctx.builder.block.is_terminated
+        if then_continues:
             self.ctx.builder.branch(end_bb)
         self.ctx.builder.position_at_end(else_bb)
         else_val = self.emit_block_value(node.else_block) if node.else_block else None
         else_block = self.ctx.builder.block
-        if not self.ctx.builder.block.is_terminated:
+        else_continues = not self.ctx.builder.block.is_terminated
+        if else_continues:
             self.ctx.builder.branch(end_bb)
         self.ctx.builder.position_at_end(end_bb)
+        if not then_continues and not else_continues:
+            self.ctx.builder.unreachable()
+            return ir.Constant(ir.IntType(1), 0)
         if node.type == "void":
             return ir.Constant(ir.IntType(1), 0)
         phi = self.ctx.builder.phi(llvm_type(node.type))
-        phi.add_incoming(self.ctx.cast_to(then_val, node.type), then_block)
-        phi.add_incoming(self.ctx.cast_to(else_val, node.type), else_block)
+        if then_continues:
+            phi.add_incoming(self.ctx.cast_to(then_val, node.type), then_block)
+        if else_continues:
+            phi.add_incoming(self.ctx.cast_to(else_val, node.type), else_block)
         return phi
 
     def emit_match_expr(self, node: MatchExpr):
@@ -58,12 +65,15 @@ class ControlExprEmitter:
             body_block = self.ctx.builder.block
             if not self.ctx.builder.block.is_terminated:
                 self.ctx.builder.branch(end_bb)
-            incoming.append((body_val, body_block))
+                incoming.append((body_val, body_block))
             self.ctx.builder.position_at_end(next_bb)
 
         if not self.ctx.builder.block.is_terminated:
             self.ctx.builder.unreachable()
         self.ctx.builder.position_at_end(end_bb)
+        if not incoming:
+            self.ctx.builder.unreachable()
+            return ir.Constant(ir.IntType(1), 0)
         if node.type == "void":
             return ir.Constant(ir.IntType(1), 0)
         phi = self.ctx.builder.phi(llvm_type(node.type))

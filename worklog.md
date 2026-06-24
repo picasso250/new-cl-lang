@@ -278,3 +278,7 @@
 - 2026-06-23: 预备补齐 `str: types.Ord`：允许 `str < <= > >= str` 使用 UTF-8 原始字节序，并让 `sort.sort[str]` 默认排序可用。why：`str` 已是 Eq/Hash/Zero 且常用于 map key 与排序数据，Ord 缺口现在阻碍默认排序闭环；不引入 Unicode collation、locale 或自然排序。
 
 - 2026-06-23: 已补齐 `str: types.Ord`：typecheck 允许同类型 `str` 大小比较，`types.Ord` 接受 `str`，LLVM/runtime 新增 `__nc_str_cmp_ptr` 按 UTF-8 原始字节序比较；`sort.sort[str]` 默认排序可用，旧 str Ord 拒绝 case 改为正向并新增 case_375 覆盖比较、前缀、空串和非 ASCII 字节序。同步 design.md/docs。验证：python -B -m py_compile compiler\typecheck.py compiler\type_rules.py compiler\llvm_codegen.py compiler\llvm_string.py compiler\llvm_runtime.py；python tests\test_language_cases.py 通过 326/326；python tests\test_stdlib.py 通过 74/74；python -m pytest tests\test_projects.py tests\test_builtin_boundary.py tests\test_llvm_backend.py tests\test_type_ref.py -q 通过 61 passed, 1 skipped。
+
+- 2026-06-24: 预备改造错误处理语法：新增内部 never 分支合并，添加 `err?` / `match?` 后缀错误处理表达式，并允许函数/函数类型使用可选 `err` 标注。why：当前 `try` 会把 happy path 嵌套到最深层，`??` 又只能原样传播，缺少同一平面上的自定义错误处理与错误分类。
+
+- 2026-06-24: 已改造错误处理语法：新增内部 `__never` 分支合并，`ret`/`err` 可直接出现在 if/match 表达式胳膊中；新增 `call() err? e { ... }` fallback/传播后缀和 `call() match? e { ... }` 错误 message 分类后缀；函数/方法声明支持返回类型后 `err` 显式断言，函数类型可解析 `fun(T) R err` 但可错函数值仍按 v1 边界拒绝。同步 README/design，新增 case_376~389 覆盖正向和错误路径。验证：python tests\test_language_cases.py 通过 340/340；python tests\test_stdlib.py 通过 74/74；python -m pytest tests\test_llvm_backend.py tests\test_type_ref.py tests\test_builtin_boundary.py tests\test_projects.py -q 通过 61 passed, 1 skipped。

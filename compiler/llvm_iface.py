@@ -40,7 +40,8 @@ class IfaceEmitter:
             for embed in stmt.embeds:
                 for mname, param_types, ret in resolve(embed, stack + [name]):
                     add(mname, [(f"arg{i}", t) for i, t in enumerate(param_types)], ret)
-            for mname, params, ret in stmt.methods:
+            for method in stmt.methods:
+                mname, params, ret = method[:3]
                 add(mname, params, ret)
             IFACE_METHODS[name] = [(mname, methods[mname][0], methods[mname][1]) for mname in order]
             IFACE_TYPES[name] = ir.LiteralStructType([I8PTR, I8PTR])

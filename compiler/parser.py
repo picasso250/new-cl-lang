@@ -200,7 +200,8 @@ class Parser:
             params = self._parse_comma_list(TokenKind.RPAREN, self._parse_type)
             self.expect(TokenKind.RPAREN)
             ret = self._parse_type()
-            return f"fn({','.join(params)})->{ret}"
+            suffix = " err" if self.match(TokenKind.ERR) else ""
+            return f"fn({','.join(params)})->{ret}{suffix}"
         if self.peek().kind == TokenKind.STAR:
             self.advance()
             return "*" + self._parse_type()
@@ -314,11 +315,12 @@ class Parser:
             self.advance()
             return_type = self._parse_type()
             return_type_explicit = True
+        fallible_explicit = self.match(TokenKind.ERR)
         body = self._parse_block()
         self.match(TokenKind.SEMI)
         return FunctionDeclaration(name, params, return_type, body,
                                    receiver_name, receiver_type, return_type_explicit, type_params,
-                                   type_param_constraints)
+                                   type_param_constraints, fallible_explicit)
 
     def _parse_function_signature_only(self):
         self.advance()  # fun
@@ -337,6 +339,7 @@ class Parser:
             self.advance()
             return_type = self._parse_type()
             return_type_explicit = True
+        fallible_explicit = self.match(TokenKind.ERR)
         extern_symbol = None
         if self.peek().kind == TokenKind.EQ:
             self.advance()
@@ -344,7 +347,8 @@ class Parser:
         if self.peek().kind == TokenKind.LBRACE:
             raise ParseError("extern function bodies are not supported")
         fn = FunctionDeclaration(name, params, return_type, Block([]),
-                                 return_type_explicit=return_type_explicit)
+                                 return_type_explicit=return_type_explicit,
+                                 fallible_explicit=fallible_explicit)
         fn.extern_symbol = extern_symbol
         return fn
 
@@ -358,8 +362,9 @@ class Parser:
             self.advance()
             return_type = self._parse_type()
             return_type_explicit = True
+        fallible_explicit = self.match(TokenKind.ERR)
         body = self._parse_block()
-        return self.span(FunctionExpr(params, return_type, body, return_type_explicit), start)
+        return self.span(FunctionExpr(params, return_type, body, return_type_explicit, fallible_explicit), start)
 
     def _parse_return(self):
         start = self.advance()
@@ -475,6 +480,22 @@ class Parser:
             return key, self.parse_expression()
         return self._parse_comma_list(TokenKind.RBRACE, parse_entry)
 
+    def _parse_match_arms(self):
+        self.expect(TokenKind.LBRACE)
+        arms = []
+        while self.peek().kind != TokenKind.RBRACE:
+            if self.peek().kind == TokenKind.ELSE:
+                self.advance()
+                pattern = None
+            else:
+                pattern = self.parse_expression()
+            self.expect(TokenKind.ARROW)
+            body = self.parse_expression()
+            arms.append((pattern, body))
+            self.match(TokenKind.SEMI)
+        self.expect(TokenKind.RBRACE)
+        return arms
+
     def _parse_iface(self):
         self.advance()
         name = self.expect(TokenKind.IDENT).value
@@ -496,9 +517,10 @@ class Parser:
                 if self.peek().kind == TokenKind.COLON:
                     self.advance()
                     ret = self._parse_type()
+                fallible = self.match(TokenKind.ERR)
                 if self.peek().kind == TokenKind.LBRACE:
                     raise ParseError("iface method declarations cannot have bodies")
-                methods.append((mname, params, ret))
+                methods.append((mname, params, ret, fallible))
                 self.match(TokenKind.SEMI)
                 continue
             embeds.append(self._parse_type())
@@ -696,6 +718,22 @@ class Parser:
                 self.advance()
                 expr = FallibleOp(expr, "!!")
                 expr.span = (start_pos, self.tokens[self.pos - 1].pos)
+            elif self.peek().kind == TokenKind.ERR and self.pos + 1 < len(self.tokens) and self.tokens[self.pos + 1].kind == TokenKind.QUESTION:
+                start_pos = getattr(expr, "span", (self.peek().pos, self.peek().pos))[0]
+                self.advance()
+                self.advance()
+                error_name = self.expect(TokenKind.IDENT).value
+                handler = self._parse_block()
+                expr = ErrorHandlerExpr(expr, error_name, handler)
+                expr.span = (start_pos, self.tokens[self.pos - 1].pos)
+            elif self.peek().kind == TokenKind.MATCH and self.pos + 1 < len(self.tokens) and self.tokens[self.pos + 1].kind == TokenKind.QUESTION:
+                start_pos = getattr(expr, "span", (self.peek().pos, self.peek().pos))[0]
+                self.advance()
+                self.advance()
+                error_name = self.expect(TokenKind.IDENT).value
+                arms = self._parse_match_arms()
+                expr = ErrorMatchExpr(expr, error_name, arms)
+                expr.span = (start_pos, self.tokens[self.pos - 1].pos)
             else:
                 break
         return expr
@@ -749,20 +787,14 @@ class Parser:
         if t.kind == TokenKind.MATCH:
             start = self.advance()
             scrutinee = self.parse_expression()
-            self.expect(TokenKind.LBRACE)
-            arms = []
-            while self.peek().kind != TokenKind.RBRACE:
-                if self.peek().kind == TokenKind.ELSE:
-                    self.advance()
-                    pattern = None
-                else:
-                    pattern = self.parse_expression()
-                self.expect(TokenKind.ARROW)
-                body = self.parse_expression()
-                arms.append((pattern, body))
-                self.match(TokenKind.SEMI)
-            self.expect(TokenKind.RBRACE)
+            arms = self._parse_match_arms()
             return self.span(MatchExpr(scrutinee, arms), start)
+
+        if t.kind == TokenKind.RET:
+            return self._parse_return()
+
+        if t.kind == TokenKind.ERR:
+            return self._parse_err_return()
 
         if t.kind == TokenKind.LBRACE:
             start = self.peek()

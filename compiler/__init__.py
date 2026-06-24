@@ -85,7 +85,10 @@ def _expand_type_aliases_in_module(module: Module):
             node.fields = [(n, expand_type(t)) for n, t in node.fields]
             node.embedded_fields = set(getattr(node, "embedded_fields", set()))
         elif isinstance(node, IfaceDecl):
-            node.methods = [(n, [(pn, expand_type(pt)) for pn, pt in params], expand_type(rt)) for n, params, rt in node.methods]
+            node.methods = [
+                (method[0], [(pn, expand_type(pt)) for pn, pt in method[1]], expand_type(method[2]), method[3] if len(method) > 3 else False)
+                for method in node.methods
+            ]
             node.embeds = [expand_type(t) for t in node.embeds]
         elif isinstance(node, FunctionExpr):
             for param in node.params:
@@ -225,9 +228,9 @@ def _rewrite_module_names(module: Module, entry: bool):
         elif isinstance(node, IfaceDecl):
             node.name = q(node.name)
             node.methods = [
-                (n, [(pn, _qual_type(pt, module.name, local_names)) for pn, pt in params],
-                 _qual_type(rt, module.name, local_names))
-                for n, params, rt in node.methods
+                (method[0], [(pn, _qual_type(pt, module.name, local_names)) for pn, pt in method[1]],
+                 _qual_type(method[2], module.name, local_names), method[3] if len(method) > 3 else False)
+                for method in node.methods
             ]
             node.embeds = [_qual_type(t, module.name, local_names) for t in node.embeds]
         elif isinstance(node, EnumDecl):
