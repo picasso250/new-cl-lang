@@ -28,20 +28,30 @@ class MethodEmitter:
         self.ctx.builder.store(value, slot)
         return slot
 
+    def method_symbol(self, receiver_base: str, method_name: str):
+        legacy = safe_user_ident(f"{receiver_base}_{method_name}")
+        for fn in self.ctx.fn_decls.values():
+            if not getattr(fn, "receiver_name", None):
+                continue
+            base = fn.receiver_type.lstrip("*").lstrip("?")
+            if base == receiver_base and fn.name == method_name:
+                return self.ctx.function_symbol(fn)
+        return legacy
+
     def emit_operator_method_call(self, receiver_expr, method_name: str, rhs, receiver_base: str):
-        name = safe_user_ident(f"{receiver_base}_{method_name}")
+        name = self.method_symbol(receiver_base, method_name)
         fn = self.ctx.module.globals[name]
         args = [self.emit_receiver_arg(receiver_expr, receiver_base), self.ctx.emit_coerced_expr(rhs, receiver_base)]
         return self.ctx.builder.call(fn, args)
 
     def emit_unary_operator_method_call(self, receiver_expr, method_name: str, receiver_base: str):
-        name = safe_user_ident(f"{receiver_base}_{method_name}")
+        name = self.method_symbol(receiver_base, method_name)
         fn = self.ctx.module.globals[name]
         args = [self.emit_receiver_arg(receiver_expr, receiver_base)]
         return self.ctx.builder.call(fn, args)
 
     def emit_operator_method_value(self, value, value_type: str, method_name: str, rhs, receiver_base: str):
-        name = safe_user_ident(f"{receiver_base}_{method_name}")
+        name = self.method_symbol(receiver_base, method_name)
         fn = self.ctx.module.globals[name]
         slot = self.ctx.alloca_at_entry("__nc_operator_receiver", llvm_type(value_type))
         self.ctx.builder.store(value, slot)
@@ -62,7 +72,7 @@ class MethodEmitter:
         if obj_type in IFACE_METHODS:
             return self.ctx.emit_iface_method_call(node)
         receiver_base = self.receiver_base(obj_type)
-        name = safe_user_ident(f"{receiver_base}_{node.method}")
+        name = self.method_symbol(receiver_base, node.method)
         if name not in self.ctx.module.globals:
             raise NotImplementedError(f"LLVM backend cannot call method {receiver_base}.{node.method}")
         fn = self.ctx.module.globals[name]
@@ -77,7 +87,7 @@ class MethodEmitter:
 
     def emit_fallible_method_call_raw(self, node):
         receiver_base = self.receiver_base(node.obj.type)
-        name = safe_user_ident(f"{receiver_base}_{node.method}")
+        name = self.method_symbol(receiver_base, node.method)
         if name not in self.ctx.module.globals:
             raise RuntimeError(f"method {receiver_base}.{node.method} is not fallible")
         fn_decl = self.ctx.fn_decls[name]

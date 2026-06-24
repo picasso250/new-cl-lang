@@ -286,3 +286,9 @@
 - 2026-06-24: 预备推进 TypeRef 结构化重构：parser/AST/typechecker/符号表和表达式类型改用结构化 TypeRef，类型身份暂以内部规范格式化串为 key，后端热点支持 TypeRef、其余路径通过统一格式化桥接，并将用户诊断中的函数类型显示为 `fun(T) R err`。why：类型字符串已同时承担语法、语义、ABI 查询和诊断职责，继续扩展函数类型与错误边界会放大手切字符串风险。
 
 - 2026-06-24: 已推进 TypeRef 结构化重构：parser 类型语法直接产出 TypeRef，别名展开、模块限定、泛型替换和 typecheck/符号表可承载结构化类型；TypeRef 保留内部规范串 key 并新增用户格式化，函数类型诊断显示 `fun(T) R err`；LLVM layout/iface 等热点支持 TypeRef，遗留后端路径经统一格式化兼容。新增嵌套函数类型诊断 case 并更新函数类型错误期望。验证：python -B -m py_compile compiler\type_ref.py compiler\parser.py compiler\ast.py compiler\symtab.py compiler\typecheck.py compiler\type_rules.py compiler\builtins.py compiler\generics.py compiler\__init__.py compiler\source.py compiler\llvm_layout.py compiler\llvm_codegen.py compiler\llvm_iface.py；python tests\test_language_cases.py 通过 341/341；python tests\test_stdlib.py 通过 74/74；python -m pytest tests\test_llvm_backend.py tests\test_type_ref.py tests\test_builtin_boundary.py tests\test_projects.py -q 通过 62 passed, 1 skipped。
+
+- 2026-06-24: 预备规整内部 ABI、模块对象和增量依赖图：新增内部 ABI 章程，统一符号命名入口，添加 build --keep-objs debug manifest，并把 build 产物从全程序单对象推进到可观察的模块对象骨架。why：link 阶段需要透明，后续增量编译需要明确模块节点、符号和泛型实例需求边界。
+
+- 2026-06-24: 已规整内部 ABI 与模块对象 debug 构建：新增统一 ABI 符号 helper，非 extern NC 函数/方法/闭包/thunk/map/iface 生成符号采用可读骨架 + 短 hash；build --keep-objs 生成每模块 NC obj/ll、abi-manifest.json、链接输入清单和按模块 IR 指纹的对象缓存，stdlib C support 仍单独对象；design.md 同步内部 ABI、模块对象、泛型实例归定义模块和 manifest/cache 边界。验证：python tests\\test_language_cases.py 通过 341/341；python tests\\test_stdlib.py 通过 74/74；python -m pytest tests\\test_llvm_backend.py tests\\test_type_ref.py tests\\test_builtin_boundary.py tests\\test_projects.py -q 通过 64 passed, 1 skipped。
+
+- 2026-06-24: ABI 保留前缀检查补强：用户顶层符号从拒绝 __nc_ 收紧为拒绝 __nc*，与内部 ABI 章程一致。验证：python -B -m py_compile compiler\\symtab.py；python -m pytest tests\\test_llvm_backend.py tests\\test_type_ref.py tests\\test_builtin_boundary.py tests\\test_projects.py -q 通过 64 passed, 1 skipped。

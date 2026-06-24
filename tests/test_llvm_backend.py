@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -5,7 +6,10 @@ import sys
 import pytest
 
 import compiler.llvm_codegen as llvm_codegen
-from compiler import build_llvm_ir, compile_nc_sources_with_libs, compile_nc_to_llvm_ir, run_llvm_ir
+from compiler import (
+    build_llvm_ir, build_llvm_module_objects, compile_nc_sources_to_program_with_libs,
+    compile_nc_sources_with_libs, compile_nc_to_llvm_ir, run_llvm_ir,
+)
 
 
 def test_llvm_smoke_empty_main():
@@ -223,6 +227,68 @@ def test_llvm_build_links_fs_support_when_stdlib_fs_is_imported(tmp_path):
     assert os.path.exists(tmp_path / "build" / f"ncrt{ext}")
     assert not os.path.exists(tmp_path / "build" / f"ncfs{ext}")
     assert os.path.exists(tmp_path / "build" / f"fs{ext}")
+    result = subprocess.run([exe_path], capture_output=True, text=True)
+    assert result.returncode == 0
+
+
+def test_keep_objs_build_writes_module_objects_and_manifest(tmp_path):
+    root = tmp_path / "project"
+    app = root / "app"
+    calc = root / "calc"
+    app.mkdir(parents=True)
+    calc.mkdir()
+    (app / "main.nc").write_text(
+        "import io\nimport calc\nfun main() { io.println(calc.add(20, 22)) }\n",
+        encoding="utf-8",
+    )
+    (calc / "calc.nc").write_text(
+        "fun add(a: i32, b: i32): i32 { a + b }\n",
+        encoding="utf-8",
+    )
+    sources = [(str(app / "main.nc"), (app / "main.nc").read_text(encoding="utf-8"))]
+    program, link_libs, support_c_sources, module_names = compile_nc_sources_to_program_with_libs(sources)
+    manifest_path, obj_paths, _ncrt_obj, exe_path = build_llvm_module_objects(
+        program,
+        module_names,
+        str(tmp_path / "build"),
+        "main",
+        link_libs,
+        support_c_sources,
+        keep_objs=True,
+    )
+    assert {os.path.basename(path) for path in obj_paths} == {
+        f"app{'.obj' if sys.platform.startswith('win') else '.o'}",
+        f"calc{'.obj' if sys.platform.startswith('win') else '.o'}",
+    }
+    manifest = json.loads(open(manifest_path, encoding="utf-8").read())
+    assert manifest["abi_version"] == "nc-abi-v1"
+    assert len(manifest["modules"]) == 2
+    calc_node = next(node for node in manifest["dependency_graph"] if node["name"] == "calc")
+    app_node = next(node for node in manifest["dependency_graph"] if node["name"] == "app")
+    assert calc_node["exports"][0]["symbol"].startswith("__nc_F_calc_calc_add_")
+    assert {"kind": "function", "name": "calc.add", "module": "calc"} in app_node["requires"]
+    result = subprocess.run([exe_path], capture_output=True, text=True)
+    assert result.stdout.strip() == "42"
+    assert result.returncode == 0
+
+
+def test_keep_objs_keeps_stdlib_c_support_separate(tmp_path):
+    data_path = str(tmp_path / "data.txt").replace("\\", "/")
+    source = f'import fs\nfun main() {{ fs.write_file("{data_path}", "ok")!! }}'
+    program, link_libs, support_c_sources, module_names = compile_nc_sources_to_program_with_libs([("<memory>", source)])
+    manifest_path, _obj_paths, _ncrt_obj, exe_path = build_llvm_module_objects(
+        program,
+        module_names,
+        str(tmp_path / "build"),
+        "main",
+        link_libs,
+        support_c_sources,
+        keep_objs=True,
+    )
+    ext = ".obj" if sys.platform.startswith("win") else ".o"
+    manifest = json.loads(open(manifest_path, encoding="utf-8").read())
+    assert os.path.exists(tmp_path / "build" / f"fs{ext}")
+    assert str(tmp_path / "build" / f"fs{ext}") in manifest["support_objects"]
     result = subprocess.run([exe_path], capture_output=True, text=True)
     assert result.returncode == 0
 

@@ -494,9 +494,22 @@ why：
 
 - `compile` 输出 LLVM IR。
 - `build` 输出对象文件、运行时对象和可执行文件。
+- `build --keep-objs` 是调试开关，会保留每个 NC 模块对象、模块 LLVM IR 和 ABI manifest。
 - 支持显式 target：`windows-x64`、`linux-x64`。
 - `build` / `run` 生成 hosted 用户态程序，始终通过目标平台 C runtime 和默认启动环境链接。
 - `ncrt` 是 NC 私有运行时 ABI，构建在 hosted C runtime 基线之上。
+
+内部 ABI 规则：
+
+- NC 内部 ABI 不承诺用户可依赖的长期二进制稳定性。
+- 用户源码不得声明 `__nc` 保留前缀符号；`ncrt` 和编译器生成 helper 使用该前缀。
+- `main` 作为 hosted C runtime 入口保持 C 符号名 `main`。
+- 非 extern 的 NC 函数、方法、闭包、函数值 thunk、iface thunk/vtable、map descriptor/hash/eq 等符号由统一 ABI 命名入口生成。
+- 内部 ABI 符号采用可读骨架加完整规范签名短 hash；完整解释写入 `abi-manifest.json`。
+- `build --keep-objs` 下，每个 NC 模块生成一个对象文件；`ncrt` 和标准库伴随 C 文件仍各自生成独立对象。
+- 模块对象的 debug manifest 记录模块对象、链接输入、导出符号、跨模块需求和泛型实例需求。
+- 泛型实例归定义模块生成；外部模块新增泛型实例需求时，定义模块对象的输入指纹会变化并需要重编译或重新取缓存。
+- 模块对象缓存以目标、内部 ABI 版本和模块 LLVM IR 指纹为保守正确性边界；IR 变化即视为缓存失效。
 
 why：
 
@@ -504,3 +517,4 @@ why：
 - target 必须显式进入编译模型，FFI 和标准库都依赖它。
 - GC 分配、启动参数、stderr/error 退出、字符串/容器 runtime，以及 `fs` / `os` / `math` 等标准能力都实践依赖普通用户态 C runtime。
 - v1 不提供也不预留 freestanding / `nostd` 模式；源码层标准库仍必须显式 `import`。
+- 模块对象和 ABI manifest 让 link 阶段可观察，也为后续增量编译提供稳定的依赖图窗口。

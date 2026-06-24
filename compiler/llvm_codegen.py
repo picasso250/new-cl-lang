@@ -5,6 +5,9 @@ Unsupported language nodes fail explicitly.
 """
 
 import os
+import json
+import hashlib
+import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
@@ -25,7 +28,7 @@ from compiler.llvm_layout import (
     STRUCT_EMBEDS, STRUCT_FIELDS, STRUCT_FIELD_INDEX, STRUCT_TYPES,
     UNSIGNED_INT_TYPES, llvm_type,
 )
-from compiler.names import safe_user_ident
+from compiler.names import ABI_VERSION, module_object_label, safe_user_ident
 from compiler.ncrt import build_ncrt_obj, build_support_c_objs
 from compiler.llvm_control_expr import ControlExprEmitter
 from compiler.llvm_function import FunctionEmitter
@@ -282,7 +285,7 @@ class LLVMCodegen:
         self.string_emitter = StringEmitter(self)
         self.map_emitter = MapEmitter(self, STRUCT_FIELDS, ENUM_VARIANTS, llvm_type)
 
-    def generate(self, program) -> str:
+    def generate(self, program, emit_module: str | None = None) -> str:
         collected = _collect_llvm_inputs(program)
         if collected.top_stmts:
             raise NotImplementedError("LLVM backend does not support top-level statements")
@@ -294,12 +297,17 @@ class LLVMCodegen:
         funcs = collected.other_funcs + ([collected.main_func] if collected.main_func else [])
         for fn in funcs:
             self.declare_function(fn)
-        for closure in collected.closures:
+        emit_closures = [
+            closure for closure in collected.closures
+            if emit_module is None or getattr(getattr(closure, "source_file", None), "module_name", None) == emit_module
+        ]
+        for closure in emit_closures:
             self.declare_closure_function(closure)
-        for closure in collected.closures:
+        for closure in emit_closures:
             self.emit_closure_function(closure)
         for fn in funcs:
-            if not getattr(fn, "is_extern", False):
+            fn_module = getattr(getattr(fn, "source_file", None), "module_name", None)
+            if not getattr(fn, "is_extern", False) and (emit_module is None or fn_module == emit_module):
                 self.emit_function(fn)
         return str(self.module)
 
@@ -1659,8 +1667,8 @@ class LLVMCodegen:
         raise NotImplementedError(f"LLVM backend cannot cast {from_type} to {to_type}")
 
 
-def generate_llvm_ir(program, target_name: str | None = None) -> str:
-    return LLVMCodegen(get_target(target_name)).generate(program)
+def generate_llvm_ir(program, target_name: str | None = None, emit_module: str | None = None) -> str:
+    return LLVMCodegen(get_target(target_name)).generate(program, emit_module=emit_module)
 
 
 def object_from_llvm_ir(llvm_ir: str, target_name: str | None = None) -> bytes:
@@ -1701,6 +1709,170 @@ def build_llvm_ir(
     if result.returncode != 0:
         raise RuntimeError(f"LLVM object link failed:\n{result.stderr}")
     return ll_path, obj_path, exe_path
+
+
+def build_llvm_module_objects(
+    program,
+    module_names: list[str],
+    out_dir: str,
+    name: str = "main",
+    link_libs: list[str] | None = None,
+    support_c_sources: list[str] | None = None,
+    target_name: str | None = None,
+    keep_objs: bool = False,
+) -> tuple[str, list[str], str, str]:
+    target_spec = get_target(target_name)
+    os.makedirs(out_dir, exist_ok=True)
+    obj_dir = os.path.join(out_dir, "obj")
+    os.makedirs(obj_dir, exist_ok=True)
+    cache_dir = os.path.join(out_dir, ".nc-cache", target_spec.name)
+    os.makedirs(cache_dir, exist_ok=True)
+    module_objs = []
+    module_entries = []
+    for module_name in module_names:
+        label = module_object_label(module_name)
+        ll_path = os.path.join(obj_dir, f"{label}.ll")
+        obj_path = os.path.join(obj_dir, f"{label}{target_spec.object_ext}")
+        llvm_ir = generate_llvm_ir(program, target_name=target_spec.name, emit_module=module_name)
+        ir_hash = hashlib.sha256(llvm_ir.encode("utf-8")).hexdigest()
+        cached_obj = os.path.join(cache_dir, f"{label}-{ir_hash}{target_spec.object_ext}")
+        with open(ll_path, "w", encoding="utf-8") as f:
+            f.write(llvm_ir)
+        cache_hit = os.path.exists(cached_obj)
+        if cache_hit:
+            shutil.copyfile(cached_obj, obj_path)
+        else:
+            obj_bytes = object_from_llvm_ir(llvm_ir, target_spec.name)
+            with open(cached_obj, "wb") as f:
+                f.write(obj_bytes)
+            with open(obj_path, "wb") as f:
+                f.write(obj_bytes)
+        module_objs.append(obj_path)
+        module_entries.append({
+            "name": module_name,
+            "ir": ll_path,
+            "object": obj_path,
+            "fingerprint": ir_hash,
+            "cache_hit": cache_hit,
+        })
+    exe_path = os.path.join(out_dir, f"{name}{target_spec.exe_ext}")
+    ncrt_obj = build_ncrt_obj(out_dir, target_spec.name)
+    support_objs = build_support_c_objs(out_dir, support_c_sources, target_spec.name)
+    hosted_link_args = target_spec.hosted_runtime_link_args()
+    explicit_link_args = [target_spec.resolve_link_lib(lib) for lib in list(link_libs or [])]
+    link_inputs = [*module_objs, ncrt_obj, *support_objs]
+    link_cmd = ["gcc", *link_inputs, "-o", exe_path, *hosted_link_args, *explicit_link_args]
+    result = subprocess.run(link_cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"LLVM module object link failed:\n{result.stderr}")
+    manifest_path = os.path.join(out_dir, "abi-manifest.json")
+    graph = abi_manifest_graph(program, module_names, module_entries)
+    manifest = {
+        "abi_version": ABI_VERSION,
+        "target": target_spec.name,
+        "modules": module_entries,
+        "ncrt_object": ncrt_obj,
+        "support_objects": support_objs,
+        "extern_libs": list(link_libs or []),
+        "link_inputs": link_inputs,
+        "link_command": link_cmd,
+        "dependency_graph": graph,
+    }
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2, ensure_ascii=False)
+    if not keep_objs:
+        for entry in module_entries:
+            try:
+                os.remove(entry["ir"])
+            except OSError:
+                pass
+    return manifest_path, module_objs, ncrt_obj, exe_path
+
+
+def _walk_ast(node, visit):
+    if not hasattr(node, "__dict__"):
+        return
+    visit(node)
+    for key, value in list(node.__dict__.items()):
+        if key == "source_file":
+            continue
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, tuple):
+                    for part in item:
+                        _walk_ast(part, visit)
+                else:
+                    _walk_ast(item, visit)
+        elif isinstance(value, tuple):
+            for item in value:
+                _walk_ast(item, visit)
+        else:
+            _walk_ast(value, visit)
+
+
+def abi_manifest_graph(program, module_names: list[str], module_entries: list[dict]) -> list[dict]:
+    from compiler.ast import FunctionCall, FunctionDeclaration, GenericFunctionValue, ImportDecl
+
+    nodes = {
+        name: {
+            "name": name,
+            "imports": [],
+            "exports": [],
+            "requires": [],
+            "generic_instance_requests": [],
+            "object": module_entries[i]["object"],
+            "fingerprint": module_entries[i]["fingerprint"],
+            "cache_hit": module_entries[i]["cache_hit"],
+        }
+        for i, name in enumerate(module_names)
+    }
+    symbol_codegen = LLVMCodegen()
+
+    def add_unique(items, value):
+        if value not in items:
+            items.append(value)
+
+    for stmt in program.statements:
+        owner = getattr(getattr(stmt, "source_file", None), "module_name", None)
+        if owner not in nodes:
+            continue
+        if isinstance(stmt, ImportDecl):
+            add_unique(nodes[owner]["imports"], stmt.module_name)
+        if isinstance(stmt, FunctionDeclaration) and not getattr(stmt, "is_extern", False):
+            add_unique(nodes[owner]["exports"], {
+                "name": stmt.name,
+                "kind": "method" if stmt.receiver_name else "function",
+                "symbol": symbol_codegen.function_symbol(stmt),
+            })
+            if getattr(stmt, "_generic_origin_name", None):
+                add_unique(nodes[owner]["generic_instance_requests"], {
+                    "origin": stmt._generic_origin_name,
+                    "instance": stmt.name,
+                    "owner": owner,
+                })
+
+        def visit(node):
+            node_owner = getattr(getattr(node, "source_file", None), "module_name", owner)
+            if node_owner not in nodes:
+                return
+            if isinstance(node, FunctionCall):
+                if "." in node.name:
+                    required_module = node.name.split(".", 1)[0]
+                    if required_module != node_owner:
+                        add_unique(nodes[node_owner]["requires"], {
+                            "kind": "function",
+                            "name": node.name,
+                            "module": required_module,
+                        })
+            elif isinstance(node, GenericFunctionValue):
+                add_unique(nodes[node_owner]["generic_instance_requests"], {
+                    "origin": node.name,
+                    "type_args": [str(arg) for arg in getattr(node, "type_args", [])],
+                    "owner": node_owner,
+                })
+
+        _walk_ast(stmt, visit)
+    return [nodes[name] for name in module_names]
 
 
 def run_llvm_ir(

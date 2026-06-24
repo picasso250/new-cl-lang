@@ -13,7 +13,8 @@ import sys
 import os
 
 from compiler import (
-    build_llvm_ir, compile_nc_sources_to_llvm_ir, compile_nc_sources_with_libs, run_llvm_ir,
+    build_llvm_ir, build_llvm_module_objects, compile_nc_sources_to_llvm_ir,
+    compile_nc_sources_to_program_with_libs, compile_nc_sources_with_libs, run_llvm_ir,
 )
 from compiler.target import get_target
 
@@ -42,6 +43,17 @@ def _parse_target(args: list[str]) -> tuple[str, list[str]]:
     except RuntimeError as e:
         print(str(e), file=sys.stderr)
         sys.exit(1)
+
+
+def _parse_keep_objs(args: list[str]) -> tuple[bool, list[str]]:
+    rest = []
+    keep_objs = False
+    for arg in args:
+        if arg == "--keep-objs":
+            keep_objs = True
+            continue
+        rest.append(arg)
+    return keep_objs, rest
 
 
 def _read_sources(args: list[str]) -> list[tuple[str, str]]:
@@ -94,7 +106,25 @@ def cmd_compile(args: list[str]):
 def cmd_build(args: list[str]):
     """生成 build/main.* 和 build/main.exe。"""
     target_name, args = _parse_target(args)
+    keep_objs, args = _parse_keep_objs(args)
     sources = _read_sources(args)
+    if keep_objs:
+        program, link_libs, support_c_sources, module_names = compile_nc_sources_to_program_with_libs(sources, target_name=target_name)
+        manifest_path, obj_paths, _ncrt_obj, exe_path = build_llvm_module_objects(
+            program,
+            module_names,
+            "build",
+            "main",
+            link_libs,
+            support_c_sources,
+            target_name=target_name,
+            keep_objs=True,
+        )
+        print(manifest_path)
+        for obj_path in obj_paths:
+            print(obj_path)
+        print(exe_path)
+        return
     llvm_ir, link_libs, support_c_sources = compile_nc_sources_with_libs(sources, target_name=target_name)
     ll_path, obj_path, exe_path = build_llvm_ir(llvm_ir, "build", "main", link_libs, support_c_sources, target_name=target_name)
     print(ll_path)

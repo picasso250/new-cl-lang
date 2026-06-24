@@ -33,7 +33,7 @@ RESERVED_MAGIC_NAMES = {"__FILE__", "__LINE__", "__COL__", "__FUNC__", "__MODULE
 def _check_runtime_name(name: str):
     if name in RESERVED_MAGIC_NAMES:
         raise NameError(f"'{name}' is a reserved magic constant")
-    if name in RESERVED_RUNTIME_NAMES or name.startswith("__nc_"):
+    if name in RESERVED_RUNTIME_NAMES or name.startswith("__nc"):
         raise NameError(f"'{name}' conflicts with NC runtime name")
 
 

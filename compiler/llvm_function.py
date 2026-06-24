@@ -3,7 +3,7 @@ from llvmlite import ir
 from compiler.ast import Block, ExpressionStatement, FunctionCall, FunctionDeclaration, FunctionExpr, GenericFunctionValue, Identifier, MethodCall
 from compiler.llvm_context import CodegenContext
 from compiler.llvm_layout import ERROR_TYPE, I8PTR, llvm_type
-from compiler.names import safe_user_ident
+from compiler.names import abi_symbol, safe_user_ident
 from compiler.source_location import location_for_node
 from compiler.type_ref import parse_fn_type
 
@@ -47,10 +47,15 @@ class FunctionEmitter:
     def function_symbol(self, fn: FunctionDeclaration):
         if getattr(fn, "is_extern", False):
             return getattr(fn, "extern_symbol", None) or fn.name
+        if fn.name == "main" and not fn.receiver_name:
+            return "main"
+        module_name = getattr(getattr(fn, "source_file", None), "module_name", "<memory>")
         if fn.receiver_name:
             receiver_type = fn.receiver_type.lstrip("*").lstrip("?")
-            return safe_user_ident(f"{receiver_type}_{fn.name}")
-        return safe_user_ident(fn.name)
+            signature = f"method\0{module_name}\0{receiver_type}\0{fn.name}\0{fn.return_type or 'void'}\0{fn.params}"
+            return abi_symbol("M", module_name, f"{receiver_type}_{fn.name}", signature)
+        signature = f"function\0{module_name}\0{fn.name}\0{fn.return_type or 'void'}\0{fn.params}"
+        return abi_symbol("F", module_name, fn.name, signature)
 
     def frame_name(self, fn: FunctionDeclaration):
         if fn.receiver_name:
@@ -62,12 +67,15 @@ class FunctionEmitter:
         return location_for_node(node)
 
     def closure_symbol(self, closure: FunctionExpr):
-        return f"__nc_lambda_{closure.closure_id}"
+        module_name = getattr(getattr(closure, "source_file", None), "module_name", "<memory>")
+        signature = f"lambda\0{module_name}\0{closure.closure_id}\0{closure.return_type or 'void'}\0{closure.params}"
+        return abi_symbol("L", module_name, f"lambda_{closure.closure_id}", signature)
 
     def declare_closure_function(self, closure: FunctionExpr):
         ret = llvm_type(closure.return_type or "void")
         args = [I8PTR] + [llvm_type(t) for _n, t in closure.params]
-        ir.Function(self.ctx.module, ir.FunctionType(ret, args), name=self.closure_symbol(closure))
+        fn = ir.Function(self.ctx.module, ir.FunctionType(ret, args), name=self.closure_symbol(closure))
+        fn.linkage = "internal"
 
     def emit_closure_function(self, closure: FunctionExpr):
         llvm_fn = self.ctx.module.globals[self.closure_symbol(closure)]
@@ -312,9 +320,11 @@ class FunctionEmitter:
         if parsed is None:
             raise RuntimeError(f"{fn_name} is not a function value")
         param_types, ret_type = parsed
-        thunk_name = f"__nc_fnval_{safe_user_ident(fn_name)}"
+        module_name = getattr(getattr(self.ctx.fn_decls[fn_name], "source_file", None), "module_name", "<memory>")
+        thunk_name = abi_symbol("FV", module_name, f"fnval_{fn_name}", f"fnval\0{module_name}\0{fn_name}\0{fn_value_type}")
         thunk_type = ir.FunctionType(llvm_type(ret_type), [I8PTR] + [llvm_type(t) for t in param_types])
         thunk = ir.Function(self.ctx.module, thunk_type, name=thunk_name)
+        thunk.linkage = "internal"
         self.ctx.function_value_thunks[fn_name] = thunk
 
         block = thunk.append_basic_block("entry")

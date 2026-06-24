@@ -6,6 +6,7 @@ from compiler.llvm_layout import (
     STR_TYPE,
 )
 from compiler.type_ref import parse_map_type
+from compiler.names import abi_symbol
 
 
 class MapEmitter:
@@ -117,7 +118,7 @@ class MapEmitter:
         value_offset = self.ctx.align_to(key_offset + key_size, value_align)
         state_offset = self.ctx.align_to(value_offset + value_size, 4)
         entry_size = self.ctx.align_to(state_offset + 4, max(8, key_align, value_align, 4))
-        name = "__nc_map_desc_" + self.type_label(map_type)
+        name = abi_symbol("MAPD", "internal", self.type_label(map_type), f"map-desc\0{map_type}")
         glob = ir.GlobalVariable(self.ctx.module, MAP_DESC_TYPE, name=name)
         glob.linkage = "internal"
         glob.global_constant = True
@@ -143,7 +144,12 @@ class MapEmitter:
     def map_hash_fn(self, key_type: str):
         if key_type in self.ctx.map_hash_fns:
             return self.ctx.map_hash_fns[key_type]
-        fn = ir.Function(self.ctx.module, MAP_HASH_FN_TYPE, name="__nc_map_hash_" + self.type_label(key_type))
+        fn = ir.Function(
+            self.ctx.module,
+            MAP_HASH_FN_TYPE,
+            name=abi_symbol("MAPH", "internal", self.type_label(key_type), f"map-hash\0{key_type}"),
+        )
+        fn.linkage = "internal"
         self.ctx.map_hash_fns[key_type] = fn
         entry = fn.append_basic_block("entry")
         builder = ir.IRBuilder(entry)
@@ -156,7 +162,12 @@ class MapEmitter:
     def map_eq_fn(self, key_type: str):
         if key_type in self.ctx.map_eq_fns:
             return self.ctx.map_eq_fns[key_type]
-        fn = ir.Function(self.ctx.module, MAP_EQ_FN_TYPE, name="__nc_map_eq_" + self.type_label(key_type))
+        fn = ir.Function(
+            self.ctx.module,
+            MAP_EQ_FN_TYPE,
+            name=abi_symbol("MAPE", "internal", self.type_label(key_type), f"map-eq\0{key_type}"),
+        )
+        fn.linkage = "internal"
         self.ctx.map_eq_fns[key_type] = fn
         entry = fn.append_basic_block("entry")
         builder = ir.IRBuilder(entry)

@@ -6,7 +6,7 @@ from compiler.parser import parse, _scan_imports
 from compiler.symtab import build_symbol_table
 from compiler.typecheck import infer_types
 from compiler.generics import monomorphize
-from compiler.llvm_codegen import build_llvm_ir, generate_llvm_ir, run_llvm_ir
+from compiler.llvm_codegen import build_llvm_ir, build_llvm_module_objects, generate_llvm_ir, run_llvm_ir
 from compiler.source import Module, SourceFile, annotate_source_file, module_name_from_sources
 from compiler.ast import (
     Program, ImportDecl, FunctionDeclaration, StructDecl, IfaceDecl, EnumDecl, FunctionCall, SizeOfType,
@@ -373,6 +373,22 @@ def compile_module_to_llvm_ir_with_libs(module: Module, *, target_name: str | No
     return generate_llvm_ir(program, target_name=target_name), link_libs, list(module.support_c_sources)
 
 
+def compile_module_to_program_with_libs(module: Module) -> tuple[Program, list[str], list[str], list[str]]:
+    program = _typecheck_module(module)
+    link_libs = [
+        stmt.lib
+        for stmt in program.statements
+        if isinstance(stmt, ExternBlock) and stmt.lib is not None
+    ]
+    module_names = []
+    seen = set()
+    for source_file in module.files:
+        if source_file.module_name not in seen:
+            seen.add(source_file.module_name)
+            module_names.append(source_file.module_name)
+    return program, link_libs, list(module.support_c_sources), module_names
+
+
 def compile_nc_sources_to_llvm_ir(sources: "list[tuple[str, str]]", *, target_name: str | None = None) -> str:
     """多个 NC 源码片段 → 单个 LLVM IR。"""
     return compile_module_to_llvm_ir(parse_project_sources(sources, target_name=target_name), target_name=target_name)
@@ -381,6 +397,10 @@ def compile_nc_sources_to_llvm_ir(sources: "list[tuple[str, str]]", *, target_na
 def compile_nc_sources_with_libs(sources: "list[tuple[str, str]]", *, target_name: str | None = None) -> tuple[str, list[str], list[str]]:
     """多个 NC 源码片段 → (LLVM IR, link libs, support C sources)."""
     return compile_module_to_llvm_ir_with_libs(parse_project_sources(sources, target_name=target_name), target_name=target_name)
+
+
+def compile_nc_sources_to_program_with_libs(sources: "list[tuple[str, str]]", *, target_name: str | None = None) -> tuple[Program, list[str], list[str], list[str]]:
+    return compile_module_to_program_with_libs(parse_project_sources(sources, target_name=target_name))
 
 
 def compile_nc_to_llvm_ir(nc_source: str) -> str:

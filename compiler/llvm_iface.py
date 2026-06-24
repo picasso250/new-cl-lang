@@ -6,7 +6,7 @@ from compiler.llvm_layout import (
     I8PTR, IFACE_METHODS, IFACE_TYPES, STRUCT_EMBEDS, STRUCT_FIELDS,
     STRUCT_FIELD_INDEX, llvm_type,
 )
-from compiler.names import safe_user_ident
+from compiler.names import abi_symbol, safe_user_ident
 from compiler.type_ref import PointerType, format_type_ref, parse_type_ref
 
 
@@ -100,7 +100,12 @@ class IfaceEmitter:
         for mname, param_types, ret_type in IFACE_METHODS[iface_name]:
             thunk = self.get_iface_thunk(iface_name, concrete, mname, param_types, ret_type)
             values.append(thunk.bitcast(field_types[len(values)]))
-        glob = ir.GlobalVariable(self.ctx.module, vt_type, name=safe_user_ident(f"__nc_iface_{iface_name}_{concrete}_vtable"))
+        module_name = getattr(getattr(self.ctx.fn_decls.get(self.ctx.method_emitter.method_symbol(concrete, IFACE_METHODS[iface_name][0][0])), "source_file", None), "module_name", "<memory>")
+        glob = ir.GlobalVariable(
+            self.ctx.module,
+            vt_type,
+            name=abi_symbol("IVT", module_name, f"{iface_name}_{concrete}_vtable", f"iface-vtable\0{iface_name}\0{concrete}"),
+        )
         glob.linkage = "internal"
         glob.global_constant = True
         glob.initializer = ir.Constant.literal_struct(values)
@@ -112,14 +117,16 @@ class IfaceEmitter:
         if key in self.ctx.iface_thunks:
             return self.ctx.iface_thunks[key]
         fn_type = ir.FunctionType(llvm_type(ret_type), [I8PTR] + [llvm_type(t) for t in param_types])
-        name = safe_user_ident(f"__nc_iface_{iface_name}_{concrete}_{method_name}_thunk")
+        module_name = getattr(getattr(self.ctx.fn_decls.get(self.ctx.method_emitter.method_symbol(concrete, method_name)), "source_file", None), "module_name", "<memory>")
+        name = abi_symbol("ITH", module_name, f"{iface_name}_{concrete}_{method_name}", f"iface-thunk\0{iface_name}\0{concrete}\0{method_name}")
         thunk = ir.Function(self.ctx.module, fn_type, name=name)
+        thunk.linkage = "internal"
         self.ctx.iface_thunks[key] = thunk
         block = thunk.append_basic_block("entry")
         saved_builder, saved_func = self.ctx.builder, self.ctx.func
         self.ctx.builder, self.ctx.func = ir.IRBuilder(block), thunk
         receiver_base, path = self.resolve_concrete_method(concrete, method_name)
-        method_sym = safe_user_ident(f"{receiver_base}_{method_name}")
+        method_sym = self.ctx.method_emitter.method_symbol(receiver_base, method_name)
         method_fn = self.ctx.module.globals[method_sym]
         receiver = self.ctx.builder.bitcast(thunk.args[0], llvm_type(f"*{concrete}"), name="iface.receiver")
         current_type = concrete
@@ -144,16 +151,16 @@ class IfaceEmitter:
         return thunk
 
     def resolve_concrete_method(self, concrete, method_name):
-        if safe_user_ident(f"{concrete}_{method_name}") in self.ctx.module.globals:
+        if self.ctx.method_emitter.method_symbol(concrete, method_name) in self.ctx.module.globals:
             return concrete, []
         for field_name, field_type in STRUCT_EMBEDS.get(concrete, {}).items():
             field_ref = parse_type_ref(field_type)
             embed_base = format_type_ref(field_ref.inner) if isinstance(field_ref, PointerType) else format_type_ref(field_ref)
-            if safe_user_ident(f"{embed_base}_{method_name}") in self.ctx.module.globals:
+            if self.ctx.method_emitter.method_symbol(embed_base, method_name) in self.ctx.module.globals:
                 return embed_base, [field_name]
             try:
                 nested_base, nested_path = self.resolve_concrete_method(embed_base, method_name)
                 return nested_base, [field_name] + nested_path
             except KeyError:
                 pass
-        raise KeyError(safe_user_ident(f"{concrete}_{method_name}"))
+        raise KeyError(self.ctx.method_emitter.method_symbol(concrete, method_name))
