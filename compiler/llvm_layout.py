@@ -155,8 +155,7 @@ class LLVMLayout:
         if isinstance(ref, SliceType):
             return 8
         if isinstance(ref, ArrayTypeRef):
-            _length, elem_type = ref.length, ref.elem
-            return self.alignof_type(elem_type)
+            return 8
         if nc_type in STRUCT_FIELDS:
             aligns = [self.alignof_type(field_type) for _field_name, field_type in STRUCT_FIELDS[nc_type]]
             return max(aligns, default=1)
