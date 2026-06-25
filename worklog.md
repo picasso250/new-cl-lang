@@ -311,4 +311,6 @@
 
 - 2026-06-25: Go → runtime.spawn：删除 `go` 关键字，并发入口从语言关键字改为标准库 `runtime.spawn(fun() { ... })` + 编译器洞。编译器在 typecheck 阶段识别 `ModuleAccess(module:"runtime", name:"spawn")` 走 green thread 创建路径；不改 lexer/parser。why：`runtime.spawn` 无需新增关键字，每个 spawn 显式写闭包，不鼓励随手产生廉价 green thread；未来可用 `go f(args)` 脱糖追加简洁性。更新 docs/concurrency.md、design.md。
 
+- 2026-06-25: runtime.spawn → spawn 关键字：并发入口从伪装的库函数改回关键字 `spawn fun() { ... }`。Parser 新增 `spawn` 关键字和 `SpawnStmt`，LLVM lowering 同 `__nc_spawn`。why：`runtime.spawn` 需要 resolved symbol 匹配、禁止一等值、不走常规 lowering——四条特殊规则使其实际就是关键字；改回 `spawn` 消除不一致性，同时保持 `fun() { ... }` 闭包仪式感。更新 docs/concurrency.md、design.md。
+
 - 2026-06-25: 第二轮 CR 反馈修正 concurrency.md 八处：① Mutex lock 增加 `park_current_and_unlock` runtime 原语——入等待队列、置 G_WAIT_MUTEX、释放 internal spinlock、切 scheduler 原子化，消除 unlock→yield 窗口丢唤醒；② `runtime.spawn` 编译器洞从文本匹配改为 name resolution 后 `BuiltinRuntimeSpawn` 符号身份识别；③ `runtime.spawn` v1 不是一等函数值，只允许直接调用；④ LLVM lowering 只生成 `__nc_spawn(fn_ptr, env_ptr)`，G 分配/计数/enqueue/wake 全部移入 ncrt；⑤ 新增 worker wake 机制：`enqueue_global_run_queue` 和 timer 插入更早 deadline 时均 signal sleeping worker（condition variable）；⑥ 澄清 loop backedge safepoint 仅用于 GC STW，不做普通时间片 yield；⑦ Windows guard page 改为单次 VirtualAlloc reserve 整段，分两次 reserve 不可靠；⑧ 强调 spawn 闭包返回值永远丢弃。同步更新 design.md 摘要。why：第二轮 CR 揭示 Mutex park 原子性和 spawn 符号识别仍为头等缺陷，需再修才能入场实现。

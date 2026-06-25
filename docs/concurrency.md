@@ -7,7 +7,7 @@
 NC 使用 **M:N 绿色线程**（类似 Go goroutine）实现并发：
 
 - N 个轻量用户态线程（green thread）由 M 个 OS worker（M = runtime.NumCPU）调度
-- `runtime.spawn(fun() { ... })` 标准库内建特殊函数启动新 green thread（编译器洞）
+- `spawn` 关键字启动新 green thread
 - `sync.Mutex` 标准库提供互斥同步
 - `sleep` 提供定时 yield
 - 目标：并行计算密集型任务与阻塞模拟（I/O netpoller 推迟到 v2）
@@ -15,11 +15,9 @@ NC 使用 **M:N 绿色线程**（类似 Go goroutine）实现并发：
 ## 驱动 case
 
 ```nc
-import runtime
-
 fun main() {
-    runtime.spawn(fun() { funcA() })
-    runtime.spawn(fun() { funcB() })
+    spawn fun() { funcA() }
+    spawn fun() { funcB() }
 }
 ```
 
@@ -27,67 +25,29 @@ fun main() {
 
 ## 语言表面
 
-### `runtime.spawn`：标准库命名空间下的内建特殊函数 + 编译器洞
+### `spawn` 关键字
 
-`runtime.spawn` 不作为语言关键字，而是 `runtime` 模块下的一个**内建特殊函数**。编译器在 typecheck 阶段识别对该函数的调用并走特殊 lowering。
-
-#### 调用形式与限制
-
-```nc
-import runtime
-
-fun main() {
-    runtime.spawn(fun() { do_work() })
-}
-```
-
-v1 限制：
-
-- **只允许直接调用形式**：`runtime.spawn(fun() { ... })`
-- **不是一等函数值**：不允许取地址、赋值变量、作为参数传递、通过别名调用
-- 以下写法在 v1 中均报错：
-
-```nc
-let f = runtime.spawn                   // 错误：不是一等函数值
-some_higher_order(runtime.spawn)        // 错误
-(if cond { runtime } else { runtime }).spawn(...)  // 错误
-```
-
-#### 类型
-
-签名（概念性）：
+`spawn` 是关键字。语法：
 
 ```
-runtime.spawn(f: fun() -> R): void   // R 可为任意类型，但返回值永远被丢弃
+SpawningStmt → 'spawn' FunctionExpr
 ```
 
-- 只接受一个 `fun()` 闭包参数（零参数，任意返回类型）
-- 闭包捕获的外部变量由普通闭包机制处理
-- `runtime.spawn` 是语句（返回 `void`），不产生值，不能用于赋值或 `ret`
-- spawn 调用自身**不阻塞**当前 green thread
-- **返回值永远被丢弃**；需要结果传递的，v2 通过 channel / shared state + Mutex 完成
+`spawn` 后面必须跟一个 `fun()` 闭包表达式（零参数，任意返回类型）。闭包捕获的外部变量由普通闭包机制处理。
 
-#### 编译器洞的精确条件
+#### 性质
 
-编译器不按文本 `ModuleAccess(module="runtime", name="spawn")` 判断；必须在 **name resolution 后确认 callee 绑定到标准库内建符号 `std.runtime.spawn`**。
+- `spawn` 是语句，不产生值，不能用于赋值、参数或 `ret`
+- `spawn` 不阻塞当前 green thread——它把新 G 放入 run queue 后立即返回
+- 闭包的返回值永远被丢弃；需要结果传递的，v2 通过 channel / shared state + Mutex 完成
 
-也就是：
+#### 为何不用 `go`
 
-```
-CallExpr.callee.resolved_symbol == BuiltinRuntimeSpawn
-```
-
-而非：
-
-```
-callee.module_name == "runtime" && callee.name == "spawn"
-```
-
-这样即使用户 `import my_runtime as runtime` 或自己写了同名模块，也不会被误判。
+`spawn fun() { ... }` 比 `go funcA()` 多一层闭包的仪式感。每一个 spawn 都写完整的 `fun() { ... }`，使每个 green thread 的创建显式、有意图。`go` 可以作为未来语法糖追加（`go f(args)` → `spawn fun() { f(args) }`），但 v1 不做。
 
 #### 编译器 lowering：`__nc_spawn(fn_ptr, env_ptr)`
 
-编译器在 typecheck 识别 `BuiltinRuntimeSpawn` 后，LLVM 后端只生成：
+Parser. AST 为 `SpawnStmt { body: FunctionExpr }`。LLVM 后端只生成：
 
 ```text
 __nc_spawn(closure_fn_ptr, closure_env_ptr)
@@ -104,16 +64,6 @@ __nc_spawn(closure_fn_ptr, closure_env_ptr)
 ```
 
 编译器**不直接生成** G 分配、计数操作或 run queue enqueue——这些全部由 `__nc_spawn` 内部完成。错误路径（如栈分配失败）也在 ncrt 中处理。
-
-#### 未来可选语法糖
-
-如果将来需要 `go` 风格的简洁语法，可以在前端做脱糖：
-
-```
-go f(args)   →  runtime.spawn(fun() { f(args) })
-```
-
-此为 v2 考量，v1 不做。
 
 ### 函数序言 yield 检查
 
@@ -159,7 +109,7 @@ wait_until(next_timer_deadline or run_queue_nonempty)
 
 v1 使用 condition variable 实现。关键要求：
 
-- **`enqueue_global_run_queue(g)` 必须 signal 一个 sleeping worker**（意味着 run queue mutex 需要附带或关联 condition variable）
+- **`enqueue_global_run_queue(g)` 必须 signal 一个 sleeping worker**
 - **`timer_heap` 插入比当前 `next_timer_deadline` 更早的 deadline 时，必须 signal sleeping worker** 以重新计算 wait deadline
 - 不依赖 spin/sleep；唤醒必须由 condition variable 保证
 
@@ -204,7 +154,7 @@ shutdown_conditions_met():
 
 只有 runtime 主控制流（非 worker）在所有 worker 退出后调 `exit(0)`。worker 本身不调 `exit`。
 
-此设计保证 `main` 结束之前进程不会退出；`main` 结束后，所有通过 `runtime.spawn` 启动的 green thread 也退出后，才会退出。
+此设计保证 `main` 结束之前进程不会退出；`main` 结束后，所有通过 `spawn` 启动的 green thread 也退出后，才会退出。
 
 ### 死锁检测
 
@@ -434,7 +384,7 @@ if (__nc_gc_safepoint_needed) {
 
 | 特性 | 状态 |
 |---|---|
-| `runtime.spawn`（内建特殊函数，按 resolved symbol 识别） | 编译器 + ncrt |
+| `spawn` 关键字 | 编译器 |
 | 汇编上下文切换（x64 win/linux） | ncrt |
 | M 个 worker + 全局 run queue + worker wake cv | ncrt |
 | 合作式时间片 yield（仅函数入口） | 编译器 + ncrt |
@@ -444,15 +394,15 @@ if (__nc_gc_safepoint_needed) {
 | main 为 green thread + 等所有用户 G 退出 | ncrt |
 | G 状态机（RUNNABLE/RUNNING/WAIT_MUTEX/WAIT_TIMER/DEAD） | ncrt |
 | all-asleep 死锁 panic | ncrt |
-| `sync.Mutex`（park_current_and_unlock + handoff ownership）| 标准库 + ncrt |
+| `sync.Mutex`（park_current_and_unlock + handoff ownership） | 标准库 + ncrt |
 | `sleep`（timer 每轮检查 + 插入更早 deadline 时 signal） | ncrt |
 
 ### v1 明确不包含
 
 | 特性 | 原因 |
 |---|---|
-| `runtime.spawn` 一等函数值 | 限制直接调用，避免 lowering 复杂度扩张 |
-| `go` 关键字 | `runtime.spawn` 无需关键字；未来可作为语法糖追加 |
+| `go` 关键字 / `go f(args)` 语法糖 | `spawn fun() { ... }` 更显式；语法糖留到 v2 |
+| `runtime.spawn` 库函数形式 | 已改为 `spawn` 关键字，不走伪函数路线 |
 | channel / select | 无 case 驱动；语法和 lowering 成本高 |
 | TCP I/O netpoller | 无 case 驱动；epoll/kqueue/IOCP 工作量大 |
 | 文件 I/O 非阻塞包装 | 需要 io_uring 或相似技术 |
@@ -468,7 +418,7 @@ if (__nc_gc_safepoint_needed) {
 ## 后续方向（v2 / case 驱动）
 
 - **channel + select**：标准库 `chan.Chan[T]` + 编译器 `select` 构造
-- **`go` 语法糖**：`go f(args)` 脱糖为 `runtime.spawn(fun() { f(args) })`
+- **`go` 语法糖**：`go f(args)` 脱糖为 `spawn fun() { f(args) }`
 - **TCP netpoller**：epoll/kqueue/IOCP 事件循环寄生在 worker 中
 - **工作窃取**：本地队列 + 偷取，降低全局队列锁竞争
 - **动态栈增长**：达到风险监控范围
