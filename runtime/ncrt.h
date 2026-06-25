@@ -5,6 +5,55 @@
 #include <stdint.h>
 #include <stdio.h>
 
+// ── green thread ────────────────────────────────────────────
+
+typedef enum {
+    G_RUNNABLE,
+    G_RUNNING,
+    G_WAIT_MUTEX,
+    G_WAIT_TIMER,
+    G_DEAD,
+} nc_g_state;
+
+#define NC_G_STACK_SIZE   (64 * 1024)
+#define NC_G_GUARD_SIZE   4096
+
+typedef struct nc_green_thread {
+    nc_g_state  state;
+    void*       stack_region;  // start of entire region (guard + usable)
+    void*       stack_top;     // top of usable stack (= stack_region + guard_size + usable_size)
+    void*       rsp;           // saved %rsp when suspended
+
+    // win64 callee-saved
+    void*       rbx;
+    void*       rbp;
+    void*       rdi;
+    void*       rsi;
+    void*       r12;
+    void*       r13;
+    void*       r14;
+    void*       r15;
+
+    // xmm save area: 16 bytes per register × 10 regs
+    uint8_t     xmm_save[160];
+
+    // time-slice
+    uint64_t    start_ticks;
+
+    // scheduling
+    struct nc_green_thread* run_next;   // global run queue
+    struct nc_green_thread* wait_next;  // mutex / timer wait queue
+
+    // entry
+    void (*entry_fn)(void*);
+    void*       entry_arg;
+} nc_green_thread;
+
+nc_green_thread* __nc_g_alloc(void (*fn)(void*), void* arg);
+void             __nc_g_free(nc_green_thread* g);
+
+// ── existing types ──────────────────────────────────────────
+
 typedef struct {
     uint8_t* ptr;
     uint64_t len;

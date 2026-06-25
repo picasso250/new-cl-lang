@@ -629,3 +629,91 @@ int64_t __nc_map_next(nc_map* m, int64_t start, void* key_out, void* value_out) 
     }
     return -1;
 }
+
+// ── green thread stack ─────────────────────────────────────
+
+#ifdef _WIN32
+#include <windows.h>
+
+nc_green_thread* __nc_g_alloc(void (*fn)(void*), void* arg) {
+    nc_green_thread* g = (nc_green_thread*)malloc(sizeof(nc_green_thread));
+    if (!g) return NULL;
+
+    size_t total = NC_G_GUARD_SIZE + NC_G_STACK_SIZE;
+    void* region = VirtualAlloc(NULL, total, MEM_RESERVE, PAGE_NOACCESS);
+    if (!region) {
+        free(g);
+        return NULL;
+    }
+
+    // commit usable stack
+    void* usable = (char*)region + NC_G_GUARD_SIZE;
+    if (!VirtualAlloc(usable, NC_G_STACK_SIZE, MEM_COMMIT, PAGE_READWRITE)) {
+        VirtualFree(region, 0, MEM_RELEASE);
+        free(g);
+        return NULL;
+    }
+
+    memset(g, 0, sizeof(nc_green_thread));
+    g->state        = G_RUNNABLE;
+    g->stack_region = region;
+    g->stack_top    = (char*)usable + NC_G_STACK_SIZE;
+    g->rsp          = g->stack_top;
+    g->entry_fn     = fn;
+    g->entry_arg    = arg;
+
+    return g;
+}
+
+void __nc_g_free(nc_green_thread* g) {
+    if (!g) return;
+    if (g->stack_region) {
+        VirtualFree(g->stack_region, 0, MEM_RELEASE);
+    }
+    free(g);
+}
+
+#else  // Linux / SysV
+
+#include <sys/mman.h>
+#include <unistd.h>
+
+nc_green_thread* __nc_g_alloc(void (*fn)(void*), void* arg) {
+    nc_green_thread* g = (nc_green_thread*)malloc(sizeof(nc_green_thread));
+    if (!g) return NULL;
+
+    size_t total = NC_G_GUARD_SIZE + NC_G_STACK_SIZE;
+    void* region = mmap(NULL, total, PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (region == MAP_FAILED) {
+        free(g);
+        return NULL;
+    }
+
+    // guard page
+    if (mprotect(region, NC_G_GUARD_SIZE, PROT_NONE) != 0) {
+        munmap(region, total);
+        free(g);
+        return NULL;
+    }
+
+    memset(g, 0, sizeof(nc_green_thread));
+    g->state        = G_RUNNABLE;
+    g->stack_region = region;
+    g->stack_top    = (char*)region + total;
+    g->rsp          = g->stack_top;
+    g->entry_fn     = fn;
+    g->entry_arg    = arg;
+
+    return g;
+}
+
+void __nc_g_free(nc_green_thread* g) {
+    if (!g) return;
+    if (g->stack_region) {
+        munmap(g->stack_region, NC_G_GUARD_SIZE + NC_G_STACK_SIZE);
+    }
+    free(g);
+}
+
+#endif
