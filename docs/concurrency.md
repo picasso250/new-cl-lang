@@ -7,7 +7,7 @@
 NC 使用 **M:N 绿色线程**（类似 Go goroutine）实现并发：
 
 - N 个轻量用户态线程（green thread）由 M 个 OS worker（M = runtime.NumCPU）调度
-- `go f()` 关键字启动新 green thread
+- `runtime.spawn(fun() { ... })` 标准库函数启动新 green thread（编译器打洞）
 - `sync.Mutex` 标准库提供互斥同步
 - `sleep` 提供定时 yield
 - 目标：并行计算密集型任务与阻塞模拟（I/O netpoller 推迟到 v2）
@@ -15,9 +15,11 @@ NC 使用 **M:N 绿色线程**（类似 Go goroutine）实现并发：
 ## 驱动 case
 
 ```nc
+import runtime
+
 fun main() {
-    go funcA()
-    go funcB()
+    runtime.spawn(fun() { funcA() })
+    runtime.spawn(fun() { funcB() })
 }
 ```
 
@@ -25,11 +27,54 @@ fun main() {
 
 ## 语言表面
 
-### `go` 关键字
+### `runtime.spawn`：标准库函数 + 编译器洞
 
-- 只接受函数调用：`go funcA()`、`go obj.method()`、`go fun() { ... }()`
-- 语句，不是表达式，不产生值，不能用于赋值、参数或 `ret`
-- 闭包允许：`go fun() { io.println("hello") }()`
+`runtime.spawn` 不作为一个语言关键字，而是标准库 `runtime` 模块中的一个函数。编译器在 typecheck 阶段识别对该函数的调用并走特殊 lowering。
+
+#### 语法与类型
+
+```nc
+import runtime
+
+fun main() {
+    runtime.spawn(fun() { do_work() })
+}
+```
+
+签名（概念性）：
+
+```
+runtime.spawn(f: fun() -> R): void   // R 可为任意类型，但返回值被丢弃
+```
+
+- 只接受一个 `fun()` 闭包参数（零参数，任意返回类型）
+- 闭包捕获的外部变量由普通闭包机制处理
+- `runtime.spawn` 是语句（其返回类型为 `void`），不产生值，不能用于赋值或 `ret`
+- spawn 调用自身**不阻塞**当前 green thread——它把新 G 放入 run queue 后立即返回
+
+#### 编译器洞
+
+编译器在 typecheck 阶段识别 `CallExpr` 的目标为 `ModuleAccess { module: "runtime", name: "spawn" }` 时，不走常规函数 lowering，而走 green thread 创建路径：
+
+1. Typecheck：校验唯一实参为 `fun()` 类型的闭包
+2. LLVM 后端：生成 green thread 分配流水线
+   - 为闭包分配 64KB + guard page 栈
+   - 初始化 G 结构（状态 `G_RUNNABLE`）
+   - 将 G 放入全局 run queue
+   - `user_g_count += 1`
+3. 调用端不等待，不获取返回值
+
+Parser 和 lexer 不受影响——`runtime.spawn` 只是 Lexer 视角下的普通 `ModuleAccess + CallExpr`。
+
+#### 未来可选语法糖
+
+如果将来需要 `go` 风格的简洁语法，可以在前端做脱糖：
+
+```
+go f(args)   →  runtime.spawn(fun() { f(args) })
+```
+
+此为 v2 考量，v1 不做。
 
 ### 函数序言 yield 检查
 
@@ -89,7 +134,7 @@ while True:
 ### main 与 green thread 生命周期
 
 - `main` 本身作为一个 green thread 运行，`live_count` 初始为 1
-- `go f()` 时 `user_g_count` +1，新 G 放入 run queue
+- `runtime.spawn(f)` 时 `user_g_count` +1，新 G 放入 run queue
 - green thread 正常退出时 `user_g_count` -1
 - green thread 因 `err` 传播到顶部而 abort 时 `user_g_count` -1
 - `main` 函数体结束后，运行时标记 `main_done = true`，main 的 G 变为 `G_DEAD`，`live_count` -1
@@ -106,7 +151,7 @@ shutdown_conditions_met():
 
 只有 runtime 主控制流（非 worker）在所有 worker 退出后调 `exit(0)`。worker 本身不调 `exit`。
 
-此设计保证 `main` 结束之前进程不会退出；`main` 结束后，所有 `go` 出来的 green thread 也退出后，才会退出。
+此设计保证 `main` 结束之前进程不会退出；`main` 结束后，所有通过 `runtime.spawn` 启动的 green thread 也退出后，才会退出。
 
 ### 死锁检测
 
@@ -312,7 +357,7 @@ if (__nc_safepoint_needed) {
 
 | 特性 | 状态 |
 |---|---|
-| `go` 关键字 | 编译器 |
+| `runtime.spawn`（编译器洞） | 编译器 + 标准库 |
 | 汇编上下文切换（x64 win/linux） | ncrt |
 | M 个 worker + 全局 run queue | ncrt |
 | 合作式 yield（函数序言 + loop backedge + alloc 点） | 编译器 + ncrt |
@@ -328,6 +373,7 @@ if (__nc_safepoint_needed) {
 
 | 特性 | 原因 |
 |---|---|
+| `go` 关键字 | `runtime.spawn` 无需关键字；未来可作为语法糖追加 |
 | channel / select | 无 case 驱动；语法和 lowering 成本高 |
 | TCP I/O netpoller | 无 case 驱动；epoll/kqueue/IOCP 工作量大 |
 | 文件 I/O 非阻塞包装 | 需要 io_uring 或相似技术 |
@@ -342,6 +388,7 @@ if (__nc_safepoint_needed) {
 ## 后续方向（v2 / case 驱动）
 
 - **channel + select**：标准库 `chan.Chan[T]` + 编译器 `select` 构造
+- **`go` 语法糖**：`go f(args)` 脱糖为 `runtime.spawn(fun() { f(args) })`
 - **TCP netpoller**：epoll/kqueue/IOCP 事件循环寄生在 worker 中
 - **工作窃取**：本地队列 + 偷取，降低全局队列锁竞争
 - **动态栈增长**：达到风险监控范围
