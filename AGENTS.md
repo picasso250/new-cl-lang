@@ -8,5 +8,6 @@
 - 动手或者做计划之前，要先阅读 `design.md` `worklog.md`
 - 更新 worklog 的时机：工作时，仅用 append 方式写: 1. 我做什么; 2. 成功与否。
 - 更新 design.md 的时机：我预备做什么新 feature（design.md中没有的）；做完之后，检查一遍 design.md 是否和实现一致
+- design.md 只记目标和用户可见语义规则；lowering 细节、CLI 参数、内部 ABI 写入专题文档，不留 design.md
 - 新 feature / bug fix / refactor 完成之后，git 提交 并 push。
 - 马斯克五步工作法。（第一步：质疑需求；第二步：删掉所有可能的部件；第三步：简化与优化；第四步：加速周转；第五步：自动化）
