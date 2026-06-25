@@ -789,22 +789,81 @@ void __nc_g_init_stack(nc_green_thread* g) {
 
 // ── scheduler ─────────────────────────────────────────────
 
-static nc_green_thread* current_g = NULL;
-static nc_green_thread* sched_g   = NULL;
-static nc_green_thread* run_head  = NULL;
-static nc_green_thread* run_tail  = NULL;
+#ifdef _WIN32
+#include <windows.h>
+#include <process.h>
 
+typedef struct {
+    CRITICAL_SECTION cs;
+    CONDITION_VARIABLE cv;
+    int running;            // 1 = accept Gs, 0 = shutting down
+    int live_workers;
+} nc_sched;
+
+static nc_sched sched = {{0}};
+static int sched_inited = 0;
+
+static void sched_ensure_init(void) {
+    if (sched_inited) return;
+    sched_inited = 1;
+#ifdef _WIN32
+    InitializeCriticalSection(&sched.cs);
+    InitializeConditionVariable(&sched.cv);
+#endif
+}
+
+#define SCHED_LOCK()    EnterCriticalSection(&sched.cs)
+#define SCHED_UNLOCK()  LeaveCriticalSection(&sched.cs)
+#define SCHED_WAIT()    SleepConditionVariableCS(&sched.cv, &sched.cs, INFINITE)
+#define SCHED_SIGNAL()  WakeConditionVariable(&sched.cv)
+
+#else
+#include <pthread.h>
+
+typedef struct {
+    pthread_mutex_t mu;
+    pthread_cond_t  cv;
+    int running;
+    int live_workers;
+} nc_sched;
+
+static nc_sched sched = {PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, 0, 0};
+
+#define SCHED_LOCK()    pthread_mutex_lock(&sched.mu)
+#define SCHED_UNLOCK()  pthread_mutex_unlock(&sched.mu)
+#define SCHED_WAIT()    pthread_cond_wait(&sched.cv, &sched.mu)
+#define SCHED_SIGNAL()  pthread_cond_signal(&sched.cv)
+
+#endif
+
+typedef struct nc_worker {
+    nc_green_thread sched_g;   // worker's scheduler context (on stack)
+    nc_green_thread* current_g;
+    int id;
+} nc_worker;
+
+static __thread nc_worker* current_worker = NULL;
+
+static nc_green_thread* run_head = NULL;
+static nc_green_thread* run_tail = NULL;
+
+// thread-safe run queue
 void __nc_runq_push(nc_green_thread* g) {
     g->run_next = NULL;
+    sched_ensure_init();
+    SCHED_LOCK();
     if (run_tail) {
         run_tail->run_next = g;
     } else {
         run_head = g;
     }
     run_tail = g;
+    SCHED_SIGNAL();
+    SCHED_UNLOCK();
 }
 
 nc_green_thread* __nc_runq_pop(void) {
+    // caller holds SCHED_LOCK
     nc_green_thread* g = run_head;
     if (g) {
         run_head = g->run_next;
@@ -815,44 +874,157 @@ nc_green_thread* __nc_runq_pop(void) {
 }
 
 int __nc_runq_empty(void) {
+    // caller holds SCHED_LOCK
     return run_head == NULL;
 }
 
 void __nc_g_yield(void) {
-    nc_green_thread* g = current_g;
+    if (!current_worker || !current_worker->current_g) {
+        fprintf(stderr, "__nc_g_yield: called outside scheduler\n");
+        abort();
+    }
+    nc_worker* w = current_worker;
+    nc_green_thread* g = w->current_g;
     g->state = G_RUNNABLE;
     __nc_runq_push(g);
-    __nc_g_switch(g, sched_g);
+    __nc_g_switch(g, &w->sched_g);
 }
 
 void __nc_g_exit(void) {
-    if (current_g && sched_g) {
-        nc_green_thread* g = current_g;
-        g->state = G_DEAD;
-        __nc_g_switch(g, sched_g);
-        abort(); // unreachable
+    if (!current_worker || !current_worker->current_g) {
+        // no scheduler — exit process (Phase 2 standalone test path)
+        exit(0);
     }
-    // no scheduler — exit process (Phase 2 standalone test path)
-    exit(0);
+    nc_worker* w = current_worker;
+    nc_green_thread* g = w->current_g;
+    g->state = G_DEAD;
+    __nc_g_switch(g, &w->sched_g);
+    abort(); // unreachable
+}
+
+static void worker_loop(void* arg) {
+    nc_worker* w = (nc_worker*)arg;
+    current_worker = w;
+
+    while (1) {
+        SCHED_LOCK();
+
+        nc_green_thread* g = __nc_runq_pop();
+        if (g) {
+            SCHED_UNLOCK();
+            w->current_g = g;
+            g->state = G_RUNNING;
+            __nc_g_switch(&w->sched_g, g);
+            w->current_g = NULL;
+
+            if (g->state == G_DEAD) {
+                __nc_g_free(g);
+            }
+            continue;
+        }
+
+        // run queue empty
+        if (!sched.running) {
+            sched.live_workers--;
+            SCHED_UNLOCK();
+            return;
+        }
+        SCHED_WAIT();
+        SCHED_UNLOCK();
+    }
+}
+
+#ifdef _WIN32
+static unsigned __stdcall worker_thread(void* arg) {
+    worker_loop(arg);
+    return 0;
+}
+#else
+static void* worker_thread(void* arg) {
+    worker_loop(arg);
+    return NULL;
+}
+#endif
+
+void __nc_scheduler_init(int num_workers) {
+#ifdef _WIN32
+    InitializeCriticalSection(&sched.cs);
+    InitializeConditionVariable(&sched.cv);
+#endif
+    sched.running = 1;
+    sched.live_workers = num_workers;
+
+    for (int i = 0; i < num_workers; i++) {
+        nc_worker* w = (nc_worker*)malloc(sizeof(nc_worker));
+        if (!w) abort();
+        memset(w, 0, sizeof(*w));
+        w->id = i;
+
+#ifdef _WIN32
+        HANDLE h = (HANDLE)_beginthreadex(NULL, 0, worker_thread, w, 0, NULL);
+        if (!h) abort();
+        CloseHandle(h);
+#else
+        pthread_t t;
+        if (pthread_create(&t, NULL, worker_thread, w) != 0) abort();
+        pthread_detach(t);
+#endif
+    }
 }
 
 void __nc_scheduler_run(void) {
-    // save scheduler context on the C stack
-    nc_green_thread scheduler_root = {0};
-    sched_g = &scheduler_root;
+    // Phase 3a compatibility: run scheduler inline on calling thread
+    sched_ensure_init();
+    nc_worker w = {0};
+    current_worker = &w;
+    sched.running = 1;
 
     while (1) {
-        nc_green_thread* next = __nc_runq_pop();
-        if (!next) return;
+        nc_green_thread* g = __nc_runq_pop();
+        if (!g) break;
 
-        current_g = next;
-        next->state = G_RUNNING;
-        __nc_g_switch(sched_g, next);
-        current_g = NULL;
+        w.current_g = g;
+        g->state = G_RUNNING;
+        __nc_g_switch(&w.sched_g, g);
+        w.current_g = NULL;
 
-        // G returned from switch — either yielded or exited
-        if (next->state == G_DEAD) {
-            __nc_g_free(next);
+        if (g->state == G_DEAD) {
+            __nc_g_free(g);
         }
     }
+
+    current_worker = NULL;
+}
+
+void __nc_scheduler_shutdown(void) {
+    SCHED_LOCK();
+    sched.running = 0;
+    // broadcast all workers
+#ifdef _WIN32
+    WakeAllConditionVariable(&sched.cv);
+#else
+    pthread_cond_broadcast(&sched.cv);
+#endif
+    SCHED_UNLOCK();
+
+    // spin-wait for workers to exit
+    while (1) {
+        SCHED_LOCK();
+        int alive = sched.live_workers;
+        SCHED_UNLOCK();
+        if (alive == 0) break;
+        // yield CPU to let workers run
+#ifdef _WIN32
+        Sleep(0);
+#else
+        sched_yield();
+#endif
+    }
+
+#ifdef _WIN32
+    DeleteCriticalSection(&sched.cs);
+#else
+    pthread_mutex_destroy(&sched.mu);
+    pthread_cond_destroy(&sched.cv);
+#endif
 }

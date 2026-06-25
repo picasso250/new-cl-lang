@@ -79,7 +79,10 @@ int  __nc_runq_empty(void);
 
 void __nc_g_yield(void);
 void __nc_g_exit(void);
+
+void __nc_scheduler_init(int num_workers);
 void __nc_scheduler_run(void);
+void __nc_scheduler_shutdown(void);
 
 // ── existing types ──────────────────────────────────────────
 
