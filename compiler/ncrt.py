@@ -12,7 +12,11 @@ ROOT_DIR = os.path.dirname(os.path.dirname(__file__))
 RUNTIME_DIR = os.path.join(ROOT_DIR, "runtime")
 NCRT_C = os.path.join(RUNTIME_DIR, "ncrt.c")
 NCRT_H = os.path.join(RUNTIME_DIR, "ncrt.h")
-NCRT_SWITCH_S = os.path.join(RUNTIME_DIR, "ncrt_switch_win64.S")
+NCRT_SWITCH_DIR = RUNTIME_DIR
+_SWITCH_FILE: dict[str, str] = {
+    "windows-x64": "ncrt_switch_win64.S",
+    # linux-x64: ncrt_switch_sysv.S — not implemented yet
+}
 NCRT_CACHE_DIR = os.path.join(tempfile.gettempdir(), "nc-ncrt-cache")
 SUPPORT_CACHE_DIR = os.path.join(tempfile.gettempdir(), "nc-support-c-cache")
 _NCRT_CACHE: dict[str, str] = {}
@@ -20,10 +24,17 @@ _SWITCH_CACHE: dict[str, str] = {}
 _SUPPORT_CACHE: dict[str, str] = {}
 
 
+def _switch_file(target: TargetSpec) -> str:
+    name = _SWITCH_FILE.get(target.name)
+    if not name:
+        raise RuntimeError(f"green thread switch assembly not implemented for target '{target.name}'")
+    return os.path.join(NCRT_SWITCH_DIR, name)
+
+
 def _ncrt_cache_key(target: TargetSpec) -> str:
     digest = hashlib.sha256()
     digest.update(target.name.encode("utf-8"))
-    for path in (NCRT_C, NCRT_H, NCRT_SWITCH_S):
+    for path in (NCRT_C, NCRT_H, _switch_file(target)):
         with open(path, "rb") as f:
             digest.update(f.read())
     return digest.hexdigest()
@@ -62,12 +73,13 @@ def _cached_switch_obj(target: TargetSpec) -> str:
     if cached and os.path.exists(cached):
         return cached
 
+    switch_path = _switch_file(target)
     os.makedirs(NCRT_CACHE_DIR, exist_ok=True)
     obj_path = os.path.join(NCRT_CACHE_DIR, f"ncrt-switch-{target.name}-{key}{target.object_ext}")
     if not os.path.exists(obj_path):
         tmp_path = os.path.join(NCRT_CACHE_DIR, f"ncrt-switch-{target.name}-{key}.{os.getpid()}.{uuid.uuid4().hex}.tmp{target.object_ext}")
         result = subprocess.run(
-            ["gcc", "-c", NCRT_SWITCH_S, "-o", tmp_path],
+            ["gcc", "-c", switch_path, "-o", tmp_path],
             capture_output=True,
             text=True,
         )

@@ -110,7 +110,7 @@ def cmd_build(args: list[str]):
     sources = _read_sources(args)
     if keep_objs:
         program, link_libs, support_c_sources, module_names = compile_nc_sources_to_program_with_libs(sources, target_name=target_name)
-        manifest_path, obj_paths, _ncrt_obj, exe_path = build_llvm_module_objects(
+        manifest_path, obj_paths, _ncrt_objs, exe_path = build_llvm_module_objects(
             program,
             module_names,
             "build",

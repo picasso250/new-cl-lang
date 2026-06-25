@@ -87,5 +87,7 @@ __nc_g_entry_trampoline:
     call    rax                     # entry_fn(entry_arg)
     add     rsp, 32
     # Phase 3+: __nc_g_exit — for now, exit process
+    sub     rsp, 32
     mov     ecx, 0
     call    exit
+    # unreachable

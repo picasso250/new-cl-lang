@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <stddef.h>
 #include <math.h>
 #include <sys/stat.h>
 #ifdef _WIN32
@@ -632,6 +633,21 @@ int64_t __nc_map_next(nc_map* m, int64_t start, void* key_out, void* value_out) 
 
 // ── green thread stack ─────────────────────────────────────
 
+// Assembly offset guard — must stay in sync with ncrt_switch_win64.S
+// These are verified at compile time.
+_Static_assert(offsetof(nc_green_thread, rsp)       == 24,  "rsp offset");
+_Static_assert(offsetof(nc_green_thread, rbx)       == 48,  "rbx offset");
+_Static_assert(offsetof(nc_green_thread, rbp)       == 56,  "rbp offset");
+_Static_assert(offsetof(nc_green_thread, rdi)       == 64,  "rdi offset");
+_Static_assert(offsetof(nc_green_thread, rsi)       == 72,  "rsi offset");
+_Static_assert(offsetof(nc_green_thread, r12)       == 80,  "r12 offset");
+_Static_assert(offsetof(nc_green_thread, r13)       == 88,  "r13 offset");
+_Static_assert(offsetof(nc_green_thread, r14)       == 96,  "r14 offset");
+_Static_assert(offsetof(nc_green_thread, r15)       == 104, "r15 offset");
+_Static_assert(offsetof(nc_green_thread, xmm_save)  == 112, "xmm_save offset");
+_Static_assert(offsetof(nc_green_thread, entry_fn)  == 296, "entry_fn offset");
+_Static_assert(offsetof(nc_green_thread, entry_arg) == 304, "entry_arg offset");
+
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -750,11 +766,13 @@ void __nc_g_init_stack(nc_green_thread* g) {
     // Layout (stack grows downward from stack_top):
     //   [stack_top - 48]  return address → __nc_g_entry_trampoline
     //   [stack_top - 40]  G pointer (trampoline will pop into first arg reg)
-    //   [stack_top - 8]   top of shadow/call space for entry_fn call
+    //   [stack_top - 8]   top of 32-byte reserved area (padding for alignment;
+    //                     the trampoline allocates its own shadow space before
+    //                     calling entry_fn)
 
     char* sp = (char*)g->stack_top;
 
-    // call space (match ABI: 32B Win64 shadow, or SysV alignment)
+    // reserved area (32 bytes — not entry_fn shadow; trampoline handles that)
     sp -= 32;
     memset(sp, 0, 32);
 
