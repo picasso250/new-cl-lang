@@ -335,6 +335,15 @@ class Defer(Node):
         return f"Defer({self.body})"
 
 
+class SpawnStmt(Node):
+    """spawn fun() { ... }"""
+    def __init__(self, func_expr):
+        self.func_expr = func_expr
+
+    def __repr__(self):
+        return f"Spawn({self.func_expr})"
+
+
 class TryStatement(Node):
     """try name = call() { ok } else err_name { err }"""
     def __init__(self, call, success_block: Block, success_name: str | None = None,

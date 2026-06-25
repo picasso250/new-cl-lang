@@ -108,6 +108,8 @@ class Parser:
             return self._parse_try()
         if t.kind == TokenKind.DEFER:
             return self._parse_defer()
+        if t.kind == TokenKind.SPAWN:
+            return self._parse_spawn()
         if t.kind == TokenKind.TYPE:
             raise ParseError("type alias is only allowed at top level")
         if t.kind == TokenKind.BREAK:
@@ -386,6 +388,17 @@ class Parser:
         start = self.advance()
         body = self._parse_block()
         return self.span(Defer(body), start)
+
+    def _parse_spawn(self):
+        start = self.advance()  # consume 'spawn'
+        from compiler.ast import SpawnStmt
+        t = self.peek()
+        if t.kind != TokenKind.FUN:
+            raise ParseError(f"spawn must be followed by a function expression, got {t.kind}")
+        func_start = self.advance()  # consume 'fun'
+        func = self._parse_function_expr(func_start)
+        self.match(TokenKind.SEMI)
+        return self.span(SpawnStmt(func), start)
 
     def _parse_try(self):
         start = self.advance()

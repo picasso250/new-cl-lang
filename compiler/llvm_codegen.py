@@ -23,7 +23,7 @@ from compiler.ast import (
     Defer, ExternBlock, ExpressionStatement, EnumDecl, EnumRef, FieldAccess, FloatLiteral, FunctionCall,
     FunctionExpr, GenericFunctionValue, ErrReturn, FallibleOp,
     ForIn, FunctionDeclaration, Identifier, IfExpr, IfaceDecl, ImportDecl, IndexAccess, IntegerLiteral,
-    MapLiteral, MatchExpr, MethodCall, NilLiteral, MagicConst, Return, SizeOfType, SliceExpr, SliceLiteral, StringLiteral, InterpolatedString, RuneLiteral, StructDecl,
+    MapLiteral, MatchExpr, MethodCall, NilLiteral, MagicConst, Return, SizeOfType, SliceExpr, SliceLiteral, SpawnStmt, StringLiteral, InterpolatedString, RuneLiteral, StructDecl,
     StructLiteral, TryStatement, UnaryOp, VariableDeclaration, ForCondition, ErrorHandlerExpr, ErrorMatchExpr,
 )
 from compiler.llvm_layout import (
@@ -88,6 +88,9 @@ def _collect_llvm_inputs(program) -> _LLVMInputs:
                 collect_top_level(stmt.body.statements)
             elif isinstance(stmt, Defer):
                 collect_top_level(stmt.body.statements)
+            elif isinstance(stmt, SpawnStmt):
+                collect_top_level(stmt.func_expr.body.statements)
+                collect_closure_expr(stmt.func_expr)
 
     def collect_closure_expr(node):
         if isinstance(node, FunctionExpr):
@@ -313,6 +316,9 @@ class LLVMCodegen:
             fn_module = getattr(getattr(fn, "source_file", None), "module_name", None)
             if not getattr(fn, "is_extern", False) and (emit_module is None or fn_module == emit_module):
                 self.emit_function(fn)
+
+        self._inject_scheduler_calls()
+
         return str(self.module)
 
     def register_enums(self, enums: list[EnumDecl]):
@@ -588,7 +594,9 @@ class LLVMCodegen:
                 raise RuntimeError("break outside loop")
             self.builder.branch(self.break_stack[-1])
             return
-        raise NotImplementedError(f"LLVM backend does not support statement: {type(stmt).__name__}")
+        if isinstance(stmt, SpawnStmt):
+            self.emit_spawn(stmt)
+            return
 
     def emit_try_statement(self, stmt: TryStatement):
         status, value_slot, error_slot, success_type = self.emit_fallible_call_raw(stmt.call)
@@ -1283,6 +1291,53 @@ class LLVMCodegen:
 
     def emit_function_expr(self, node: FunctionExpr):
         return self.function_emitter.emit_function_expr(node)
+
+    def emit_spawn(self, node: SpawnStmt):
+        func = node.func_expr
+        closure_id = getattr(func, "closure_id", None)
+        if closure_id is None:
+            raise RuntimeError("spawn closure not registered")
+        fn_ptr = self.module.globals[self.function_emitter.closure_symbol(func)]
+        env_ptr = self.function_emitter.emit_closure_env(func)
+        void_ty = ir.VoidType()
+        ptr_ty = ir.PointerType(ir.IntType(8))
+        fn_spawn_ty = ir.FunctionType(void_ty, [ptr_ty, ptr_ty])
+        fn_spawn = self.module.globals.get("__nc_spawn")
+        if fn_spawn is None:
+            fn_spawn = ir.Function(self.module, fn_spawn_ty, "__nc_spawn")
+        fn_void = self.builder.bitcast(fn_ptr, ptr_ty, name="spawn.fn")
+        self.builder.call(fn_spawn, [fn_void, env_ptr])
+
+    def _inject_scheduler_calls(self):
+        void_ty = ir.VoidType()
+        i32_ty = ir.IntType(32)
+        user_main = self.module.globals.get("main")
+        if not user_main or not isinstance(user_main, ir.Function):
+            return
+        for name, ret_ty, arg_tys in [
+            ("__nc_scheduler_init", void_ty, [i32_ty]),
+            ("__nc_scheduler_shutdown", void_ty, []),
+        ]:
+            if name not in self.module.globals:
+                ir.Function(self.module, ir.FunctionType(ret_ty, arg_tys), name)
+        init_fn = self.module.globals["__nc_scheduler_init"]
+        shutdown_fn = self.module.globals["__nc_scheduler_shutdown"]
+        saved_builder = self.builder
+        saved_func = self.func
+        entry_block = user_main.blocks[0]
+        self.builder = ir.IRBuilder(entry_block)
+        first_inst = entry_block.instructions[0] if entry_block.instructions else None
+        if first_inst:
+            self.builder.position_before(first_inst)
+        self.builder.call(init_fn, [ir.Constant(i32_ty, 4)])
+        for block in user_main.blocks:
+            term = block.terminator
+            if isinstance(term, ir.Ret):
+                self.builder = ir.IRBuilder(block)
+                self.builder.position_before(term)
+                self.builder.call(shutdown_fn, [])
+        self.builder = saved_builder
+        self.func = saved_func
 
     def emit_generic_function_value(self, node: GenericFunctionValue):
         return self.function_emitter.emit_generic_function_value(node)

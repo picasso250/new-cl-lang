@@ -24,7 +24,7 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         EnumDecl, EnumRef, ForIn,
         IfExpr, BlockExpr, MatchExpr, IntegerLiteral, FloatLiteral, StringLiteral, InterpolatedString, RuneLiteral, BoolLiteral, NilLiteral, MagicConst, BinaryOp, UnaryOp, FunctionCall, SizeOfType, Identifier,
         ExternBlock, FunctionExpr, GenericFunctionValue,
-        ArrayLiteral, SliceLiteral, MapLiteral, IndexAccess, SliceExpr, MethodCall, Defer, Break, FallibleOp,
+        ArrayLiteral, SliceLiteral, MapLiteral, IndexAccess, SliceExpr, MethodCall, Defer, SpawnStmt, Break, FallibleOp,
         ErrorHandlerExpr, ErrorMatchExpr
     )
 
@@ -1524,6 +1524,18 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 defer_depth += 1
                 walk_stmts(stmt.body.statements)
                 defer_depth -= 1
+            elif isinstance(stmt, SpawnStmt):
+                func = stmt.func_expr
+                if not isinstance(func, FunctionExpr):
+                    fail("spawn must be followed by a function expression", stmt)
+                # typecheck the closure
+                walk_expr(func)
+                # verify zero params, void return
+                if func.params:
+                    fail("spawn function must take no parameters", stmt)
+                ft = getattr(func, 'type', None)
+                if ft and isinstance(ft, str) and not ft.startswith("fun()"):
+                    fail(f"spawn function must return void, got {ft}", stmt)
             elif isinstance(stmt, Break):
                 if break_depth <= 0:
                     fail("break outside loop", stmt)

@@ -940,6 +940,13 @@ void __nc_g_exit(void) {
     abort();
 }
 
+void __nc_spawn(void (*fn)(void*), void* env) {
+    nc_green_thread* g = __nc_g_alloc(fn, env);
+    if (!g) abort();
+    __nc_g_init_stack(g);
+    __nc_scheduler_submit(g);
+}
+
 static void worker_loop(void* arg) {
     nc_worker* w = (nc_worker*)arg;
     current_worker = w;

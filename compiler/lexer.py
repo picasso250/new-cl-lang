@@ -32,6 +32,7 @@ class TokenKind(Enum):
     NIL = auto()
     IMPORT = auto()
     EXTERN = auto()
+    SPAWN = auto()
     # 运算符
     PLUS = auto()
     MINUS = auto()
@@ -113,6 +114,7 @@ KEYWORDS = {
     "nil": TokenKind.NIL,
     "import": TokenKind.IMPORT,
     "extern": TokenKind.EXTERN,
+    "spawn": TokenKind.SPAWN,
     "type": TokenKind.TYPE,
     "true": TokenKind.BOOL,
     "false": TokenKind.BOOL,
