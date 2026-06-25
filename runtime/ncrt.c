@@ -741,3 +741,30 @@ void __nc_g_free(nc_green_thread* g) {
 }
 
 #endif
+
+// ── common (platform-independent) ──────────────────────────
+
+void __nc_g_init_stack(nc_green_thread* g) {
+    // Build initial stack frame so that __nc_g_switch rets into the trampoline.
+    //
+    // Layout (stack grows downward from stack_top):
+    //   [stack_top - 48]  return address → __nc_g_entry_trampoline
+    //   [stack_top - 40]  G pointer (trampoline will pop into first arg reg)
+    //   [stack_top - 8]   top of shadow/call space for entry_fn call
+
+    char* sp = (char*)g->stack_top;
+
+    // call space (match ABI: 32B Win64 shadow, or SysV alignment)
+    sp -= 32;
+    memset(sp, 0, 32);
+
+    // G pointer
+    sp -= 8;
+    *(void**)sp = g;
+
+    // return address
+    sp -= 8;
+    *(void**)sp = (void*)__nc_g_entry_trampoline;
+
+    g->rsp = sp;
+}

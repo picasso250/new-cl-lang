@@ -126,7 +126,7 @@ def cmd_build(args: list[str]):
         print(exe_path)
         return
     llvm_ir, link_libs, support_c_sources = compile_nc_sources_with_libs(sources, target_name=target_name)
-    ll_path, obj_path, exe_path = build_llvm_ir(llvm_ir, "build", "main", link_libs, support_c_sources, target_name=target_name)
+    ll_path, obj_path, _ncrt, exe_path = build_llvm_ir(llvm_ir, "build", "main", link_libs, support_c_sources, target_name=target_name)
     print(ll_path)
     print(obj_path)
     print(exe_path)

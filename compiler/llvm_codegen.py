@@ -33,7 +33,7 @@ from compiler.llvm_layout import (
     UNSIGNED_INT_TYPES, llvm_type,
 )
 from compiler.names import ABI_VERSION, module_object_label, safe_user_ident
-from compiler.ncrt import build_ncrt_obj, build_support_c_objs
+from compiler.ncrt import build_ncrt_objs, build_support_c_objs
 from compiler.llvm_control_expr import ControlExprEmitter
 from compiler.llvm_function import FunctionEmitter
 from compiler.llvm_iface import IfaceEmitter
@@ -1704,26 +1704,26 @@ def build_llvm_ir(
     link_libs: list[str] | None = None,
     support_c_sources: list[str] | None = None,
     target_name: str | None = None,
-) -> tuple[str, str, str]:
+) -> tuple[str, list[str], list[str], str]:
     target_spec = get_target(target_name)
     os.makedirs(out_dir, exist_ok=True)
     ll_path = os.path.join(out_dir, f"{name}.ll")
     obj_path = os.path.join(out_dir, f"{name}{target_spec.object_ext}")
     exe_path = os.path.join(out_dir, f"{name}{target_spec.exe_ext}")
-    ncrt_obj = build_ncrt_obj(out_dir, target_spec.name)
+    ncrt_objs = build_ncrt_objs(out_dir, target_spec.name)
     support_objs = build_support_c_objs(out_dir, support_c_sources, target_spec.name)
     with open(ll_path, "w", encoding="utf-8") as f:
         f.write(llvm_ir)
     with open(obj_path, "wb") as f:
         f.write(object_from_llvm_ir(llvm_ir, target_spec.name))
-    link_inputs = [obj_path, ncrt_obj, *support_objs]
+    link_inputs = [obj_path, *ncrt_objs, *support_objs]
     hosted_link_args = target_spec.hosted_runtime_link_args()
     explicit_link_args = [target_spec.resolve_link_lib(lib) for lib in list(link_libs or [])]
     link_cmd = ["gcc", *link_inputs, "-o", exe_path, *hosted_link_args, *explicit_link_args]
     result = subprocess.run(link_cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"LLVM object link failed:\n{result.stderr}")
-    return ll_path, obj_path, exe_path
+    return ll_path, obj_path, ncrt_objs, exe_path
 
 
 def build_llvm_module_objects(
@@ -1772,11 +1772,11 @@ def build_llvm_module_objects(
             "cache_hit": cache_hit,
         })
     exe_path = os.path.join(out_dir, f"{name}{target_spec.exe_ext}")
-    ncrt_obj = build_ncrt_obj(out_dir, target_spec.name)
+    ncrt_objs = build_ncrt_objs(out_dir, target_spec.name)
     support_objs = build_support_c_objs(out_dir, support_c_sources, target_spec.name)
     hosted_link_args = target_spec.hosted_runtime_link_args()
     explicit_link_args = [target_spec.resolve_link_lib(lib) for lib in list(link_libs or [])]
-    link_inputs = [*module_objs, ncrt_obj, *support_objs]
+    link_inputs = [*module_objs, *ncrt_objs, *support_objs]
     link_cmd = ["gcc", *link_inputs, "-o", exe_path, *hosted_link_args, *explicit_link_args]
     result = subprocess.run(link_cmd, capture_output=True, text=True)
     if result.returncode != 0:
@@ -1787,7 +1787,7 @@ def build_llvm_module_objects(
         "abi_version": ABI_VERSION,
         "target": target_spec.name,
         "modules": module_entries,
-        "ncrt_object": ncrt_obj,
+        "ncrt_objects": ncrt_objs,
         "support_objects": support_objs,
         "extern_libs": list(link_libs or []),
         "link_inputs": link_inputs,
@@ -1802,7 +1802,7 @@ def build_llvm_module_objects(
                 os.remove(entry["ir"])
             except OSError:
                 pass
-    return manifest_path, module_objs, ncrt_obj, exe_path
+    return manifest_path, module_objs, ncrt_objs, exe_path
 
 
 def _walk_ast(node, visit):
@@ -1900,7 +1900,7 @@ def run_llvm_ir(
     target_name: str | None = None,
 ) -> tuple[str, str, int]:
     with tempfile.TemporaryDirectory() as tmpdir:
-        _ll, _obj, exe = build_llvm_ir(llvm_ir, tmpdir, "out", link_libs, support_c_sources, target_name=target_name)
+        _ll, _obj, _ncrt, exe = build_llvm_ir(llvm_ir, tmpdir, "out", link_libs, support_c_sources, target_name=target_name)
         run_env = os.environ.copy()
         if env is not None:
             run_env.update(env)

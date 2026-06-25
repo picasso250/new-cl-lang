@@ -12,16 +12,18 @@ ROOT_DIR = os.path.dirname(os.path.dirname(__file__))
 RUNTIME_DIR = os.path.join(ROOT_DIR, "runtime")
 NCRT_C = os.path.join(RUNTIME_DIR, "ncrt.c")
 NCRT_H = os.path.join(RUNTIME_DIR, "ncrt.h")
+NCRT_SWITCH_S = os.path.join(RUNTIME_DIR, "ncrt_switch_win64.S")
 NCRT_CACHE_DIR = os.path.join(tempfile.gettempdir(), "nc-ncrt-cache")
 SUPPORT_CACHE_DIR = os.path.join(tempfile.gettempdir(), "nc-support-c-cache")
 _NCRT_CACHE: dict[str, str] = {}
+_SWITCH_CACHE: dict[str, str] = {}
 _SUPPORT_CACHE: dict[str, str] = {}
 
 
 def _ncrt_cache_key(target: TargetSpec) -> str:
     digest = hashlib.sha256()
     digest.update(target.name.encode("utf-8"))
-    for path in (NCRT_C, NCRT_H):
+    for path in (NCRT_C, NCRT_H, NCRT_SWITCH_S):
         with open(path, "rb") as f:
             digest.update(f.read())
     return digest.hexdigest()
@@ -54,12 +56,44 @@ def _cached_ncrt_obj(target: TargetSpec) -> str:
     return obj_path
 
 
-def build_ncrt_obj(out_dir: str, target_name: str | None = None) -> str:
+def _cached_switch_obj(target: TargetSpec) -> str:
+    key = _ncrt_cache_key(target)
+    cached = _SWITCH_CACHE.get(key)
+    if cached and os.path.exists(cached):
+        return cached
+
+    os.makedirs(NCRT_CACHE_DIR, exist_ok=True)
+    obj_path = os.path.join(NCRT_CACHE_DIR, f"ncrt-switch-{target.name}-{key}{target.object_ext}")
+    if not os.path.exists(obj_path):
+        tmp_path = os.path.join(NCRT_CACHE_DIR, f"ncrt-switch-{target.name}-{key}.{os.getpid()}.{uuid.uuid4().hex}.tmp{target.object_ext}")
+        result = subprocess.run(
+            ["gcc", "-c", NCRT_SWITCH_S, "-o", tmp_path],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            raise RuntimeError(f"ncrt switch assembly compilation failed:\n{result.stderr}")
+        if os.path.exists(obj_path):
+            os.remove(tmp_path)
+        else:
+            os.replace(tmp_path, obj_path)
+    _SWITCH_CACHE[key] = obj_path
+    return obj_path
+
+
+def build_ncrt_objs(out_dir: str, target_name: str | None = None) -> list[str]:
     target = get_target(target_name)
     os.makedirs(out_dir, exist_ok=True)
-    obj_path = os.path.join(out_dir, f"ncrt{target.object_ext}")
-    shutil.copyfile(_cached_ncrt_obj(target), obj_path)
-    return obj_path
+
+    ncrt_obj = os.path.join(out_dir, f"ncrt{target.object_ext}")
+    shutil.copyfile(_cached_ncrt_obj(target), ncrt_obj)
+
+    switch_obj = os.path.join(out_dir, f"ncrt_switch{target.object_ext}")
+    shutil.copyfile(_cached_switch_obj(target), switch_obj)
+
+    return [ncrt_obj, switch_obj]
 
 
 def _support_cache_key(label: str, c_path: str, include_dirs: list[str], target: TargetSpec) -> str:

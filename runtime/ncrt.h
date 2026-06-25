@@ -66,6 +66,10 @@ typedef struct nc_green_thread {
 
 nc_green_thread* __nc_g_alloc(void (*fn)(void*), void* arg);
 void             __nc_g_free(nc_green_thread* g);
+void             __nc_g_init_stack(nc_green_thread* g);
+
+void __nc_g_switch(nc_green_thread* current, nc_green_thread* next);
+void __nc_g_entry_trampoline(void);
 
 // ── existing types ──────────────────────────────────────────
 

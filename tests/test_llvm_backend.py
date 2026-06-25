@@ -164,7 +164,7 @@ fun main() {{
 
 def test_llvm_build_writes_ir_obj_and_exe(tmp_path):
     llvm_ir = compile_nc_to_llvm_ir("import io\nfun main() { io.println(42) }")
-    ll_path, obj_path, exe_path = build_llvm_ir(llvm_ir, str(tmp_path), "main")
+    ll_path, obj_path, _ncrt, exe_path = build_llvm_ir(llvm_ir, str(tmp_path), "main")
     assert os.path.exists(ll_path)
     assert os.path.exists(obj_path)
     ext = ".obj" if sys.platform.startswith("win") else ".o"
@@ -190,11 +190,11 @@ def test_llvm_build_uses_hosted_c_runtime_link_path(tmp_path, monkeypatch):
         return Result()
 
     monkeypatch.setattr(llvm_codegen, "object_from_llvm_ir", lambda llvm_ir, target_name=None: b"obj")
-    monkeypatch.setattr(llvm_codegen, "build_ncrt_obj", lambda out_dir, target_name=None: os.path.join(out_dir, "ncrt.o"))
+    monkeypatch.setattr(llvm_codegen, "build_ncrt_objs", lambda out_dir, target_name=None: [os.path.join(out_dir, "ncrt.o")])
     monkeypatch.setattr(llvm_codegen, "build_support_c_objs", lambda out_dir, sources, target_name=None: [])
     monkeypatch.setattr(llvm_codegen.subprocess, "run", fake_run)
 
-    _ll_path, _obj_path, exe_path = build_llvm_ir(
+    _ll_path, _obj_path, _ncrt, exe_path = build_llvm_ir(
         "define i32 @main() { ret i32 0 }",
         str(tmp_path),
         "main",
@@ -222,7 +222,7 @@ def test_llvm_build_links_fs_support_when_stdlib_fs_is_imported(tmp_path):
     llvm_ir, link_libs, support_c_sources = compile_nc_sources_with_libs([
         ("<memory>", f'import fs\nfun main() {{ fs.write_file("{data_path}", "ok")!! }}')
     ])
-    _ll_path, _obj_path, exe_path = build_llvm_ir(llvm_ir, str(tmp_path / "build"), "main", link_libs, support_c_sources)
+    _ll_path, _obj_path, _ncrt, exe_path = build_llvm_ir(llvm_ir, str(tmp_path / "build"), "main", link_libs, support_c_sources)
     ext = ".obj" if sys.platform.startswith("win") else ".o"
     assert os.path.exists(tmp_path / "build" / f"ncrt{ext}")
     assert not os.path.exists(tmp_path / "build" / f"ncfs{ext}")
