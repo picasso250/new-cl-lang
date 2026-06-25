@@ -214,12 +214,23 @@ class FunctionEmitter:
         ) = saved_gc
 
     def emit_function_body(self, fn: FunctionDeclaration):
-        self.emit_callable_body(fn.body, fn.return_type or "void", f"function {fn.name}", is_main=fn.name == "main")
+        self.emit_callable_body(fn.body, fn.return_type or "void", f"function {fn.name}",
+                                is_main=fn.name == "main", is_extern=getattr(fn, "is_extern", False))
 
-    def emit_callable_body(self, body: Block, return_type: str, name: str, is_main: bool = False):
+    def emit_callable_body(self, body: Block, return_type: str, name: str, is_main: bool = False,
+                           is_extern: bool = False):
         prev_return_type, prev_is_main = self.ctx.current_return_type, self.ctx.current_is_main
         self.ctx.current_return_type = return_type
         self.ctx.current_is_main = is_main
+
+        # Phase 8: cooperative time-slice yield at function entry
+        if not is_extern:
+            fn_yield_ty = ir.FunctionType(ir.VoidType(), [])
+            fn_yield = self.ctx.module.globals.get("__nc_g_check_yield")
+            if fn_yield is None:
+                fn_yield = ir.Function(self.ctx.module, fn_yield_ty, "__nc_g_check_yield")
+            self.ctx.builder.call(fn_yield, [])
+
         stmts = body.statements
         if return_type != "void" and stmts and isinstance(stmts[-1], ExpressionStatement):
             for stmt in stmts[:-1]:

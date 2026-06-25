@@ -81,6 +81,7 @@ void __nc_scheduler_submit(nc_green_thread* g);  // first enqueue (live_g_count+
 int  __nc_runq_empty(void);
 
 void __nc_g_yield(void);
+void __nc_g_check_yield(void);   // Phase 8: time-slice check at function entry
 void __nc_g_exit(void);
 
 void __nc_scheduler_init(int num_workers);

@@ -951,6 +951,9 @@ int __nc_runq_empty(void) {
     return e;
 }
 
+// forward: used by __nc_g_check_yield
+static uint64_t nc_tick_ms(void);
+
 void __nc_g_yield(void) {
     if (!current_worker || !current_worker->current_g) {
         fprintf(stderr, "__nc_g_yield: called outside scheduler\n");
@@ -964,6 +967,16 @@ void __nc_g_yield(void) {
     SCHED_SIGNAL();
     SCHED_UNLOCK();
     __nc_g_switch(g, &w->sched_g);
+}
+
+// Phase 8: cooperative time-slice yield at function entry
+void __nc_g_check_yield(void) {
+    if (!current_worker || !current_worker->current_g) return;
+    nc_green_thread* g = current_worker->current_g;
+    if (nc_tick_ms() - g->start_ticks >= 10) {
+        g->start_ticks = nc_tick_ms();
+        __nc_g_yield();
+    }
 }
 
 static void g_finish_dead(nc_green_thread* g) {
@@ -1008,6 +1021,7 @@ static uint64_t timer_next_deadline_ms(void);
 static int  timer_has_pending(void);
 static uint64_t nc_tick_ms(void);
 void __nc_gc_do_collect(void);
+void __nc_g_check_yield(void);  // Phase 8: time-slice check
 
 static void worker_loop(void* arg) {
     nc_worker* w = (nc_worker*)arg;
@@ -1051,6 +1065,7 @@ static void worker_loop(void* arg) {
             SCHED_UNLOCK();
             w->current_g = g;
             g->state = G_RUNNING;
+            g->start_ticks = nc_tick_ms();
             __nc_g_switch(&w->sched_g, g);
             w->current_g = NULL;
 
@@ -1149,6 +1164,7 @@ void __nc_scheduler_run(void) {
 
         w.current_g = g;
         g->state = G_RUNNING;
+        g->start_ticks = nc_tick_ms();
         __nc_g_switch(&w.sched_g, g);
         w.current_g = NULL;
 
