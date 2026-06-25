@@ -1677,6 +1677,13 @@ def object_from_llvm_ir(llvm_ir: str, target_name: str | None = None) -> bytes:
     tm = target.create_target_machine(reloc="static")
     backing = binding.parse_assembly(llvm_ir)
     backing.verify()
+
+    # O2 optimization pass pipeline
+    pto = binding.PipelineTuningOptions(speed_level=2, size_level=0)
+    pb = binding.PassBuilder(tm, pto)
+    mpm = pb.getModulePassManager()
+    mpm.run(backing, pb)
+
     return tm.emit_object(backing)
 
 
