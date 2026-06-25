@@ -1257,10 +1257,16 @@ class LLVMCodegen:
         if getattr(fn_decl, "fallible", False):
             raise RuntimeError(f"fallible call {node.name} must be lowered through a fallible operator")
         fn = self.module.globals[self.function_symbol(fn_decl)]
-        coerced_args = [
-            self.emit_coerced_expr(arg, ptype)
-            for arg, (_pname, ptype) in zip(node.args, fn_decl.params)
-        ]
+        coerced_args = []
+        for arg, (_pname, ptype) in zip(node.args, fn_decl.params):
+            slice_elem = parse_slice_type(ptype)
+            if slice_elem is not None:
+                slice_val = self.emit_coerced_expr(arg, ptype)
+                coerced_args.append(self.builder.extract_value(slice_val, 0, name="call.slice.ptr"))
+                coerced_args.append(self.builder.extract_value(slice_val, 1, name="call.slice.len"))
+                coerced_args.append(self.builder.extract_value(slice_val, 2, name="call.slice.cap"))
+            else:
+                coerced_args.append(self.emit_coerced_expr(arg, ptype))
         return self.builder.call(fn, coerced_args)
 
     def emit_fallible_op(self, node: FallibleOp):

@@ -5,7 +5,7 @@ from compiler.llvm_context import CodegenContext
 from compiler.llvm_layout import ERROR_TYPE, I8PTR, llvm_type
 from compiler.names import abi_symbol, safe_user_ident
 from compiler.source_location import location_for_node
-from compiler.type_ref import parse_fn_type
+from compiler.type_ref import parse_fn_type, parse_slice_type
 
 
 class FunctionEmitter:
@@ -32,7 +32,16 @@ class FunctionEmitter:
             if (fn.return_type or "void") != "void":
                 args.append(llvm_type(fn.return_type).as_pointer())
             args.append(ERROR_TYPE.as_pointer())
-        args.extend([llvm_type(t) for _n, t in all_params])
+        slice_ptr_indices = []
+        for _n, t in all_params:
+            slice_elem = parse_slice_type(t)
+            if slice_elem is not None:
+                ptr_type = llvm_type(slice_elem).as_pointer()
+                args.append(ptr_type)
+                args.append(ir.IntType(64))
+                args.append(ir.IntType(64))
+            else:
+                args.append(llvm_type(t))
         fn_type = ir.FunctionType(ret, args)
         existing = self.ctx.module.globals.get(name)
         if existing is not None:
@@ -40,6 +49,23 @@ class FunctionEmitter:
                 raise RuntimeError(f"extern symbol '{name}' declared with incompatible ABI")
         else:
             self.ctx.module.globals[name] = ir.Function(self.ctx.module, fn_type, name=name)
+        llvm_fn_obj = self.ctx.module.globals[name]
+        arg_idx = 0
+        if llvm_fn_obj.name == "main":
+            arg_idx += 2
+        elif is_fallible:
+            if (fn.return_type or "void") != "void":
+                arg_idx += 1
+            arg_idx += 1
+        for _n, t in all_params:
+            slice_elem = parse_slice_type(t)
+            if slice_elem is not None:
+                slice_ptr_indices.append(arg_idx)
+                arg_idx += 3
+            else:
+                arg_idx += 1
+        for idx in slice_ptr_indices:
+            llvm_fn_obj.args[idx].add_attribute("noalias")
         self.ctx.fn_decls[name] = fn
         if not fn.receiver_name:
             self.ctx.fn_decls[fn.name] = fn
@@ -150,12 +176,33 @@ class FunctionEmitter:
             self.ctx.current_error_slot = llvm_args[0]
             self.ctx.root_slots_for_type(self.ctx.current_error_slot, "error")
             llvm_args = llvm_args[1:]
-        for arg, (param_name, param_type) in zip(llvm_args, all_params):
-            arg.name = safe_user_ident(param_name)
-            slot = self.ctx.alloca_at_entry(safe_user_ident(param_name), llvm_type(param_type))
-            self.ctx.builder.store(arg, slot)
-            self.ctx.vars[param_name] = (slot, param_type)
-            self.ctx.root_slots_for_type(slot, param_type)
+        arg_idx = 0
+        for param_name, param_type in all_params:
+            slice_elem = parse_slice_type(param_type)
+            if slice_elem is not None:
+                ptr_arg = llvm_args[arg_idx]
+                len_arg = llvm_args[arg_idx + 1]
+                cap_arg = llvm_args[arg_idx + 2]
+                arg_idx += 3
+                ptr_arg.name = safe_user_ident(f"{param_name}.ptr")
+                len_arg.name = safe_user_ident(f"{param_name}.len")
+                cap_arg.name = safe_user_ident(f"{param_name}.cap")
+                slot = self.ctx.alloca_at_entry(safe_user_ident(param_name), llvm_type(param_type))
+                slice_val = ir.Constant(llvm_type(param_type), ir.Undefined)
+                slice_val = self.ctx.builder.insert_value(slice_val, ptr_arg, [0], name=f"{safe_user_ident(param_name)}.ptr.ins")
+                slice_val = self.ctx.builder.insert_value(slice_val, len_arg, [1], name=f"{safe_user_ident(param_name)}.len.ins")
+                slice_val = self.ctx.builder.insert_value(slice_val, cap_arg, [2], name=f"{safe_user_ident(param_name)}.cap.ins")
+                self.ctx.builder.store(slice_val, slot)
+                self.ctx.vars[param_name] = (slot, param_type)
+                self.ctx.root_slots_for_type(slot, param_type)
+            else:
+                arg = llvm_args[arg_idx]
+                arg_idx += 1
+                arg.name = safe_user_ident(param_name)
+                slot = self.ctx.alloca_at_entry(safe_user_ident(param_name), llvm_type(param_type))
+                self.ctx.builder.store(arg, slot)
+                self.ctx.vars[param_name] = (slot, param_type)
+                self.ctx.root_slots_for_type(slot, param_type)
         if (fn.return_type or "void") != "void" and self.ctx.current_return_slot is None:
             self.ctx.current_return_slot = self.ctx.alloca_at_entry("__nc_ret", llvm_type(fn.return_type))
             self.ctx.root_slots_for_type(self.ctx.current_return_slot, fn.return_type)
@@ -289,10 +336,15 @@ class FunctionEmitter:
         if value_slot is not None:
             args.append(value_slot)
         args.append(error_slot)
-        args.extend([
-            self.ctx.emit_coerced_expr(arg, ptype)
-            for arg, (_pname, ptype) in zip(node.args, fn_decl.params)
-        ])
+        for arg, (_pname, ptype) in zip(node.args, fn_decl.params):
+            slice_elem = parse_slice_type(ptype)
+            if slice_elem is not None:
+                slice_val = self.ctx.emit_coerced_expr(arg, ptype)
+                args.append(self.ctx.builder.extract_value(slice_val, 0, name="fallible.call.slice.ptr"))
+                args.append(self.ctx.builder.extract_value(slice_val, 1, name="fallible.call.slice.len"))
+                args.append(self.ctx.builder.extract_value(slice_val, 2, name="fallible.call.slice.cap"))
+            else:
+                args.append(self.ctx.emit_coerced_expr(arg, ptype))
         status = self.ctx.builder.call(fn, args, name="fallible.status")
         return status, value_slot, error_slot, success_type
 
@@ -331,7 +383,20 @@ class FunctionEmitter:
         saved_builder = self.ctx.builder
         self.ctx.builder = ir.IRBuilder(block)
         target = self.ctx.module.globals[self.function_symbol(self.ctx.fn_decls[fn_name])]
-        result = self.ctx.builder.call(target, [arg for arg in thunk.args[1:]])
+        target_args = []
+        arg_idx = 1  # skip env ptr
+        for param_type in param_types:
+            slice_elem = parse_slice_type(param_type)
+            if slice_elem is not None:
+                slice_val = thunk.args[arg_idx]
+                arg_idx += 1
+                target_args.append(self.ctx.builder.extract_value(slice_val, 0, name="thunk.slice.ptr"))
+                target_args.append(self.ctx.builder.extract_value(slice_val, 1, name="thunk.slice.len"))
+                target_args.append(self.ctx.builder.extract_value(slice_val, 2, name="thunk.slice.cap"))
+            else:
+                target_args.append(thunk.args[arg_idx])
+                arg_idx += 1
+        result = self.ctx.builder.call(target, target_args)
         if ret_type == "void":
             self.ctx.builder.ret_void()
         else:

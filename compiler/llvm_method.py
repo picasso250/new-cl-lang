@@ -4,7 +4,7 @@ from compiler.ast import FieldAccess, Identifier, IndexAccess
 from compiler.llvm_context import CodegenContext
 from compiler.llvm_layout import I8PTR, IFACE_METHODS, llvm_type
 from compiler.names import safe_user_ident
-from compiler.type_ref import parse_map_type
+from compiler.type_ref import parse_map_type, parse_slice_type
 
 
 class MethodEmitter:
@@ -79,10 +79,16 @@ class MethodEmitter:
         fn_decl = self.ctx.fn_decls[name]
         if getattr(fn_decl, "fallible", False):
             raise RuntimeError(f"fallible method call {receiver_base}.{node.method} must be lowered through a fallible operator")
-        args = [self.emit_receiver_arg(node.obj, receiver_base)] + [
-            self.ctx.emit_coerced_expr(arg, ptype)
-            for arg, (_pname, ptype) in zip(node.args, fn_decl.params)
-        ]
+        args = [self.emit_receiver_arg(node.obj, receiver_base)]
+        for arg, (_pname, ptype) in zip(node.args, fn_decl.params):
+            slice_elem = parse_slice_type(ptype)
+            if slice_elem is not None:
+                slice_val = self.ctx.emit_coerced_expr(arg, ptype)
+                args.append(self.ctx.builder.extract_value(slice_val, 0, name="method.slice.ptr"))
+                args.append(self.ctx.builder.extract_value(slice_val, 1, name="method.slice.len"))
+                args.append(self.ctx.builder.extract_value(slice_val, 2, name="method.slice.cap"))
+            else:
+                args.append(self.ctx.emit_coerced_expr(arg, ptype))
         return self.ctx.builder.call(fn, args)
 
     def emit_fallible_method_call_raw(self, node):
@@ -101,10 +107,15 @@ class MethodEmitter:
             args.append(value_slot)
         args.append(error_slot)
         args.append(self.emit_receiver_arg(node.obj, receiver_base))
-        args.extend([
-            self.ctx.emit_coerced_expr(arg, ptype)
-            for arg, (_pname, ptype) in zip(node.args, fn_decl.params)
-        ])
+        for arg, (_pname, ptype) in zip(node.args, fn_decl.params):
+            slice_elem = parse_slice_type(ptype)
+            if slice_elem is not None:
+                slice_val = self.ctx.emit_coerced_expr(arg, ptype)
+                args.append(self.ctx.builder.extract_value(slice_val, 0, name="fallible.method.slice.ptr"))
+                args.append(self.ctx.builder.extract_value(slice_val, 1, name="fallible.method.slice.len"))
+                args.append(self.ctx.builder.extract_value(slice_val, 2, name="fallible.method.slice.cap"))
+            else:
+                args.append(self.ctx.emit_coerced_expr(arg, ptype))
         status = self.ctx.builder.call(fn, args, name="fallible.method.status")
         return status, value_slot, error_slot, success_type
 

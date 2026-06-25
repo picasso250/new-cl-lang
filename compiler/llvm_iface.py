@@ -7,7 +7,7 @@ from compiler.llvm_layout import (
     STRUCT_FIELD_INDEX, llvm_type,
 )
 from compiler.names import abi_symbol, safe_user_ident
-from compiler.type_ref import PointerType, format_type_ref, parse_type_ref
+from compiler.type_ref import PointerType, format_type_ref, parse_slice_type, parse_type_ref
 
 
 class IfaceEmitter:
@@ -141,7 +141,19 @@ class IfaceEmitter:
             )
             current_type = STRUCT_FIELDS[current_type][field_index][1]
         receiver = self.ctx.builder.bitcast(receiver, llvm_type(f"*{receiver_base}"), name="iface.receiver.cast")
-        args = [receiver] + list(thunk.args[1:])
+        args = [receiver]
+        arg_idx = 1  # skip receiver in thunk.args
+        for param_type in param_types:
+            slice_elem = parse_slice_type(param_type)
+            if slice_elem is not None:
+                slice_val = thunk.args[arg_idx]
+                arg_idx += 1
+                args.append(self.ctx.builder.extract_value(slice_val, 0, name="iface.thunk.slice.ptr"))
+                args.append(self.ctx.builder.extract_value(slice_val, 1, name="iface.thunk.slice.len"))
+                args.append(self.ctx.builder.extract_value(slice_val, 2, name="iface.thunk.slice.cap"))
+            else:
+                args.append(thunk.args[arg_idx])
+                arg_idx += 1
         result = self.ctx.builder.call(method_fn, args)
         if ret_type == "void":
             self.ctx.builder.ret_void()

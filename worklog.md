@@ -298,3 +298,7 @@
 - 2026-06-25: 修复 alignof([N]T) 未同步改为指针对齐 8。原因：数组 LLVM 表示已改为 T*，但 alignof 仍返回元素对齐（如 i32 的 4），导致 struct 内嵌数组字段时布局计算错误（size_of 返回 16 而非 24），new Struct 分配不足造成 heap overwrite。新增 case_391/392 覆盖。验证：python tests\test_language_cases.py 通过 343/343；python tests\test_stdlib.py 通过 74/74。
 
 - 2026-06-25: 在 object_from_llvm_ir() 中 LLVM 对象生成前插入 O2 pass pipeline。使用 PipelineTuningOptions(speed_level=2, size_level=0) + PassBuilder.getModulePassManager().run()，复用已有 target machine。O2 后 sort case 对象体积减少 ~44%，编译时间不变（~0.33s 噪音内），全部回归通过。design.md 无需更新。验证：python tests\test_language_cases.py 343/343；python tests\test_stdlib.py 74/74；pytest 64/64。
+
+- 2026-06-25: 预备分解 slice 参数的 LLVM ABI 为独立参数 + noalias。why：当前 \{ptr, i64, i64}\ struct 传参使 LLVM 无法证明不同 slice 的数据指针不 alias，Loop Vectorizer 因此保守不做向量化；分解为三个独立参数并在 ptr 上设 noalias 后 alias analysis 可推断它们独立，从而允许自动向量化。
+
+- 2026-06-25: 已将 slice 参数的 LLVM ABI 从 \{ptr, i64, i64}\ struct 值分解为 (ptr noalias, i64, i64) 三个独立参数。改动：declare_function 对 slice 参数展开为 ptr (noalias) + len + cap 并设 noalias，emit_function 入口从三个独立参数重建 slice struct 存入 slot，emit_call/emit_fallible_function_call_raw 调用点时 extract_value 拆成三个值展开传递，emit_method_call/emit_fallible_method_call_raw 对方法参数中的 slice 同样展开（receiver 自身保持不变），function_value_thunk 在转发时从 struct 参数提取独立值传给实际函数，iface thunk (get_iface_thunk) 在转发给具体方法时同样展开 slice struct 参数。parser/AST/typechecker/type_rules 类型层面不变。design.md 无需更新。验证：python tests\test_language_cases.py 343/343；python tests\test_stdlib.py 74/74；pytest 64/64；额外 LLVM IR 验证显示三个 slice 参数的 i32* 均带有 noalias。
