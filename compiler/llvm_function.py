@@ -32,7 +32,6 @@ class FunctionEmitter:
             if (fn.return_type or "void") != "void":
                 args.append(llvm_type(fn.return_type).as_pointer())
             args.append(ERROR_TYPE.as_pointer())
-        slice_ptr_indices = []
         for _n, t in all_params:
             slice_elem = parse_slice_type(t)
             if slice_elem is not None:
@@ -60,12 +59,9 @@ class FunctionEmitter:
         for _n, t in all_params:
             slice_elem = parse_slice_type(t)
             if slice_elem is not None:
-                slice_ptr_indices.append(arg_idx)
                 arg_idx += 3
             else:
                 arg_idx += 1
-        for idx in slice_ptr_indices:
-            llvm_fn_obj.args[idx].add_attribute("noalias")
         self.ctx.fn_decls[name] = fn
         if not fn.receiver_name:
             self.ctx.fn_decls[fn.name] = fn
