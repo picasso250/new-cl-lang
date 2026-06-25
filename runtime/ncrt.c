@@ -30,6 +30,8 @@ static size_t __nc_gc_root_cap = 0;
 static int __nc_saved_argc = 0;
 static char** __nc_saved_argv = NULL;
 
+static size_t __nc_gc_alloc_since_collect = 0;
+
 static void __nc_abort_oom(void) {
     fprintf(stderr, "nc runtime: out of memory\n");
     abort();
@@ -106,6 +108,11 @@ void* __nc_gc_alloc(size_t sz) {
     b->next = __nc_gc_blocks;
     __nc_gc_blocks = b;
     __nc_gc_live_count++;
+    __nc_gc_alloc_since_collect += sz;
+    if (__nc_gc_alloc_since_collect >= 65536) {
+        __nc_gc_collect();
+        __nc_gc_alloc_since_collect = 0;
+    }
     return b->payload;
 }
 
@@ -138,6 +145,7 @@ static void __nc_gc_mark_ptr(void* p) {
 }
 
 void __nc_gc_collect(void) {
+    __nc_gc_alloc_since_collect = 0;
     for (size_t i = 0; i < __nc_gc_root_count; i++) {
         void** slot = __nc_gc_roots[i];
         if (slot) __nc_gc_mark_ptr(*slot);
