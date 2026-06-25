@@ -645,8 +645,8 @@ _Static_assert(offsetof(nc_green_thread, r13)       == 88,  "r13 offset");
 _Static_assert(offsetof(nc_green_thread, r14)       == 96,  "r14 offset");
 _Static_assert(offsetof(nc_green_thread, r15)       == 104, "r15 offset");
 _Static_assert(offsetof(nc_green_thread, xmm_save)  == 112, "xmm_save offset");
-_Static_assert(offsetof(nc_green_thread, entry_fn)  == 296, "entry_fn offset");
-_Static_assert(offsetof(nc_green_thread, entry_arg) == 304, "entry_arg offset");
+_Static_assert(offsetof(nc_green_thread, entry_fn)  == 304, "entry_fn offset");
+_Static_assert(offsetof(nc_green_thread, entry_arg) == 312, "entry_arg offset");
 
 #ifdef _WIN32
 #include <windows.h>
@@ -694,6 +694,7 @@ nc_green_thread* __nc_g_alloc(void (*fn)(void*), void* arg) {
     g->rsp          = g->stack_top;   // Phase 1 placeholder; Phase 2 constructs call frame
     g->stack_size   = NC_G_STACK_SIZE;
     g->guard_size   = guard_size;
+    g->gc_root_handle = -1;
     g->entry_fn     = fn;
     g->entry_arg    = arg;
 
@@ -742,6 +743,7 @@ nc_green_thread* __nc_g_alloc(void (*fn)(void*), void* arg) {
     g->rsp          = g->stack_top;   // Phase 1 placeholder; Phase 2 constructs call frame
     g->stack_size   = NC_G_STACK_SIZE;
     g->guard_size   = guard_size;
+    g->gc_root_handle = -1;
     g->entry_fn     = fn;
     g->entry_arg    = arg;
 
@@ -919,7 +921,7 @@ void __nc_g_yield(void) {
     __nc_g_switch(g, &w->sched_g);
 }
 
-static void g_finish_dead(void) {
+static void g_finish_dead(nc_green_thread* g) {
     SCHED_LOCK();
     if (sched.live_g_count <= 0) abort();
     sched.live_g_count--;
@@ -927,6 +929,10 @@ static void g_finish_dead(void) {
         SCHED_BROADCAST();
     }
     SCHED_UNLOCK();
+    if (g->gc_root_handle >= 0) {
+        __nc_gc_drop_root(g->gc_root_handle);
+        g->gc_root_handle = -1;
+    }
 }
 
 void __nc_g_exit(void) {
@@ -944,6 +950,10 @@ void __nc_spawn(void (*fn)(void*), void* env) {
     nc_green_thread* g = __nc_g_alloc(fn, env);
     if (!g) abort();
     __nc_g_init_stack(g);
+    g->gc_root_handle = -1;
+    if (env) {
+        g->gc_root_handle = __nc_gc_push_root_slot(&g->entry_arg);
+    }
     __nc_scheduler_submit(g);
 }
 
@@ -967,7 +977,7 @@ static void worker_loop(void* arg) {
             w->current_g = NULL;
 
             if (g->state == G_DEAD) {
-                g_finish_dead();
+                g_finish_dead(g);
                 __nc_g_free(g);
             }
             continue;
@@ -1045,7 +1055,7 @@ void __nc_scheduler_run(void) {
         w.current_g = NULL;
 
         if (g->state == G_DEAD) {
-            g_finish_dead();
+            g_finish_dead(g);
             __nc_g_free(g);
         }
     }

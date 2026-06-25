@@ -52,6 +52,9 @@ typedef struct nc_green_thread {
 #endif
     ;
 
+    // gc root handle for closure env (-1 = none)
+    int         gc_root_handle;
+
     // time-slice
     uint64_t    start_ticks;
 
