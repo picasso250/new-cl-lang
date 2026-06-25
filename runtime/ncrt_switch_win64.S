@@ -86,8 +86,7 @@ __nc_g_entry_trampoline:
     sub     rsp, 32                 # allocate shadow space
     call    rax                     # entry_fn(entry_arg)
     add     rsp, 32
-    # Phase 3+: __nc_g_exit — for now, exit process
+    # return to scheduler via __nc_g_exit
     sub     rsp, 32
-    mov     ecx, 0
-    call    exit
+    call    __nc_g_exit
     # unreachable

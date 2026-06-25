@@ -786,3 +786,73 @@ void __nc_g_init_stack(nc_green_thread* g) {
 
     g->rsp = sp;
 }
+
+// ── scheduler ─────────────────────────────────────────────
+
+static nc_green_thread* current_g = NULL;
+static nc_green_thread* sched_g   = NULL;
+static nc_green_thread* run_head  = NULL;
+static nc_green_thread* run_tail  = NULL;
+
+void __nc_runq_push(nc_green_thread* g) {
+    g->run_next = NULL;
+    if (run_tail) {
+        run_tail->run_next = g;
+    } else {
+        run_head = g;
+    }
+    run_tail = g;
+}
+
+nc_green_thread* __nc_runq_pop(void) {
+    nc_green_thread* g = run_head;
+    if (g) {
+        run_head = g->run_next;
+        if (!run_head) run_tail = NULL;
+        g->run_next = NULL;
+    }
+    return g;
+}
+
+int __nc_runq_empty(void) {
+    return run_head == NULL;
+}
+
+void __nc_g_yield(void) {
+    nc_green_thread* g = current_g;
+    g->state = G_RUNNABLE;
+    __nc_runq_push(g);
+    __nc_g_switch(g, sched_g);
+}
+
+void __nc_g_exit(void) {
+    if (current_g && sched_g) {
+        nc_green_thread* g = current_g;
+        g->state = G_DEAD;
+        __nc_g_switch(g, sched_g);
+        abort(); // unreachable
+    }
+    // no scheduler — exit process (Phase 2 standalone test path)
+    exit(0);
+}
+
+void __nc_scheduler_run(void) {
+    // save scheduler context on the C stack
+    nc_green_thread scheduler_root = {0};
+    sched_g = &scheduler_root;
+
+    while (1) {
+        nc_green_thread* next = __nc_runq_pop();
+        if (!next) return;
+
+        current_g = next;
+        next->state = G_RUNNING;
+        __nc_g_switch(sched_g, next);
+        current_g = NULL;
+
+        // G returned from switch — either yielded or exited
+        if (next->state == G_DEAD) {
+            __nc_g_free(next);
+        }
+    }
+}

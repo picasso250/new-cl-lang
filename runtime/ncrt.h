@@ -71,6 +71,16 @@ void             __nc_g_init_stack(nc_green_thread* g);
 void __nc_g_switch(nc_green_thread* current, nc_green_thread* next);
 void __nc_g_entry_trampoline(void);
 
+// ── scheduler ──────────────────────────────────────────────
+
+void __nc_runq_push(nc_green_thread* g);
+nc_green_thread* __nc_runq_pop(void);
+int  __nc_runq_empty(void);
+
+void __nc_g_yield(void);
+void __nc_g_exit(void);
+void __nc_scheduler_run(void);
+
 // ── existing types ──────────────────────────────────────────
 
 typedef struct {
