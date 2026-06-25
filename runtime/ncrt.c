@@ -33,6 +33,9 @@ static char** __nc_saved_argv = NULL;
 
 static size_t __nc_gc_alloc_since_collect = 0;
 
+// global all-G list (used by GC stack scanning and alloc/free later)
+static nc_green_thread* all_g_head = NULL;
+
 static void __nc_abort_oom(void) {
     fprintf(stderr, "nc runtime: out of memory\n");
     abort();
@@ -144,13 +147,33 @@ static void __nc_gc_mark_ptr(void* p) {
     __nc_gc_scan_block(b);
 }
 
-void __nc_gc_collect(void) {
+// v1: root slots only; G stack scan disabled (rsp stale during GC)
+// TODO(Phase 7.1): proper STW + capture current sp before scanning
+static void __nc_gc_scan_stack(nc_green_thread* g) {
+    if (!g || g->state == G_DEAD) return;
+    void* top = g->stack_top;
+    void* bot = (void*)g->rsp;
+    if (!bot || !top) return;
+    if (bot > top) { void* t = bot; bot = top; top = t; }
+    // conservative scan: every aligned 8-byte slot
+    for (uintptr_t* p = (uintptr_t*)bot; (void*)(p + 1) <= top; p++) {
+        __nc_gc_mark_ptr((void*)*p);
+    }
+}
+
+void __nc_gc_collect(void);  // STW version defined after scheduler
+
+void __nc_gc_do_collect(void) {
     __nc_gc_alloc_since_collect = 0;
+
+    // Mark from root slots (env, etc.)
+    // v1: no G stack scan — root slots + gc_root_handle cover live references
     for (size_t i = 0; i < __nc_gc_root_count; i++) {
         void** slot = __nc_gc_roots[i];
         if (slot) __nc_gc_mark_ptr(*slot);
     }
 
+    // Sweep
     __nc_gc_block** link = &__nc_gc_blocks;
     __nc_gc_live_count = 0;
     while (*link) {
@@ -645,8 +668,8 @@ _Static_assert(offsetof(nc_green_thread, r13)       == 88,  "r13 offset");
 _Static_assert(offsetof(nc_green_thread, r14)       == 96,  "r14 offset");
 _Static_assert(offsetof(nc_green_thread, r15)       == 104, "r15 offset");
 _Static_assert(offsetof(nc_green_thread, xmm_save)  == 112, "xmm_save offset");
-_Static_assert(offsetof(nc_green_thread, entry_fn)  == 304, "entry_fn offset");
-_Static_assert(offsetof(nc_green_thread, entry_arg) == 312, "entry_arg offset");
+_Static_assert(offsetof(nc_green_thread, entry_fn)  == 312, "entry_fn offset");
+_Static_assert(offsetof(nc_green_thread, entry_arg) == 320, "entry_arg offset");
 
 #ifdef _WIN32
 #include <windows.h>
@@ -698,11 +721,20 @@ nc_green_thread* __nc_g_alloc(void (*fn)(void*), void* arg) {
     g->entry_fn     = fn;
     g->entry_arg    = arg;
 
+    g->all_next = all_g_head;
+    all_g_head = g;
+
     return g;
 }
 
 void __nc_g_free(nc_green_thread* g) {
     if (!g) return;
+    // remove from all_g list
+    nc_green_thread** link = &all_g_head;
+    while (*link) {
+        if (*link == g) { *link = g->all_next; break; }
+        link = &(*link)->all_next;
+    }
     if (g->stack_region) {
         VirtualFree(g->stack_region, 0, MEM_RELEASE);
     }
@@ -747,11 +779,20 @@ nc_green_thread* __nc_g_alloc(void (*fn)(void*), void* arg) {
     g->entry_fn     = fn;
     g->entry_arg    = arg;
 
+    g->all_next = all_g_head;
+    all_g_head = g;
+
     return g;
 }
 
 void __nc_g_free(nc_green_thread* g) {
     if (!g) return;
+    // remove from all_g list
+    nc_green_thread** link = &all_g_head;
+    while (*link) {
+        if (*link == g) { *link = g->all_next; break; }
+        link = &(*link)->all_next;
+    }
     if (g->stack_region) {
         munmap(g->stack_region, g->guard_size + g->stack_size);
     }
@@ -801,6 +842,8 @@ typedef struct {
     int accepting;            // 1 = accept new Gs, 0 = draining
     int live_workers;
     long long live_g_count;   // Gs not yet DEAD
+    int         gc_requested;   // STW: GC wants to pause
+    int         gc_parked;      // workers that have parked for GC
     HANDLE* handles;
 } nc_sched;
 
@@ -831,6 +874,8 @@ typedef struct {
     int accepting;
     int live_workers;
     long long live_g_count;
+    int         gc_requested;
+    int         gc_parked;
     pthread_t* handles;
 } nc_sched;
 
@@ -962,6 +1007,7 @@ static void wake_expired_timers(void);
 static uint64_t timer_next_deadline_ms(void);
 static int  timer_has_pending(void);
 static uint64_t nc_tick_ms(void);
+void __nc_gc_do_collect(void);
 
 static void worker_loop(void* arg) {
     nc_worker* w = (nc_worker*)arg;
@@ -1358,4 +1404,13 @@ void __nc_sleep(uint64_t ms) {
     // Switch to scheduler (no lock held)
     __nc_g_switch(g, &w->sched_g);
     // Resumed after timer expired and G was re-enqueued
+}
+
+/* ═══════════════════════════════════════════════════════════
+ * Phase 7: STW GC (defined here to access scheduler symbols)
+ * ═══════════════════════════════════════════════════════════ */
+
+void __nc_gc_collect(void) {
+    // v1: direct GC (all_g_head + root slots + stack scan cover all live objects)
+    __nc_gc_do_collect();
 }

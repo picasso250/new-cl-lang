@@ -15,8 +15,8 @@
 #   r14            96
 #   r15           104
 #   xmm_save      112  (10 x 16 bytes = 160 bytes)
-#   entry_fn      304
-#   entry_arg     312
+#   entry_fn      312
+#   entry_arg     320
 
     .intel_syntax noprefix
     .globl  __nc_g_switch
@@ -81,8 +81,8 @@ __nc_g_switch:
 # After pop rcx, RSP points to call space.
 __nc_g_entry_trampoline:
     pop     rcx                     # RCX = G pointer
-    mov     rax, [rcx + 304]        # RAX = G->entry_fn
-    mov     rcx, [rcx + 312]        # RCX = G->entry_arg (env, 1st arg)
+    mov     rax, [rcx + 312]        # RAX = G->entry_fn
+    mov     rcx, [rcx + 320]        # RCX = G->entry_arg (env, 1st arg)
     sub     rsp, 32                 # allocate shadow space
     call    rax                     # entry_fn(env)
     add     rsp, 32

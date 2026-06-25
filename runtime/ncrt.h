@@ -61,6 +61,7 @@ typedef struct nc_green_thread {
     // scheduling
     struct nc_green_thread* run_next;   // global run queue
     struct nc_green_thread* wait_next;  // mutex / timer wait queue
+    struct nc_green_thread* all_next;   // global all-G list (for GC stack scan)
 
     // entry
     void (*entry_fn)(void*);
