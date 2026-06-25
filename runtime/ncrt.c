@@ -102,17 +102,16 @@ void __nc_gc_init(void) {
 
 void* __nc_gc_alloc(size_t sz) {
     size_t payload_size = sz ? sz : 1;
+    if (__nc_gc_alloc_since_collect + payload_size >= 65536) {
+        __nc_gc_collect();
+    }
     __nc_gc_block* b = (__nc_gc_block*)calloc(1, sizeof(__nc_gc_block) + payload_size);
     if (!b) __nc_abort_oom();
     b->size = payload_size;
     b->next = __nc_gc_blocks;
     __nc_gc_blocks = b;
     __nc_gc_live_count++;
-    __nc_gc_alloc_since_collect += sz;
-    if (__nc_gc_alloc_since_collect >= 65536) {
-        __nc_gc_collect();
-        __nc_gc_alloc_since_collect = 0;
-    }
+    __nc_gc_alloc_since_collect += payload_size;
     return b->payload;
 }
 
