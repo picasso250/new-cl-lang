@@ -919,6 +919,16 @@ void __nc_g_yield(void) {
     __nc_g_switch(g, &w->sched_g);
 }
 
+static void g_finish_dead(void) {
+    SCHED_LOCK();
+    if (sched.live_g_count <= 0) abort();
+    sched.live_g_count--;
+    if (sched.live_g_count == 0) {
+        SCHED_BROADCAST();
+    }
+    SCHED_UNLOCK();
+}
+
 void __nc_g_exit(void) {
     if (!current_worker || !current_worker->current_g) {
         exit(0);
@@ -950,12 +960,7 @@ static void worker_loop(void* arg) {
             w->current_g = NULL;
 
             if (g->state == G_DEAD) {
-                SCHED_LOCK();
-                sched.live_g_count--;
-                if (sched.live_g_count == 0) {
-                    SCHED_BROADCAST();
-                }
-                SCHED_UNLOCK();
+                g_finish_dead();
                 __nc_g_free(g);
             }
             continue;
@@ -964,6 +969,8 @@ static void worker_loop(void* arg) {
         // run queue empty and not accepting — exit worker
         sched.live_workers--;
         SCHED_UNLOCK();
+        current_worker = NULL;
+        free(w);
         return;
     }
 }
@@ -1031,6 +1038,7 @@ void __nc_scheduler_run(void) {
         w.current_g = NULL;
 
         if (g->state == G_DEAD) {
+            g_finish_dead();
             __nc_g_free(g);
         }
     }

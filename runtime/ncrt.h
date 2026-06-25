@@ -79,7 +79,6 @@ int  __nc_runq_empty(void);
 void __nc_g_yield(void);
 void __nc_g_exit(void);
 
-void __nc_scheduler_submit(nc_green_thread* g);  // first enqueue (live_g_count++)
 void __nc_scheduler_init(int num_workers);
 void __nc_scheduler_run(void);                    // Phase 3a compat: inline single-thread
 void __nc_scheduler_shutdown(void);               // drain all Gs, join workers
