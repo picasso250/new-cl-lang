@@ -9,9 +9,9 @@
 # STDOUT: 8
 # STDOUT: 24
 # STDOUT: 40
-# STDOUT: 12
+# STDOUT: 8
 # STDOUT: 16
-# STDOUT: 32
+# STDOUT: 8
 # STDOUT: 16
 import io
 

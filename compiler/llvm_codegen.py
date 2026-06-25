@@ -488,15 +488,7 @@ class LLVMCodegen:
             return
         array_info = parse_array_type(nc_type)
         if array_info is not None:
-            length, elem_type = array_info
-            for i in range(length):
-                elem = self.builder.gep(
-                    ptr,
-                    [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), i)],
-                    inbounds=True,
-                    name="gc.root.array.elem",
-                )
-                self.root_slots_for_type(elem, elem_type)
+            self.root_pointer_slot(ptr)
 
     def init_defer_state(self):
         self.defer_sites = []
@@ -855,11 +847,17 @@ class LLVMCodegen:
             ptr, _field_type = self.emit_lvalue(node)
             return self.builder.load(ptr, name="field")
         if isinstance(node, ArrayLiteral):
-            value = ir.Constant(llvm_type(node.type), ir.Undefined)
+            count = len(node.elements)
+            ptr = self.malloc_array(node.elem_type, ir.Constant(ir.IntType(64), count))
             for i, elem in enumerate(node.elements):
-                elem_value = self.emit_coerced_expr(elem, node.elem_type)
-                value = self.builder.insert_value(value, elem_value, [i], name="arr.ins")
-            return value
+                elem_ptr = self.builder.gep(
+                    ptr,
+                    [ir.Constant(ir.IntType(32), i)],
+                    inbounds=True,
+                    name="arr.elem.ptr",
+                )
+                self.builder.store(self.emit_coerced_expr(elem, node.elem_type), elem_ptr)
+            return ptr
         if isinstance(node, SliceLiteral):
             return self.emit_slice_literal(node)
         if isinstance(node, MapLiteral):
@@ -1038,14 +1036,14 @@ class LLVMCodegen:
                 idx = self.cast_to(self.emit_expr(node.index), "i32")
                 elem_ptr = self.builder.gep(ptr, [idx], inbounds=True, name="slice.idx.ptr")
                 return elem_ptr, elem_type
-            array_ptr, array_type = self.emit_lvalue(node.obj)
+            array_slot, array_type = self.emit_lvalue(node.obj)
             array_info = parse_array_type(array_type)
             if array_info is None:
                 raise NotImplementedError(f"LLVM backend cannot index {array_type}")
             _length, elem_type = array_info
+            array_ptr = self.builder.load(array_slot, name="array.ptr")
             idx = self.cast_to(self.emit_expr(node.index), "i32")
-            zero = ir.Constant(ir.IntType(32), 0)
-            elem_ptr = self.builder.gep(array_ptr, [zero, idx], inbounds=True, name="idx.ptr")
+            elem_ptr = self.builder.gep(array_ptr, [idx], inbounds=True, name="idx.ptr")
             return elem_ptr, elem_type
         raise NotImplementedError(f"LLVM backend cannot take lvalue of {type(node).__name__}")
 

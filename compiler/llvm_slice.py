@@ -35,8 +35,9 @@ class SliceEmitter:
         if array_info is not None:
             array_len, elem_type = array_info
             default_end = ir.Constant(ir.IntType(32), array_len)
-            source_ptr, _source_type = self.ctx.emit_lvalue(node.array)
-            source_indices = lambda i: [ir.Constant(ir.IntType(32), 0), i]
+            source_slot, _source_type = self.ctx.emit_lvalue(node.array)
+            source_ptr = self.ctx.builder.load(source_slot, name="array.ptr")
+            source_indices = lambda i: [i]
         else:
             elem_type = slice_elem_type
             source_value = self.ctx.emit_expr(node.array)

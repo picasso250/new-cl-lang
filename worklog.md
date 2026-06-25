@@ -292,3 +292,5 @@
 - 2026-06-24: 已规整内部 ABI 与模块对象 debug 构建：新增统一 ABI 符号 helper，非 extern NC 函数/方法/闭包/thunk/map/iface 生成符号采用可读骨架 + 短 hash；build --keep-objs 生成每模块 NC obj/ll、abi-manifest.json、链接输入清单和按模块 IR 指纹的对象缓存，stdlib C support 仍单独对象；design.md 同步内部 ABI、模块对象、泛型实例归定义模块和 manifest/cache 边界。验证：python tests\\test_language_cases.py 通过 341/341；python tests\\test_stdlib.py 通过 74/74；python -m pytest tests\\test_llvm_backend.py tests\\test_type_ref.py tests\\test_builtin_boundary.py tests\\test_projects.py -q 通过 64 passed, 1 skipped。
 
 - 2026-06-24: ABI 保留前缀检查补强：用户顶层符号从拒绝 __nc_ 收紧为拒绝 __nc*，与内部 ABI 章程一致。验证：python -B -m py_compile compiler\\symtab.py；python -m pytest tests\\test_llvm_backend.py tests\\test_type_ref.py tests\\test_builtin_boundary.py tests\\test_projects.py -q 通过 64 passed, 1 skipped。
+
+- 2026-06-25: 数组字面量 [N]T LLVM后端运行时表示从栈值改为堆指针。改动：llvm_type() 返回 elem_type* 而非 [N x elem_type]，sizeof_type() 返回 8；ArrayLiteral 改用 malloc_array() 堆分配；IndexAccess 数组分支从 slot load 堆指针后单层 GEP [idx]；root_slots_for_type 数组分支仅注册 slot 自身；emit_slice_expr 同样从 slot load 堆指针后单层 GEP。验证：python tests\test_language_cases.py 通过 341/341；python tests\test_stdlib.py 通过 74/74。

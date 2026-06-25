@@ -98,7 +98,7 @@ def llvm_type(nc_type: str | None):
         ])
     if isinstance(ref, ArrayTypeRef):
         length, elem_type = ref.length, ref.elem
-        return ir.ArrayType(llvm_type(elem_type), length)
+        return llvm_type(elem_type).as_pointer()
     raise NotImplementedError(f"LLVM backend does not support type: {nc_type}")
 
 
@@ -131,8 +131,7 @@ class LLVMLayout:
         if isinstance(ref, SliceType):
             return 24
         if isinstance(ref, ArrayTypeRef):
-            length, elem_type = ref.length, ref.elem
-            return length * self.aligned_sizeof_type(elem_type)
+            return 8
         if nc_type in STRUCT_FIELDS:
             return self.sizeof_fields([field_type for _field_name, field_type in STRUCT_FIELDS[nc_type]])
         raise NotImplementedError(f"LLVM backend cannot sizeof {nc_type}")
