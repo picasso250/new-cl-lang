@@ -86,6 +86,30 @@ void __nc_scheduler_init(int num_workers);
 void __nc_scheduler_run(void);                    // Phase 3a compat: inline single-thread
 void __nc_scheduler_shutdown(void);               // drain all Gs, join workers
 
+void __nc_spawn(void (*fn)(void*), void* env);
+
+// ── mutex ──────────────────────────────────────────────────
+
+typedef struct nc_mutex {
+    int         locked;           // 0 = unlocked, 1 = locked
+    nc_green_thread* head;        // wait queue (FIFO)
+    nc_green_thread* tail;
+#ifdef _WIN32
+    void*       cs;               // CRITICAL_SECTION (heap-allocated)
+#else
+    pthread_mutex_t mu;
+#endif
+} nc_mutex;
+
+nc_mutex* __nc_mutex_alloc(void);
+void      __nc_mutex_free(nc_mutex* m);
+void      __nc_mutex_lock(nc_mutex* m);
+void      __nc_mutex_unlock(nc_mutex* m);
+
+// ── sleep / timer ──────────────────────────────────────────
+
+void __nc_sleep(uint64_t ms);
+
 // ── existing types ──────────────────────────────────────────
 
 typedef struct {

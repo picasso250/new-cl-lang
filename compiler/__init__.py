@@ -18,7 +18,7 @@ from compiler.target import get_target
 BUILTIN_MODULES = {"io", "runtime", "fs", "os", "strings", "strconv", "math", "sort", "types", "linux", "json"}
 ROOT_DIR = os.path.dirname(os.path.dirname(__file__))
 STDLIB_DIR = os.path.join(ROOT_DIR, "stdlib")
-STDLIB_SOURCE_MODULES = {"fs", "os", "strings", "strconv", "math", "sort", "linux", "json"}
+STDLIB_SOURCE_MODULES = {"fs", "os", "strings", "strconv", "math", "sort", "linux", "json", "sync"}
 
 
 def _require_ast(source_file: SourceFile) -> Program:

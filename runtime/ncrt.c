@@ -957,6 +957,11 @@ void __nc_spawn(void (*fn)(void*), void* env) {
     __nc_scheduler_submit(g);
 }
 
+// Phase 5 forward declarations
+static void wake_expired_timers(void);
+static uint64_t timer_next_deadline_ms(void);
+static int  timer_has_pending(void);
+
 static void worker_loop(void* arg) {
     nc_worker* w = (nc_worker*)arg;
     current_worker = w;
@@ -964,8 +969,34 @@ static void worker_loop(void* arg) {
     while (1) {
         SCHED_LOCK();
 
-        while (runq_empty_locked() && sched.accepting) {
-            SCHED_WAIT();
+        wake_expired_timers();
+
+        uint64_t timeout_ms = timer_next_deadline_ms();
+        while (runq_empty_locked() && (sched.accepting || timer_has_pending())) {
+#ifdef _WIN32
+            if (timeout_ms > 0) {
+                DWORD dw = (DWORD)(timeout_ms < 0x7FFFFFFF ? timeout_ms : 0x7FFFFFFF);
+                SleepConditionVariableCS(&sched.cv, &sched.cs, dw);
+            } else {
+                SCHED_WAIT();
+            }
+#else
+            if (timeout_ms > 0) {
+                struct timespec ts;
+                clock_gettime(CLOCK_REALTIME, &ts);
+                ts.tv_sec += timeout_ms / 1000;
+                ts.tv_nsec += (timeout_ms % 1000) * 1000000;
+                if (ts.tv_nsec >= 1000000000) {
+                    ts.tv_sec++;
+                    ts.tv_nsec -= 1000000000;
+                }
+                pthread_cond_timedwait(&sched.cv, &sched.mu, &ts);
+            } else {
+                SCHED_WAIT();
+            }
+#endif
+            wake_expired_timers();
+            timeout_ms = timer_next_deadline_ms();
         }
 
         nc_green_thread* g = runq_pop_locked();
@@ -983,12 +1014,15 @@ static void worker_loop(void* arg) {
             continue;
         }
 
-        // run queue empty and not accepting — exit worker
-        sched.live_workers--;
-        SCHED_UNLOCK();
-        current_worker = NULL;
-        free(w);
-        return;
+        // run queue empty: check if we can exit
+        // cannot exit if there are pending timers
+        if (!sched.accepting && !timer_has_pending()) {
+            sched.live_workers--;
+            SCHED_UNLOCK();
+            current_worker = NULL;
+            free(w);
+            return;
+        }
     }
 }
 
@@ -1045,9 +1079,21 @@ void __nc_scheduler_run(void) {
 
     while (1) {
         SCHED_LOCK();
+        wake_expired_timers();
         nc_green_thread* g = runq_pop_locked();
         SCHED_UNLOCK();
-        if (!g) break;
+        if (!g) {
+            // check once more: anything pending?
+            SCHED_LOCK();
+            if (timer_has_pending()) {
+                // wait a bit for timers to expire
+                SCHED_UNLOCK();
+                Sleep(1);
+                continue;
+            }
+            SCHED_UNLOCK();
+            break;
+        }
 
         w.current_g = g;
         g->state = G_RUNNING;
@@ -1090,4 +1136,200 @@ void __nc_scheduler_shutdown(void) {
     }
     free(sched.handles);
     sched.handles = NULL;
+}
+
+/* ═══════════════════════════════════════════════════════════
+ * Phase 5: Mutex + Sleep/Timer
+ * ═══════════════════════════════════════════════════════════ */
+
+// ── monotonic wall clock (milliseconds) ────────────────────
+
+static uint64_t nc_tick_ms(void) {
+#ifdef _WIN32
+    return GetTickCount64();
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
+#endif
+}
+
+// ── mutex internal lock ────────────────────────────────────
+
+static void mutex_lock_internal(nc_mutex* m) {
+#ifdef _WIN32
+    EnterCriticalSection((CRITICAL_SECTION*)m->cs);
+#else
+    pthread_mutex_lock(&m->mu);
+#endif
+}
+
+static void mutex_unlock_internal(nc_mutex* m) {
+#ifdef _WIN32
+    LeaveCriticalSection((CRITICAL_SECTION*)m->cs);
+#else
+    pthread_mutex_unlock(&m->mu);
+#endif
+}
+
+// ── mutex alloc / free ─────────────────────────────────────
+
+nc_mutex* __nc_mutex_alloc(void) {
+    nc_mutex* m = (nc_mutex*)calloc(1, sizeof(nc_mutex));
+    if (!m) __nc_abort_oom();
+#ifdef _WIN32
+    CRITICAL_SECTION* cs = (CRITICAL_SECTION*)malloc(sizeof(CRITICAL_SECTION));
+    if (!cs) __nc_abort_oom();
+    InitializeCriticalSection(cs);
+    m->cs = cs;
+#else
+    pthread_mutexattr_t attr;
+    pthread_mutexattr_init(&attr);
+    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_NORMAL);
+    pthread_mutex_init(&m->mu, &attr);
+    pthread_mutexattr_destroy(&attr);
+#endif
+    return m;
+}
+
+void __nc_mutex_free(nc_mutex* m) {
+    if (!m) return;
+#ifdef _WIN32
+    if (m->cs) {
+        DeleteCriticalSection((CRITICAL_SECTION*)m->cs);
+        free(m->cs);
+    }
+#else
+    pthread_mutex_destroy(&m->mu);
+#endif
+    free(m);
+}
+
+// ── mutex park: atomically park G + release internal lock ──
+
+static void nc_mutex_park_and_unlock(nc_mutex* m) {
+    nc_worker* w = current_worker;
+    nc_green_thread* g = w->current_g;
+
+    // Append to mutex wait queue
+    if (m->tail) {
+        m->tail->wait_next = g;
+    } else {
+        m->head = g;
+    }
+    m->tail = g;
+    g->wait_next = NULL;
+    g->state = G_WAIT_MUTEX;
+
+    // Release internal lock BEFORE switching to scheduler
+    mutex_unlock_internal(m);
+
+    // Switch to scheduler; resumes when this G is dequeued by unlock
+    __nc_g_switch(g, &w->sched_g);
+}
+
+// ── mutex lock / unlock ────────────────────────────────────
+
+void __nc_mutex_lock(nc_mutex* m) {
+    mutex_lock_internal(m);
+    if (m->locked == 0) {
+        m->locked = 1;
+        mutex_unlock_internal(m);
+        return;
+    }
+    // Lock held — park this G and wait for handoff
+    nc_mutex_park_and_unlock(m);
+    // Resumed here via handoff: we now own the lock (locked still == 1)
+}
+
+void __nc_mutex_unlock(nc_mutex* m) {
+    mutex_lock_internal(m);
+    if (m->head) {
+        // Handoff: dequeue first waiter, keep locked=1
+        nc_green_thread* g = m->head;
+        m->head = g->wait_next;
+        if (!m->head) m->tail = NULL;
+        g->wait_next = NULL;
+        g->state = G_RUNNABLE;
+        SCHED_LOCK();
+        runq_push_existing(g);
+        SCHED_SIGNAL();
+        SCHED_UNLOCK();
+        // locked stays 1 (handoff to g)
+    } else {
+        m->locked = 0;
+    }
+    mutex_unlock_internal(m);
+}
+
+// ── timer / sleep ──────────────────────────────────────────
+
+typedef struct nc_timer {
+    uint64_t           deadline;
+    nc_green_thread*   g;
+    struct nc_timer*   next;
+} nc_timer;
+
+static nc_timer* timer_head;
+
+static int timer_has_pending(void) {
+    return timer_head != NULL;
+}
+
+static uint64_t timer_next_deadline_ms(void) {
+    // caller holds SCHED_LOCK; returns ms until next deadline, or 0
+    if (!timer_head) return 0;
+    uint64_t now = nc_tick_ms();
+    if (timer_head->deadline <= now) return 0;
+    return timer_head->deadline - now;
+}
+
+static void wake_expired_timers(void) {
+    // caller holds SCHED_LOCK
+    uint64_t now = nc_tick_ms();
+    while (timer_head && timer_head->deadline <= now) {
+        nc_timer* t = timer_head;
+        timer_head = t->next;
+        t->g->state = G_RUNNABLE;
+        runq_push_existing(t->g);
+        free(t);
+    }
+}
+
+void __nc_sleep(uint64_t ms) {
+    if (!current_worker || !current_worker->current_g) {
+        fprintf(stderr, "__nc_sleep: called outside scheduler\n");
+        abort();
+    }
+    nc_worker* w = current_worker;
+    nc_green_thread* g = w->current_g;
+
+    uint64_t deadline = nc_tick_ms() + ms;
+
+    nc_timer* t = (nc_timer*)malloc(sizeof(nc_timer));
+    if (!t) __nc_abort_oom();
+    t->deadline = deadline;
+    t->g = g;
+
+    SCHED_LOCK();
+
+    // Insert sorted by deadline (ascending)
+    nc_timer** link = &timer_head;
+    while (*link && (*link)->deadline <= deadline) {
+        link = &(*link)->next;
+    }
+    t->next = *link;
+    *link = t;
+
+    // If we inserted at head, signal a sleeping worker
+    if (timer_head == t) {
+        SCHED_SIGNAL();
+    }
+
+    g->state = G_WAIT_TIMER;
+    SCHED_UNLOCK();
+
+    // Switch to scheduler (no lock held)
+    __nc_g_switch(g, &w->sched_g);
+    // Resumed after timer expired and G was re-enqueued
 }
