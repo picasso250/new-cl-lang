@@ -961,6 +961,7 @@ void __nc_spawn(void (*fn)(void*), void* env) {
 static void wake_expired_timers(void);
 static uint64_t timer_next_deadline_ms(void);
 static int  timer_has_pending(void);
+static uint64_t nc_tick_ms(void);
 
 static void worker_loop(void* arg) {
     nc_worker* w = (nc_worker*)arg;
@@ -1091,6 +1092,11 @@ void __nc_scheduler_run(void) {
                 Sleep(1);
                 continue;
             }
+            // deadlock check: no Gs to run, no timers, but live Gs remain
+            if (sched.live_g_count > 0) {
+                fprintf(stderr, "fatal: all green threads are asleep - deadlock\n");
+                abort();
+            }
             SCHED_UNLOCK();
             break;
         }
@@ -1114,10 +1120,30 @@ void __nc_scheduler_shutdown(void) {
     SCHED_LOCK();
     sched.accepting = 0;
 
-    // drain: wait until all live Gs complete
+    // drain: wait until all live Gs complete, with deadlock detection
+    uint64_t deadline = nc_tick_ms() + 5000;  // 5-second timeout
     while (sched.live_g_count > 0) {
         SCHED_BROADCAST();
-        SCHED_WAIT();
+
+        // timed wait
+#ifdef _WIN32
+        DWORD dw = 1000;  // 1 second poll interval
+        SleepConditionVariableCS(&sched.cv, &sched.cs, dw);
+#else
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        ts.tv_sec += 1;
+        pthread_cond_timedwait(&sched.cv, &sched.mu, &ts);
+#endif
+
+        if (sched.live_g_count > 0 && nc_tick_ms() > deadline) {
+            // 5 seconds with no progress — check deadlock
+            if (runq_empty_locked() && !timer_has_pending()) {
+                fprintf(stderr, "fatal: all green threads are asleep - deadlock\n");
+                abort();
+            }
+            deadline = nc_tick_ms() + 5000;  // reset timeout
+        }
     }
 
     // stop workers
