@@ -30,16 +30,25 @@ fun main() {
 `spawn` 是关键字。语法：
 
 ```
-SpawningStmt → 'spawn' FunctionExpr
+SpawnStmt → 'spawn' FunctionExpr
 ```
 
-`spawn` 后面必须跟一个 `fun()` 闭包表达式（零参数，任意返回类型）。闭包捕获的外部变量由普通闭包机制处理。
+`spawn` 后面必须跟一个零参数 `fun()` 闭包表达式。闭包的类型必须是 `fun() -> void`（零参数，返回 `void`）。闭包捕获的外部变量由普通闭包机制处理。
+
+`spawn` 不接受以下形式（v1 报错）：
+
+```nc
+spawn work                // 不允许：不是闭包表达式
+spawn work()              // 不允许：参数或非 void 返回时 clunk 语义不清
+spawn make_closure()      // 不允许：v1 不支持动态生成 closure
+spawn fun() -> i32 { ... } // 不允许：返回值无意义，v1 必须 fun() -> void
+```
 
 #### 性质
 
 - `spawn` 是语句，不产生值，不能用于赋值、参数或 `ret`
 - `spawn` 不阻塞当前 green thread——它把新 G 放入 run queue 后立即返回
-- 闭包的返回值永远被丢弃；需要结果传递的，v2 通过 channel / shared state + Mutex 完成
+- 需要结果传递时，v2 通过 channel，或 v1 用 shared state + Mutex 完成
 
 #### 为何不用 `go`
 
@@ -47,23 +56,23 @@ SpawningStmt → 'spawn' FunctionExpr
 
 #### 编译器 lowering：`__nc_spawn(fn_ptr, env_ptr)`
 
-Parser. AST 为 `SpawnStmt { body: FunctionExpr }`。LLVM 后端只生成：
+Parser AST：`SpawnStmt { body: FunctionExpr }`。LLVM 后端只生成：
 
 ```text
 __nc_spawn(closure_fn_ptr, closure_env_ptr)
 ```
 
-`__nc_spawn` 是 ncrt 中的单一 C 入口函数，在 ncrt 内部完成：
+`__nc_spawn` 是 ncrt 中的单一 C 入口函数，在 ncrt 内部、scheduler lock 保护下完成：
 
 ```text
 1. 分配 G 结构 + 64KB 栈 + guard page
 2. 初始化 G 上下文（初始 %rsp 指向新栈顶，入口为 closure_fn_ptr，参数为 env_ptr）
 3. G.state = G_RUNNABLE
-4. atomic user_g_count++
+4. user_g_count++
 5. enqueue_global_run_queue(g)    // 内部 signal worker
 ```
 
-编译器**不直接生成** G 分配、计数操作或 run queue enqueue——这些全部由 `__nc_spawn` 内部完成。错误路径（如栈分配失败）也在 ncrt 中处理。
+`user_g_count++` 与 `enqueue_global_run_queue(g)` 在 **scheduler lock** 保护下完成，以对 `shutdown_conditions_met` 一致可见。编译器**不直接生成** G 分配、计数操作或 run queue enqueue——这些全部由 `__nc_spawn` 内部完成。错误路径（如栈分配失败）也在 ncrt 中处理。
 
 ### 函数序言 yield 检查
 
@@ -90,12 +99,28 @@ G_DEAD           已退出（由调度器回收栈）
 - M = `runtime.NumCPU()`，启动时创建
 - 用户可通过 `runtime.set_maxprocs(n)` 覆盖
 - 每个 worker 是一个 OS 线程，运行调度循环
-- worker 不直接决定进程退出；由 runtime 主控制流在确认所有 green thread 结束后统一 exit
+- worker 不直接决定进程退出；由 runtime 主控制流在所有 worker 退出后统一 `exit(0)`
+
+### Scheduler lock
+
+调度器全局状态（run queue、timer heap、G 状态计数）由一把 `nc_scheduler_lock` 保护。以下操作均在此锁内进行：
+
+```text
+- enqueue_global_run_queue / pop_run_queue
+- timer_heap insert / pop (wake_expired_timers)
+- user_g_count 读写
+- main_done 读写
+- shutdown_conditions_met 判断
+- deadlock 检测
+- worker 的 wait/signal/broadcast 决策
+```
+
+保证任何跨 worker 可见的状态变更都是一致快照，不会读到半完成状态。
 
 ### 全局 run queue
 
 - 所有 `G_RUNNABLE` green thread 排在一个全局队列中
-- 一个 mutex 保护队列
+- 受 `nc_scheduler_lock` 保护
 - 所有 worker 从同一个队列取 task
 - v1 不做本地队列 + 工作窃取（work stealing）
 
@@ -111,41 +136,47 @@ v1 使用 condition variable 实现。关键要求：
 
 - **`enqueue_global_run_queue(g)` 必须 signal 一个 sleeping worker**
 - **`timer_heap` 插入比当前 `next_timer_deadline` 更早的 deadline 时，必须 signal sleeping worker** 以重新计算 wait deadline
-- 不依赖 spin/sleep；唤醒必须由 condition variable 保证
+- **`user_g_count--` 后若 `main_done && user_g_count == 0`，应 broadcast worker cv**，使所有 sleeping worker 醒来检查退出条件
+- **`main_done` 从 false 变 true 时，也应 signal/broadcast worker cv**，使 sleeping worker 醒来
 
 ### 调度循环
 
 ```
 while True:
-    wake_expired_timers()         // 每轮都检查 timer，不只在 queue 空时
+    lock(scheduler_lock)
+
+    wake_expired_timers()            // 每轮都检查，不只在 queue 空时
 
     g = pop_run_queue()
     if g != null:
+        unlock(scheduler_lock)
         g.state = G_RUNNING
-        run(g)                    // 跳转到 green thread 栈执行
+        run(g)                       // 跳转到 green thread 栈执行
+        lock(scheduler_lock)
         // g 返回后回到此处；g 已变为 G_DEAD 或被重新放回 run queue
-        continue
 
-    // run queue 为空
     if shutdown_conditions_met():
-        break                     // worker 退出调度循环
+        unlock(scheduler_lock)
+        break                        // worker 退出调度循环
 
+    deadline = next_timer_deadline()
+    unlock(scheduler_lock)
     // 等待：有新 timer 到期，或有 G 进入 run queue
-    wait_until(next_timer_deadline or run_queue_nonempty)
+    wait_until(deadline or run_queue_nonempty)
 ```
 
 ### main 与 green thread 生命周期
 
-- `main` 本身作为一个 green thread 运行，`live_count` 初始为 1
-- `__nc_spawn` 内部 `user_g_count` +1，新 G 放入 run queue，signal worker
-- green thread 正常退出时 `user_g_count` -1
-- green thread 因 `err` 传播到顶部而 abort 时 `user_g_count` -1
-- `main` 函数体结束后，运行时标记 `main_done = true`，main 的 G 变为 `G_DEAD`，`live_count` -1
+- `main` 本身在某个 worker 上以 green thread 运行
+- `__nc_spawn` 内部 `user_g_count++`
+- green thread 正常退出时 `user_g_count--`
+- green thread 因 `err` 传播到顶部而 abort 时 `user_g_count--`
+- `main` 函数体结束后，运行时标记 `main_done = true`，signal/broadcast worker cv
 
 ### Worker 退出条件
 
 ```
-shutdown_conditions_met():
+shutdown_conditions_met():        // 在 scheduler_lock 内调用
     return (main_done          // main 已结束
         and user_g_count == 0  // 所有用户 green thread 已退出
         and run_queue_empty()
@@ -158,15 +189,17 @@ shutdown_conditions_met():
 
 ### 死锁检测
 
-在每个调度循环轮内，如果 run queue 为空且所有 live G 都处于：
+死锁检测在 `scheduler_lock` 内进行，读取一致快照。
+
+在每个调度循环轮内，如果 run queue 为空、所有 live G 都处于：
 
 ```
 G_WAIT_MUTEX | G_WAIT_TIMER
 ```
 
-且 `timer_heap` 为空（即没有任何即将到期的 timer），调度器认定不可继续，产生 **"all green threads are asleep - deadlock"** panic。
+且 `timer_heap` 为空（没有任何即将到期的 timer），且当前没有 `G_RUNNING`（即所有 live G 都在等待），调度器认定不可继续，产生 **"all green threads are asleep - deadlock"** panic。
 
-对于 timer 不为空的情况，调度器可正常阻塞等待 timer，不属于死锁。
+若存在 `G_RUNNING`（还有 worker 正在执行），或 timer 不为空，不属于死锁。
 
 ## 栈管理
 
@@ -248,7 +281,7 @@ enqueue(m.wait_queue, g)
 g.state = G_WAIT_MUTEX
 
 park_current_and_unlock(&m.internal)
-// 这里切回 scheduler；当被 unlock 方 handoff 唤醒时，从下面继续执行
+// park_current_and_unlock 返回时，当前 G 必定已通过 handoff 拥有该 mutex
 return
 ```
 
@@ -260,6 +293,7 @@ park_current_and_unlock(lock):
     释放 *lock
     进入调度器选择下一个 G
     // 当 G 被 wake 并 resume 时，回到调用者
+    // 此后当前 G 必定已经通过 handoff 拥有了 mutex（见 unlock 语义）
 ```
 
 「释放 internal spinlock」和「将当前 G 标记为不可运行并切走」**必须作为一个不可分割的调度原语**，否则有以下窗口竞态：
@@ -305,18 +339,16 @@ unlock(internal)
 1. 将当前 green thread 状态设为 `G_WAIT_TIMER`，挂到全局 timer 优先队列（最小堆，按唤醒时间排序）
    - 若插入的 timer deadline 早于当前 `next_timer_deadline`，signal sleeping worker
 2. yield 到调度器
-3. 调度器**每轮**都会调用 `wake_expired_timers()`：取出所有过期 timer，将对应的 green thread 改回 `G_RUNNABLE` 并放入 run queue
+3. 调度器**每轮**（在 scheduler_lock 内）调用 `wake_expired_timers()`：取出所有过期 timer，将对应的 green thread 改回 `G_RUNNABLE` 并放入 run queue
 
-timer 优先队列内部用 `nc_spinlock` 保护。
+timer 优先队列受 `scheduler_lock` 保护。
 
 ```text
-wake_expired_timers():
-    lock(timer_heap)
+wake_expired_timers():          // 在 scheduler_lock 内调用
     while timer_heap.min ≤ now:
         g = pop_min(timer_heap)
         g.state = G_RUNNABLE
         enqueue_global_run_queue(g)
-    unlock(timer_heap)
 ```
 
 ## yield 机制
@@ -387,6 +419,7 @@ if (__nc_gc_safepoint_needed) {
 | `spawn` 关键字 | 编译器 |
 | 汇编上下文切换（x64 win/linux） | ncrt |
 | M 个 worker + 全局 run queue + worker wake cv | ncrt |
+| `scheduler_lock` + 一致快照 | ncrt |
 | 合作式时间片 yield（仅函数入口） | 编译器 + ncrt |
 | GC safepoint（函数入口 + loop backedge + alloc 点） | 编译器 + ncrt |
 | 64KB 固定栈 + guard page | ncrt |
@@ -401,8 +434,7 @@ if (__nc_gc_safepoint_needed) {
 
 | 特性 | 原因 |
 |---|---|
-| `go` 关键字 / `go f(args)` 语法糖 | `spawn fun() { ... }` 更显式；语法糖留到 v2 |
-| `runtime.spawn` 库函数形式 | 已改为 `spawn` 关键字，不走伪函数路线 |
+| `go` 关键字 / `go f(args)` 语法糖 | `spawn fun() -> void {}` 更显式；语法糖留到 v2 |
 | channel / select | 无 case 驱动；语法和 lowering 成本高 |
 | TCP I/O netpoller | 无 case 驱动；epoll/kqueue/IOCP 工作量大 |
 | 文件 I/O 非阻塞包装 | 需要 io_uring 或相似技术 |
