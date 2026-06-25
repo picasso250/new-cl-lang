@@ -27,8 +27,8 @@ static int test_interleaved(void) {
     nc_green_thread* b = __nc_g_alloc(g2_fn, NULL);
     __nc_g_init_stack(a);
     __nc_g_init_stack(b);
-    __nc_runq_push(a);
-    __nc_runq_push(b);
+    __nc_scheduler_submit(a);
+    __nc_scheduler_submit(b);
 
     printf("scheduler start\n");
     __nc_scheduler_run();
@@ -61,7 +61,7 @@ static int test_many_yields(void) {
     for (int i = 0; i < 3; i++) {
         gs[i] = __nc_g_alloc(fns[i], NULL);
         __nc_g_init_stack(gs[i]);
-        __nc_runq_push(gs[i]);
+        __nc_scheduler_submit(gs[i]);
     }
 
     __nc_scheduler_run();

@@ -30,7 +30,7 @@ static int test_multi_worker(void) {
     for (int i = 0; i < g_n; i++) {
         nc_green_thread* g = __nc_g_alloc(worker_g, (void*)(intptr_t)i);
         __nc_g_init_stack(g);
-        __nc_runq_push(g);
+        __nc_scheduler_submit(g);
     }
 
     __nc_scheduler_init(4);  // 4 OS workers

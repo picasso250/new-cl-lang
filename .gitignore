@@ -2,3 +2,5 @@ __test.txt
 build/
 __pycache__/
 *.py[cod]
+runtime/*.exe
+runtime/*.o
