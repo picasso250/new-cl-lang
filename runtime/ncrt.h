@@ -16,13 +16,21 @@ typedef enum {
 } nc_g_state;
 
 #define NC_G_STACK_SIZE   (64 * 1024)
-#define NC_G_GUARD_SIZE   4096
+#define NC_G_GUARD_PAGES  1
+
+size_t __nc_page_size(void);
+
+// Phase 2 will construct a call-ready initial frame replacing the
+// placeholder rsp = stack_top set by __nc_g_alloc.
 
 typedef struct nc_green_thread {
     nc_g_state  state;
     void*       stack_region;  // start of entire region (guard + usable)
-    void*       stack_top;     // top of usable stack (= stack_region + guard_size + usable_size)
-    void*       rsp;           // saved %rsp when suspended
+    void*       stack_top;     // top of usable stack
+    void*       rsp;           // Phase 1: placeholder = stack_top; Phase 2: initial call frame
+
+    size_t      stack_size;
+    size_t      guard_size;
 
     // win64 callee-saved
     void*       rbx;
@@ -34,8 +42,15 @@ typedef struct nc_green_thread {
     void*       r14;
     void*       r15;
 
-    // xmm save area: 16 bytes per register × 10 regs
-    uint8_t     xmm_save[160];
+    // xmm save area: 16 bytes per register × 10 regs (must be 16-byte aligned for movaps)
+#ifdef _MSC_VER
+    __declspec(align(16))
+#endif
+    uint8_t     xmm_save[160]
+#ifndef _MSC_VER
+    __attribute__((aligned(16)))
+#endif
+    ;
 
     // time-slice
     uint64_t    start_ticks;

@@ -5,6 +5,7 @@
 
 static int g_align_errors = 0;
 static int g_state_errors = 0;
+static int g_xmm_align_errors = 0;
 
 static void dummy_entry(void* arg) {
     (void)arg;
@@ -13,9 +14,13 @@ static void dummy_entry(void* arg) {
 int main(void) {
     printf("=== Phase 1: G struct + stack alloc ===\n");
 
+    // 0. page size
+    size_t page_size = __nc_page_size();
+    printf("page size     : %zu\n", page_size);
+
     // 1. verify constants
     printf("G stack size  : %zu\n", (size_t)NC_G_STACK_SIZE);
-    printf("G guard size  : %zu\n", (size_t)NC_G_GUARD_SIZE);
+    printf("G guard pages : %d\n", NC_G_GUARD_PAGES);
     printf("sizeof(G)     : %zu\n", sizeof(nc_green_thread));
 
     // 2. single alloc
@@ -38,6 +43,19 @@ int main(void) {
     } else {
         printf("PASS: stack_top 16-byte aligned\n");
     }
+    // xmm save area alignment (critical for Win64 movaps)
+    if (((uintptr_t)g->xmm_save) % 16 != 0) {
+        fprintf(stderr, "FAIL: xmm_save not 16-byte aligned: %p\n", g->xmm_save);
+        g_xmm_align_errors++;
+    } else {
+        printf("PASS: xmm_save 16-byte aligned (offset=%zu)\n",
+               offsetof(nc_green_thread, xmm_save));
+    }
+    // verify stored sizes
+    if (g->stack_size != NC_G_STACK_SIZE) g_state_errors++;
+    if (g->guard_size != page_size * NC_G_GUARD_PAGES) g_state_errors++;
+    printf("  stack_size   : %zu\n", g->stack_size);
+    printf("  guard_size   : %zu\n", g->guard_size);
     __nc_g_free(g);
 
     // 4. bulk alloc
@@ -49,25 +67,22 @@ int main(void) {
             fprintf(stderr, "FAIL: bulk alloc[%d] returned NULL\n", i);
             return 1;
         }
-        if (bulk[i]->state != G_RUNNABLE) {
-            g_state_errors++;
-        }
-        uintptr_t t = (uintptr_t)bulk[i]->stack_top;
-        if (t % 16 != 0) {
-            g_align_errors++;
-        }
-        if (bulk[i]->entry_fn != dummy_entry) {
-            g_state_errors++;
-        }
+        if (bulk[i]->state != G_RUNNABLE) g_state_errors++;
+        if ((uintptr_t)bulk[i]->stack_top % 16 != 0) g_align_errors++;
+        if (((uintptr_t)bulk[i]->xmm_save) % 16 != 0) g_xmm_align_errors++;
+        if (bulk[i]->entry_fn != dummy_entry) g_state_errors++;
+        if (bulk[i]->stack_size != NC_G_STACK_SIZE) g_state_errors++;
+        if (bulk[i]->guard_size != page_size * NC_G_GUARD_PAGES) g_state_errors++;
     }
     printf("PASS: bulk alloc %d Gs\n", BULK);
-    printf("  alignment errors: %d\n", g_align_errors);
-    printf("  state errors    : %d\n", g_state_errors);
+    printf("  alignment errors    : %d\n", g_align_errors);
+    printf("  xmm align errors    : %d\n", g_xmm_align_errors);
+    printf("  state errors        : %d\n", g_state_errors);
 
     // 5. verify stacks don't overlap
     for (int i = 0; i < BULK; i++) {
         uintptr_t base_i = (uintptr_t)bulk[i]->stack_region;
-        uintptr_t size_i = NC_G_GUARD_SIZE + NC_G_STACK_SIZE;
+        uintptr_t size_i = bulk[i]->guard_size + bulk[i]->stack_size;
         for (int j = i + 1; j < BULK; j++) {
             uintptr_t base_j = (uintptr_t)bulk[j]->stack_region;
             if (base_i + size_i > base_j && base_j + size_i > base_i) {
@@ -84,7 +99,7 @@ int main(void) {
     }
     printf("PASS: all freed\n");
 
-    int total_errors = g_align_errors + g_state_errors;
+    int total_errors = g_align_errors + g_state_errors + g_xmm_align_errors;
     printf("\n=== %s (%d errors) ===\n",
            total_errors == 0 ? "ALL PASS" : "SOME FAIL",
            total_errors);
