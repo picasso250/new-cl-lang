@@ -294,3 +294,5 @@
 - 2026-06-24: ABI 保留前缀检查补强：用户顶层符号从拒绝 __nc_ 收紧为拒绝 __nc*，与内部 ABI 章程一致。验证：python -B -m py_compile compiler\\symtab.py；python -m pytest tests\\test_llvm_backend.py tests\\test_type_ref.py tests\\test_builtin_boundary.py tests\\test_projects.py -q 通过 64 passed, 1 skipped。
 
 - 2026-06-25: 数组字面量 [N]T LLVM后端运行时表示从栈值改为堆指针。改动：llvm_type() 返回 elem_type* 而非 [N x elem_type]，sizeof_type() 返回 8；ArrayLiteral 改用 malloc_array() 堆分配；IndexAccess 数组分支从 slot load 堆指针后单层 GEP [idx]；root_slots_for_type 数组分支仅注册 slot 自身；emit_slice_expr 同样从 slot load 堆指针后单层 GEP。验证：python tests\test_language_cases.py 通过 341/341；python tests\test_stdlib.py 通过 74/74。
+
+- 2026-06-25: 修复 alignof([N]T) 未同步改为指针对齐 8。原因：数组 LLVM 表示已改为 T*，但 alignof 仍返回元素对齐（如 i32 的 4），导致 struct 内嵌数组字段时布局计算错误（size_of 返回 16 而非 24），new Struct 分配不足造成 heap overwrite。新增 case_391/392 覆盖。验证：python tests\test_language_cases.py 通过 343/343；python tests\test_stdlib.py 通过 74/74。
