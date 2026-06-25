@@ -13,6 +13,10 @@ import tempfile
 from dataclasses import dataclass, field
 
 from llvmlite import binding, ir
+import llvmlite
+
+# 优化流水线版本标识：修改 object_from_llvm_ir() 中的 PassBuilder 配置时务必将此版本号 +1
+OPT_PIPELINE_VERSION = 1
 
 from compiler.ast import (
     ArrayLiteral, Assignment, Update, BinaryOp, Block, BlockExpr, BoolLiteral, Break,
@@ -1739,7 +1743,8 @@ def build_llvm_module_objects(
         ll_path = os.path.join(obj_dir, f"{label}.ll")
         obj_path = os.path.join(obj_dir, f"{label}{target_spec.object_ext}")
         llvm_ir = generate_llvm_ir(program, target_name=target_spec.name, emit_module=module_name)
-        ir_hash = hashlib.sha256(llvm_ir.encode("utf-8")).hexdigest()
+        opt_ctx = f"opt-v{OPT_PIPELINE_VERSION}|{target_spec.name}|llvmlite-{llvmlite.__version__}"
+        ir_hash = hashlib.sha256((opt_ctx + "\n" + llvm_ir).encode("utf-8")).hexdigest()
         cached_obj = os.path.join(cache_dir, f"{label}-{ir_hash}{target_spec.object_ext}")
         with open(ll_path, "w", encoding="utf-8") as f:
             f.write(llvm_ir)
