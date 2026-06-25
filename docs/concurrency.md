@@ -7,7 +7,7 @@
 NC 使用 **M:N 绿色线程**（类似 Go goroutine）实现并发：
 
 - N 个轻量用户态线程（green thread）由 M 个 OS worker（M = runtime.NumCPU）调度
-- `runtime.spawn(fun() { ... })` 标准库函数启动新 green thread（编译器打洞）
+- `runtime.spawn(fun() { ... })` 标准库内建特殊函数启动新 green thread（编译器洞）
 - `sync.Mutex` 标准库提供互斥同步
 - `sleep` 提供定时 yield
 - 目标：并行计算密集型任务与阻塞模拟（I/O netpoller 推迟到 v2）
@@ -27,11 +27,11 @@ fun main() {
 
 ## 语言表面
 
-### `runtime.spawn`：标准库函数 + 编译器洞
+### `runtime.spawn`：标准库命名空间下的内建特殊函数 + 编译器洞
 
-`runtime.spawn` 不作为一个语言关键字，而是标准库 `runtime` 模块中的一个函数。编译器在 typecheck 阶段识别对该函数的调用并走特殊 lowering。
+`runtime.spawn` 不作为语言关键字，而是 `runtime` 模块下的一个**内建特殊函数**。编译器在 typecheck 阶段识别对该函数的调用并走特殊 lowering。
 
-#### 语法与类型
+#### 调用形式与限制
 
 ```nc
 import runtime
@@ -41,30 +41,69 @@ fun main() {
 }
 ```
 
+v1 限制：
+
+- **只允许直接调用形式**：`runtime.spawn(fun() { ... })`
+- **不是一等函数值**：不允许取地址、赋值变量、作为参数传递、通过别名调用
+- 以下写法在 v1 中均报错：
+
+```nc
+let f = runtime.spawn                   // 错误：不是一等函数值
+some_higher_order(runtime.spawn)        // 错误
+(if cond { runtime } else { runtime }).spawn(...)  // 错误
+```
+
+#### 类型
+
 签名（概念性）：
 
 ```
-runtime.spawn(f: fun() -> R): void   // R 可为任意类型，但返回值被丢弃
+runtime.spawn(f: fun() -> R): void   // R 可为任意类型，但返回值永远被丢弃
 ```
 
 - 只接受一个 `fun()` 闭包参数（零参数，任意返回类型）
 - 闭包捕获的外部变量由普通闭包机制处理
-- `runtime.spawn` 是语句（其返回类型为 `void`），不产生值，不能用于赋值或 `ret`
-- spawn 调用自身**不阻塞**当前 green thread——它把新 G 放入 run queue 后立即返回
+- `runtime.spawn` 是语句（返回 `void`），不产生值，不能用于赋值或 `ret`
+- spawn 调用自身**不阻塞**当前 green thread
+- **返回值永远被丢弃**；需要结果传递的，v2 通过 channel / shared state + Mutex 完成
 
-#### 编译器洞
+#### 编译器洞的精确条件
 
-编译器在 typecheck 阶段识别 `CallExpr` 的目标为 `ModuleAccess { module: "runtime", name: "spawn" }` 时，不走常规函数 lowering，而走 green thread 创建路径：
+编译器不按文本 `ModuleAccess(module="runtime", name="spawn")` 判断；必须在 **name resolution 后确认 callee 绑定到标准库内建符号 `std.runtime.spawn`**。
 
-1. Typecheck：校验唯一实参为 `fun()` 类型的闭包
-2. LLVM 后端：生成 green thread 分配流水线
-   - 为闭包分配 64KB + guard page 栈
-   - 初始化 G 结构（状态 `G_RUNNABLE`）
-   - 将 G 放入全局 run queue
-   - `user_g_count += 1`
-3. 调用端不等待，不获取返回值
+也就是：
 
-Parser 和 lexer 不受影响——`runtime.spawn` 只是 Lexer 视角下的普通 `ModuleAccess + CallExpr`。
+```
+CallExpr.callee.resolved_symbol == BuiltinRuntimeSpawn
+```
+
+而非：
+
+```
+callee.module_name == "runtime" && callee.name == "spawn"
+```
+
+这样即使用户 `import my_runtime as runtime` 或自己写了同名模块，也不会被误判。
+
+#### 编译器 lowering：`__nc_spawn(fn_ptr, env_ptr)`
+
+编译器在 typecheck 识别 `BuiltinRuntimeSpawn` 后，LLVM 后端只生成：
+
+```text
+__nc_spawn(closure_fn_ptr, closure_env_ptr)
+```
+
+`__nc_spawn` 是 ncrt 中的单一 C 入口函数，在 ncrt 内部完成：
+
+```text
+1. 分配 G 结构 + 64KB 栈 + guard page
+2. 初始化 G 上下文（初始 %rsp 指向新栈顶，入口为 closure_fn_ptr，参数为 env_ptr）
+3. G.state = G_RUNNABLE
+4. atomic user_g_count++
+5. enqueue_global_run_queue(g)    // 内部 signal worker
+```
+
+编译器**不直接生成** G 分配、计数操作或 run queue enqueue——这些全部由 `__nc_spawn` 内部完成。错误路径（如栈分配失败）也在 ncrt 中处理。
 
 #### 未来可选语法糖
 
@@ -84,7 +123,7 @@ go f(args)   →  runtime.spawn(fun() { f(args) })
 
 ### 架构
 
-调度器实现在 ncrt（C），作为 runtime 的一部分。
+调度器完全实现在 ncrt（C）。编译器只负责生成 `__nc_spawn` 调用和 safepoint 检查代码。
 
 ### Green thread 状态机
 
@@ -110,6 +149,20 @@ G_DEAD           已退出（由调度器回收栈）
 - 所有 worker 从同一个队列取 task
 - v1 不做本地队列 + 工作窃取（work stealing）
 
+### Worker 唤醒机制
+
+调度循环中，worker 在 run queue 为空时进入阻塞等待：
+
+```text
+wait_until(next_timer_deadline or run_queue_nonempty)
+```
+
+v1 使用 condition variable 实现。关键要求：
+
+- **`enqueue_global_run_queue(g)` 必须 signal 一个 sleeping worker**（意味着 run queue mutex 需要附带或关联 condition variable）
+- **`timer_heap` 插入比当前 `next_timer_deadline` 更早的 deadline 时，必须 signal sleeping worker** 以重新计算 wait deadline
+- 不依赖 spin/sleep；唤醒必须由 condition variable 保证
+
 ### 调度循环
 
 ```
@@ -134,7 +187,7 @@ while True:
 ### main 与 green thread 生命周期
 
 - `main` 本身作为一个 green thread 运行，`live_count` 初始为 1
-- `runtime.spawn(f)` 时 `user_g_count` +1，新 G 放入 run queue
+- `__nc_spawn` 内部 `user_g_count` +1，新 G 放入 run queue，signal worker
 - green thread 正常退出时 `user_g_count` -1
 - green thread 因 `err` 传播到顶部而 abort 时 `user_g_count` -1
 - `main` 函数体结束后，运行时标记 `main_done = true`，main 的 G 变为 `G_DEAD`，`live_count` -1
@@ -177,8 +230,8 @@ G_WAIT_MUTEX | G_WAIT_TIMER
 
 ### Guard page 实现要点
 
-- Linux：`mmap(stack_addr, guard_size + usable_size, ...)`，对 guard page 调 `mprotect(addr, guard_size, PROT_NONE)`
-- Windows：`VirtualAlloc(stack_addr, guard_size, MEM_RESERVE)` 作为 guard，`VirtualAlloc(stack_addr + guard_size, usable_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE)` 作为可用栈
+- Linux：`mmap(stack_addr, guard_size + usable_size, ...)`；对 guard page 调 `mprotect(addr, guard_size, PROT_NONE)`
+- Windows：`VirtualAlloc` 单次 reserve 整段（guard + usable），对 usable 部分 commit `PAGE_READWRITE`，guard 部分保持 `MEM_RESERVE`（uncommitted）即可自然触发 access violation。分两次 reserve 相邻区域不可靠——必须单次 reserve 保证地址连续
 
 ### 新 green thread 初始栈要求
 
@@ -196,7 +249,7 @@ G_WAIT_MUTEX | G_WAIT_TIMER
 RBX, RBP, RSP, R12, R13, R14, R15
 ```
 
-SysV x86_64 有 128 字节 red zone。NC 编译器和 runtime 代码编译时禁用 red zone（`-mno-red-zone`），避免切栈时踩到被切 green thread 的红区。
+SysV x86_64 有 128 字节 red zone。NC 编译器和 runtime 代码编译时禁用 red zone（`-mno-red-zone`），避免切栈时踩到被切换 green thread 的红区。
 
 **Windows x64**
 
@@ -238,17 +291,39 @@ if locked == 0:
     locked = 1
     unlock(internal)
     return
-else:
-    g = current_green_thread()
-    enqueue(g)                     // 挂到等待队列
-    g.state = G_WAIT_MUTEX
-    // 关键：below 这一行和 unlock + yield 之间的 window 必须原子；
-    // nc_spinlock internal 保护了这一段
-    unlock(internal)
-    yield_to_scheduler()           // 交出控制权，等待被 unlock 方唤醒
-    // 醒来时：locked 已经为 true，当前 G 已经拥有锁，跳到 return
-    return
+
+// 锁被占用：加入等待队列，park 并释放 internal lock
+g = current_green_thread()
+enqueue(m.wait_queue, g)
+g.state = G_WAIT_MUTEX
+
+park_current_and_unlock(&m.internal)
+// 这里切回 scheduler；当被 unlock 方 handoff 唤醒时，从下面继续执行
+return
 ```
+
+关键：`park_current_and_unlock(lock)` 是 runtime 调度原语，语义必须如下：
+
+```text
+park_current_and_unlock(lock):
+    保存当前 G 的完整上下文
+    释放 *lock
+    进入调度器选择下一个 G
+    // 当 G 被 wake 并 resume 时，回到调用者
+```
+
+「释放 internal spinlock」和「将当前 G 标记为不可运行并切走」**必须作为一个不可分割的调度原语**，否则有以下窗口竞态：
+
+```text
+G2 lock 失败，入等待队列
+G2 unlock(internal)              // 释放 spinlock
+// —— 此时 G2 尚未 yield ——
+G1 unlock mutex，dequeue G2，把 G2 放回 run queue
+G2 仍然继续执行 yield_to_scheduler()
+→ G2 把自己切走，无人再唤醒
+```
+
+`park_current_and_unlock` 消除了这个窗口。
 
 #### unlock 语义
 
@@ -257,7 +332,7 @@ lock(internal)
 if wait_queue 非空:
     g = dequeue()
     g.state = G_RUNNABLE
-    enqueue_global_run_queue(g)
+    enqueue_global_run_queue(g)      // 内部 signal sleeping worker
     // 关键：locked 保持为 true，所有权直接转交给 g
     // 不对 locked 做任何改动
     // g 醒来后已经持有锁，不需要重新 CAS
@@ -278,10 +353,11 @@ unlock(internal)
 `sleep(ms: i32)` 标准库函数由 ncrt 实现：
 
 1. 将当前 green thread 状态设为 `G_WAIT_TIMER`，挂到全局 timer 优先队列（最小堆，按唤醒时间排序）
+   - 若插入的 timer deadline 早于当前 `next_timer_deadline`，signal sleeping worker
 2. yield 到调度器
 3. 调度器**每轮**都会调用 `wake_expired_timers()`：取出所有过期 timer，将对应的 green thread 改回 `G_RUNNABLE` 并放入 run queue
 
-timer 优先队列内部用 `nc_spinlock` 保护，最小时间复杂度的插入/删除。
+timer 优先队列内部用 `nc_spinlock` 保护。
 
 ```text
 wake_expired_timers():
@@ -295,7 +371,7 @@ wake_expired_timers():
 
 ## yield 机制
 
-### 合作式 yield
+### 合作式时间片 yield
 
 编译器在**每个函数入口**插入一段代码：
 
@@ -309,12 +385,13 @@ if (当前 green thread 已运行超过时间片阈值（默认 10ms）) {
 
 1. ncrt 维护每个 green thread 的 `start_ticks`（进入 `G_RUNNING` 时的时钟滴答）
 2. LLVM 后端在函数 prologue 中生成：load 当前 G 的 `start_ticks`，与当前 `__nc_ticks()` 比较，超过时间片则调用 `__nc_yield()`
-3. `__nc_yield()`：将当前 G 的上下文保存到 G 结构，置 `G_RUNNABLE`，放入全局 run queue，进入调度器选下一个 G
+3. `__nc_yield()`：将当前 G 的上下文保存到 G 结构，置 `G_RUNNABLE`，放入全局 run queue（signal 可能 sleeping 的 worker），进入调度器选下一个 G
 
-### 限制
+### 与 GC safepoint 的分工
 
-- **纯循环无函数调用则不会 yield**（如 `while true { x += 1 }`）。这在 v1 是可接受的限制——该 G 会持续占用一个 worker，但其他 worker 不受影响
-- 该限制在 v2 中由异步抢占或 loop backedge safepoint 解决
+- **时间片 yield**：只在函数入口检查。纯计算循环（`while true { x += 1 }`）不会因时间片主动让出 worker。这在 v1 可接受——该 G 会持续占用一个 worker，但其他 worker 不受影响。
+- **GC safepoint**：在函数入口、loop backedge、gc_alloc 前均会触发。因此纯循环总能响应 GC STW。**loop backedge 的 safepoint 不做普通调度 yield，只在 `__nc_gc_safepoint_needed` 为 true 时暂停。**
+- v2 中考虑将 loop backedge 升级为通用时间片 yield，或引入异步抢占，消除纯计算循环不 yield 的局限。
 
 ## GC 与并发
 
@@ -333,14 +410,14 @@ safepoint 在以下位置触发：
 LLVM 后端负责在 loop backedge 处插入 safepoint poll。编译时识别 `ForAst`（条件循环）和 range loop（`for i, item in items`），在每次迭代结束前插入：
 
 ```
-if (__nc_safepoint_needed) {
+if (__nc_gc_safepoint_needed) {
     __nc_gc_safepoint()
 }
 ```
 
 当 GC 需要 STW 时：
 1. `__nc_gc_safepoint_needed` 被置为 true
-2. 所有 green thread 在下一个 safepoint 处停止
+2. 所有 green thread 在下一个 safepoint 处暂停
 3. STW 完成后，`__nc_gc_safepoint_needed` 被置为 false
 4. green thread 恢复执行
 
@@ -357,28 +434,31 @@ if (__nc_safepoint_needed) {
 
 | 特性 | 状态 |
 |---|---|
-| `runtime.spawn`（编译器洞） | 编译器 + 标准库 |
+| `runtime.spawn`（内建特殊函数，按 resolved symbol 识别） | 编译器 + ncrt |
 | 汇编上下文切换（x64 win/linux） | ncrt |
-| M 个 worker + 全局 run queue | ncrt |
-| 合作式 yield（函数序言 + loop backedge + alloc 点） | 编译器 + ncrt |
+| M 个 worker + 全局 run queue + worker wake cv | ncrt |
+| 合作式时间片 yield（仅函数入口） | 编译器 + ncrt |
+| GC safepoint（函数入口 + loop backedge + alloc 点） | 编译器 + ncrt |
 | 64KB 固定栈 + guard page | ncrt |
+| `__nc_spawn` 单一 ncrt 入口 | ncrt |
 | main 为 green thread + 等所有用户 G 退出 | ncrt |
 | G 状态机（RUNNABLE/RUNNING/WAIT_MUTEX/WAIT_TIMER/DEAD） | ncrt |
 | all-asleep 死锁 panic | ncrt |
-| `sync.Mutex`（handoff ownership 标准库） | 标准库 + ncrt |
-| `sleep`（timer 每轮检查） | ncrt |
-| GC STW（完全合作式 safepoint） | 编译器 + ncrt |
+| `sync.Mutex`（park_current_and_unlock + handoff ownership）| 标准库 + ncrt |
+| `sleep`（timer 每轮检查 + 插入更早 deadline 时 signal） | ncrt |
 
 ### v1 明确不包含
 
 | 特性 | 原因 |
 |---|---|
+| `runtime.spawn` 一等函数值 | 限制直接调用，避免 lowering 复杂度扩张 |
 | `go` 关键字 | `runtime.spawn` 无需关键字；未来可作为语法糖追加 |
 | channel / select | 无 case 驱动；语法和 lowering 成本高 |
 | TCP I/O netpoller | 无 case 驱动；epoll/kqueue/IOCP 工作量大 |
 | 文件 I/O 非阻塞包装 | 需要 io_uring 或相似技术 |
 | 工作窃取调度 | 全局队列在 v1 场景足够 |
 | 异步抢占（信号/APC） | 合作式 yield + loop backedge 在 v1 可接受 |
+| loop backedge 时间片 yield | 仅做 GC safepoint，不做普通调度 yield |
 | 动态栈增长 | 实现复杂且无 case 证明必要性 |
 | 可观测性 / debug 基础设施 | 无 case 驱动 |
 | per-P 内存分配缓存 | 先通后优 |
@@ -393,3 +473,4 @@ if (__nc_safepoint_needed) {
 - **工作窃取**：本地队列 + 偷取，降低全局队列锁竞争
 - **动态栈增长**：达到风险监控范围
 - **通用异步抢占**：信号驱动的抢占式调度，消除热循环不 yield 问题
+- **loop backedge 升级为时间片 yield**：消除纯计算循环不 yield 的局限
