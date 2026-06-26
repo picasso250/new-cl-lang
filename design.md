@@ -146,6 +146,26 @@ fun clamp(x: i32, lo: i32 = 0, hi: i32 = 100): i32 { ... }
 
 why：单返回值降低调用、类型检查和 ABI 复杂度；闭包是现代工程语言的基本能力，但性能目标允许胖指针和间接调用。
 
+## 入口函数
+
+可执行程序必须定义一个名为 `main` 的无参、返回 `void` 的函数作为入口：
+
+```nc
+fun main() {
+    io.println("hello")
+}
+```
+
+核心规则：
+
+- `main` 只是一个被编译器识别为入口的普通函数。签名固定为 `fun main()`，不接受参数，不返回退出码。
+- 命令行参数通过标准库 `os.args` 显式获取。
+- 退出码通过标准库 `os.exit(n)` 显式设置；`main` 正常返回等价于 `os.exit(0)`。
+- `main` 在某个 scheduler worker 上以 green thread 运行；编译器生成的 C runtime wrapper 负责调度器初始化和清理，不暴露给用户代码。
+- 编译器在链接层生成目标平台所需的 C ABI `main` 符号，调用链为 `crt0 → 编译器生成的 main → __nc_scheduler_init → 用户 fun main() → __nc_scheduler_shutdown`。
+
+why：`main` 只是一个命名约定，不为 OS 原语（argc/argv/exit code）提供魔法载体；命令行和退出行为通过标准库显式访问，与 C 的隐式绑定不同。
+
 ## 控制流
 
 我们要表达式化控制流：

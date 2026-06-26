@@ -328,3 +328,5 @@
 - 2026-06-25: Phase 2.2: test_phase2 双 mode (basic|regs) + 措辞精确化 — test_phase2 改为 basic / regs 两个 mode；basic mode 恢复运行 A→B→C 流程；寄存器测试只声明 RBX/R12/R15 pattern verified，XMM 暂未 pattern test。
 
 - 2026-06-25: 实现 Phase 3a — 单线程调度器：ncrt.c 新增 run queue（__nc_runq_push/pop/empty）、__nc_g_yield（置 RUNNABLE → push → switch 回 sched_g）、__nc_g_exit（置 DEAD → switch 回 sched_g；若无 scheduler 则 exit(0) 兼容 Phase 2）、__nc_scheduler_run（loop pop→switch→回收 DEAD G）；trampoline exit(0) 替换为 call __nc_g_exit。测试 test_phase3a.c：① G1/G2 yield 交替 A→B→C→D，g_step=4 验证；② 3 G 各 yield 3 次，计数 3/3/3 验证 run queue 清空。Phase 2 basic/regs + 回归 346/346 + 64/64 全通过。why：不靠 exit(0)，多个 G 能 yield/return，最后 scheduler 干净回到测试 main。
+
+- 2026-06-27: 通过 grill 流程确认入口函数设计边界并更新 design.md：`fun main()` 只是一个被编译器识别为入口的普通函数，签名固定为 `fun main()`（无参、返回 void），不为 argc/argv/exit code 提供魔法载体；命令行参数通过 `os.args` 获取，退出码通过 `os.exit(n)` 设置；编译器生成的 C runtime wrapper 负责调度器初始化和清理。design.md 新增「入口函数」小节记录该边界。why：`main()` 方案优于 Python 式顶层执行 + `if __name__ == '__main__'`，因为 NC 的目录模块模型、defer/spawn 函数边界需求、以及显式可预测的设计取向天然倾向纯声明式顶层；明确去除 C 式 argc/argv/return code magic 消除最后的设计不适。
