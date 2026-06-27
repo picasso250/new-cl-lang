@@ -1328,9 +1328,19 @@ class LLVMCodegen:
         return raw_ret
 
     def _erased_descriptor_type(self, ops: set[str]):
+        void_raw_raw = ir.FunctionType(ir.VoidType(), [I8PTR, I8PTR, I8PTR]).as_pointer()
+        void_raw_raw_unary = ir.FunctionType(ir.VoidType(), [I8PTR, I8PTR]).as_pointer()
+        bool_raw_raw = ir.FunctionType(ir.IntType(1), [I8PTR, I8PTR, I8PTR]).as_pointer()
+        hash_raw = ir.FunctionType(ir.IntType(64), [I8PTR, I8PTR]).as_pointer()
         fields = [
             ir.IntType(32),
-            ir.FunctionType(ir.IntType(1), [I8PTR, I8PTR, I8PTR]).as_pointer(),
+            ir.IntType(32),
+            void_raw_raw,
+            void_raw_raw_unary,
+            bool_raw_raw,
+            bool_raw_raw,
+            hash_raw,
+            void_raw_raw_unary,
         ]
         return ir.LiteralStructType(fields)
 
@@ -1348,15 +1358,46 @@ class LLVMCodegen:
         if existing is not None:
             return existing
         type_arg = format_type_ref(type_args[0]) if type_args else None
-        values = [ir.Constant(ir.IntType(32), self.sizeof_type(type_arg) if type_arg else 0)]
+        values = [
+            ir.Constant(ir.IntType(32), self.sizeof_type(type_arg) if type_arg else 0),
+            ir.Constant(ir.IntType(32), self.alignof_type(type_arg) if type_arg else 1),
+            self._erased_copy_function(type_arg).bitcast(desc_type.elements[2]),
+            self._erased_void_trap_function("zero", type_arg).bitcast(desc_type.elements[3]),
+            self._erased_bool_trap_function("eq", type_arg).bitcast(desc_type.elements[4]),
+        ]
         lt_fn = self._erased_lt_function(type_arg) if "lt" in ops else self._erased_lt_trap_function(type_arg)
-        values.append(lt_fn.bitcast(desc_type.elements[1]))
+        values.append(lt_fn.bitcast(desc_type.elements[5]))
+        values.append(self._erased_hash_trap_function(type_arg).bitcast(desc_type.elements[6]))
+        values.append(self._erased_trace_noop_function(type_arg).bitcast(desc_type.elements[7]))
         glob = ir.GlobalVariable(self.module, desc_type, name=name)
         glob.linkage = "linkonce_odr"
         glob.unnamed_addr = "unnamed_addr"
         glob.global_constant = True
         glob.initializer = ir.Constant(desc_type, values)
         return glob
+
+    def _declare_llvm_trap(self):
+        trap_ty = ir.FunctionType(ir.VoidType(), [])
+        trap = self.module.globals.get("llvm.trap")
+        if trap is None:
+            trap = ir.Function(self.module, trap_ty, name="llvm.trap")
+        return trap
+
+    def _erased_copy_function(self, typ: str):
+        name = f"__nc_erased_copy_{self._mangle_erased_type(typ)}"
+        existing = self.module.globals.get(name)
+        if existing is not None:
+            return existing
+        fn_ty = ir.FunctionType(ir.VoidType(), [I8PTR, I8PTR, I8PTR])
+        fn = ir.Function(self.module, fn_ty, name=name)
+        fn.linkage = "linkonce_odr"
+        block = fn.append_basic_block("entry")
+        saved_builder = self.builder
+        self.builder = ir.IRBuilder(block)
+        self.builder.call(self._declare_llvm_trap(), [])
+        self.builder.ret_void()
+        self.builder = saved_builder
+        return fn
 
     def _erased_lt_function(self, typ: str):
         name = f"__nc_erased_lt_{self._mangle_erased_type(typ)}"
@@ -1397,12 +1438,71 @@ class LLVMCodegen:
         block = fn.append_basic_block("entry")
         saved_builder = self.builder
         self.builder = ir.IRBuilder(block)
-        trap_ty = ir.FunctionType(ir.VoidType(), [])
-        trap = self.module.globals.get("llvm.trap")
-        if trap is None:
-            trap = ir.Function(self.module, trap_ty, name="llvm.trap")
-        self.builder.call(trap, [])
+        self.builder.call(self._declare_llvm_trap(), [])
         self.builder.ret(ir.Constant(ir.IntType(1), 0))
+        self.builder = saved_builder
+        return fn
+
+    def _erased_bool_trap_function(self, op: str, typ: str):
+        name = f"__nc_erased_{op}_trap_{self._mangle_erased_type(typ)}"
+        existing = self.module.globals.get(name)
+        if existing is not None:
+            return existing
+        fn_ty = ir.FunctionType(ir.IntType(1), [I8PTR, I8PTR, I8PTR])
+        fn = ir.Function(self.module, fn_ty, name=name)
+        fn.linkage = "linkonce_odr"
+        block = fn.append_basic_block("entry")
+        saved_builder = self.builder
+        self.builder = ir.IRBuilder(block)
+        self.builder.call(self._declare_llvm_trap(), [])
+        self.builder.ret(ir.Constant(ir.IntType(1), 0))
+        self.builder = saved_builder
+        return fn
+
+    def _erased_void_trap_function(self, op: str, typ: str):
+        name = f"__nc_erased_{op}_trap_{self._mangle_erased_type(typ)}"
+        existing = self.module.globals.get(name)
+        if existing is not None:
+            return existing
+        fn_ty = ir.FunctionType(ir.VoidType(), [I8PTR, I8PTR])
+        fn = ir.Function(self.module, fn_ty, name=name)
+        fn.linkage = "linkonce_odr"
+        block = fn.append_basic_block("entry")
+        saved_builder = self.builder
+        self.builder = ir.IRBuilder(block)
+        self.builder.call(self._declare_llvm_trap(), [])
+        self.builder.ret_void()
+        self.builder = saved_builder
+        return fn
+
+    def _erased_hash_trap_function(self, typ: str):
+        name = f"__nc_erased_hash_trap_{self._mangle_erased_type(typ)}"
+        existing = self.module.globals.get(name)
+        if existing is not None:
+            return existing
+        fn_ty = ir.FunctionType(ir.IntType(64), [I8PTR, I8PTR])
+        fn = ir.Function(self.module, fn_ty, name=name)
+        fn.linkage = "linkonce_odr"
+        block = fn.append_basic_block("entry")
+        saved_builder = self.builder
+        self.builder = ir.IRBuilder(block)
+        self.builder.call(self._declare_llvm_trap(), [])
+        self.builder.ret(ir.Constant(ir.IntType(64), 0))
+        self.builder = saved_builder
+        return fn
+
+    def _erased_trace_noop_function(self, typ: str):
+        name = f"__nc_erased_trace_noop_{self._mangle_erased_type(typ)}"
+        existing = self.module.globals.get(name)
+        if existing is not None:
+            return existing
+        fn_ty = ir.FunctionType(ir.VoidType(), [I8PTR, I8PTR])
+        fn = ir.Function(self.module, fn_ty, name=name)
+        fn.linkage = "linkonce_odr"
+        block = fn.append_basic_block("entry")
+        saved_builder = self.builder
+        self.builder = ir.IRBuilder(block)
+        self.builder.ret_void()
         self.builder = saved_builder
         return fn
 

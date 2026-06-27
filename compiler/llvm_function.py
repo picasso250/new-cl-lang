@@ -230,14 +230,24 @@ class FunctionEmitter:
         desc = self.ctx.builder.load(desc_slot, name="erased.desc.value")
         left = self.ctx.builder.load(left_slot, name="erased.left.raw")
         right = self.ctx.builder.load(right_slot, name="erased.right.raw")
+        void_raw_raw = ir.FunctionType(ir.VoidType(), [I8PTR, I8PTR, I8PTR]).as_pointer()
+        void_raw_raw_unary = ir.FunctionType(ir.VoidType(), [I8PTR, I8PTR]).as_pointer()
+        bool_raw_raw = ir.FunctionType(ir.IntType(1), [I8PTR, I8PTR, I8PTR]).as_pointer()
+        hash_raw = ir.FunctionType(ir.IntType(64), [I8PTR, I8PTR]).as_pointer()
         desc_struct_ty = ir.LiteralStructType([
             ir.IntType(32),
-            ir.FunctionType(ir.IntType(1), [I8PTR, I8PTR, I8PTR]).as_pointer(),
+            ir.IntType(32),
+            void_raw_raw,
+            void_raw_raw_unary,
+            bool_raw_raw,
+            bool_raw_raw,
+            hash_raw,
+            void_raw_raw_unary,
         ])
         desc_ptr = self.ctx.builder.bitcast(desc, desc_struct_ty.as_pointer(), name="erased.desc.ptr")
         lt_ptr = self.ctx.builder.gep(
             desc_ptr,
-            [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 1)],
+            [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 5)],
             inbounds=True,
             name="erased.desc.lt.ptr",
         )
