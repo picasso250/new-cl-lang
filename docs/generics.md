@@ -16,8 +16,8 @@
 ## 约束族
 
 - `types.Eq`：支持 `==` / `!=` 的类型。
-- `types.Ord`：支持 `<` / `>` / `<=` / `>=` 的类型，当前为数值类型、`str` 或带合法 `__lt__` 的 struct；`str` 按 UTF-8 原始字节序比较，不做 Unicode collation 或 locale 排序。
-- `types.Hash`：可作为 `map[K,V]` key 的类型，要求 equality 是稳定等价关系；float 不满足。
+- `types.Ord`：支持 `<` / `>` / `<=` / `>=` 的类型，当前为数值类型、`str` 或带合法 `__lt__` 的 struct；`str` 按 UTF-8 原始字节序比较，不做 Unicode collation 或 locale 排序。`types.Ord` 只要求 strict ordering，不隐含 `types.Eq`；`>`、`<=`、`>=` 由 `<` 派生。
+- `types.Hash`：可作为 `map[K,V]` key 的类型，隐含 `types.Eq`，要求 equality 是稳定等价关系；float 不满足。
 - `types.Zero`：有零值的类型。
 
 ## 类型属性矩阵
@@ -33,11 +33,11 @@
 | `*T` | yes | no | yes | no | 非空指针没有零值 |
 | `?*T` | yes | no | yes | yes | nil 是零值 |
 | `[]T` | no | no | no | yes | slice 零值为空/nil slice |
-| `[N]T` | no | no | no | if `T: Zero` | 数组不参与 equality 或 map key |
+| `[N]T` | no | no | no | if `T: Zero` | 长度进入类型的数组对象句柄，不参与 equality 或 map key |
 | `map[K,V]` | no | no | no | yes | map 零值为空/nil map |
 | `fun(T) R` | no | no | no | yes | 函数值不参与 equality |
 | `iface` | no | no | no | yes | 接口值不参与 equality |
-| `struct` | if all fields Eq | if valid `__lt__` | if all fields Hash | if all fields Zero | Eq/Hash/Zero 字段递归判断；Ord 由特殊方法决定 |
+| `struct` | if all fields Eq | if valid `__lt__` | if all fields Hash | if all fields Zero | Eq/Hash/Zero 字段递归判断；Ord 只由 `__lt__` 决定 |
 | `void` | no | no | no | no | 不能作为值类型 |
 
 ## 标准库使用

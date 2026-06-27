@@ -75,7 +75,7 @@ fun(T) R
 - `str` 不可变，表示 UTF-8 字节串。
 - `rune` 表示 Unicode 码点，不当作普通 numeric 使用。
 - `*T` 非空；`?*T` 可为 `nil`。
-- `[]T` 是动态切片；`[N]T` 是定长数组。
+- `[]T` 是动态切片；`[N]T` 是长度进入类型的数组对象句柄，底层不承诺 inline value array。
 - `map[K,V]` 是语言内建泛型 map。key 必须是非 float 的可哈希比较类型；value 必须是有零值的 sized 类型。
 - 函数值类型写作 `fun(params) Ret`。
 - 非空 slice literal 可写作 `[]{...}` 并从首元素推导元素类型；空 slice literal 仍必须写 `[]T{}`。
@@ -212,7 +212,8 @@ struct 嵌入规则：
 
 - 必须显式写类型实参。
 - v1 支持 `any` 和标准库约束 `types.Eq`、`types.Ord`、`types.Hash`、`types.Zero`。
-- `types.Ord` 支持数值类型、`str` 和具备合法 `__lt__` 的 struct。
+- `types.Ord` 支持数值类型、`str` 和具备合法 `__lt__` 的 struct；`types.Ord` 只要求 strict ordering，不隐含 `types.Eq`。
+- `types.Hash` 隐含 `types.Eq`。
 - 已完全实例化的泛型函数可作为函数值使用。
 - 递归函数需要显式返回类型，避免返回类型推导成环。
 
@@ -249,8 +250,8 @@ struct 可通过窄版特殊方法重载运算符：
 
 - `+ - * / %` 对应 `__add__ __sub__ __mul__ __div__ __mod__`，返回同类型。
 - 一元 `-` 对应 `__neg__`，返回同类型。
-- `< <= > >=` 对应 `__lt__ __le__ __gt__ __ge__`，返回 `bool`。`__lt__` 是 `types.Ord` 的 struct 核心能力。
-- 缺少手写 `__le__`/`__gt__`/`__ge__` 时，分别由 `__lt__` 派生为 `!(b < a)`/`b < a`/`!(a < b)`。
+- `<` 对应 `__lt__`，返回 `bool`。`__lt__` 是 `types.Ord` 的 struct 核心能力。
+- `>`、`<=`、`>=` 由 `__lt__` 派生，分别为 `b < a`、`!(b < a)`、`!(a < b)`。
 - 二元特殊方法必须是 `fun (x *T) __op__(other: T): T/bool`；一元 `__neg__` 必须是 `fun (x *T) __neg__(): T`。
 - 不支持 `__eq__`、`__ne__`、反向运算、异构运算或自定义返回类型。
 
