@@ -330,3 +330,7 @@
 - 2026-06-25: 实现 Phase 3a — 单线程调度器：ncrt.c 新增 run queue（__nc_runq_push/pop/empty）、__nc_g_yield（置 RUNNABLE → push → switch 回 sched_g）、__nc_g_exit（置 DEAD → switch 回 sched_g；若无 scheduler 则 exit(0) 兼容 Phase 2）、__nc_scheduler_run（loop pop→switch→回收 DEAD G）；trampoline exit(0) 替换为 call __nc_g_exit。测试 test_phase3a.c：① G1/G2 yield 交替 A→B→C→D，g_step=4 验证；② 3 G 各 yield 3 次，计数 3/3/3 验证 run queue 清空。Phase 2 basic/regs + 回归 346/346 + 64/64 全通过。why：不靠 exit(0)，多个 G 能 yield/return，最后 scheduler 干净回到测试 main。
 
 - 2026-06-27: 通过 grill 流程确认入口函数设计边界并更新 design.md：`fun main()` 只是一个被编译器识别为入口的普通函数，签名固定为 `fun main()`（无参、返回 void），不为 argc/argv/exit code 提供魔法载体；命令行参数通过 `os.args` 获取，退出码通过 `os.exit(n)` 设置；编译器生成的 C runtime wrapper 负责调度器初始化和清理。design.md 新增「入口函数」小节记录该边界。why：`main()` 方案优于 Python 式顶层执行 + `if __name__ == '__main__'`，因为 NC 的目录模块模型、defer/spawn 函数边界需求、以及显式可预测的设计取向天然倾向纯声明式顶层；明确去除 C 式 argc/argv/return code magic 消除最后的设计不适。
+
+- 2026-06-27: 预备将泛型函数从 AST 单态化改为类型擦除 + 描述符传递。与舰长 grill 后确定方案：Go 式 GC Shape + 字典（调用端生成描述符常量，泛型函数在定义模块只编译一次），先不加 monomorphize 关键字，泛型 struct 保持单态化。新增 docs/generics-implementation.md 记录完整设计。why：消除 C++ 模板路线的二进制膨胀和模块重复编译结构性风险。
+
+- 2026-06-27: 完成 Stage 1 泛型类型擦除 — `id[T](x: T): T` 链路跑通。新增 compiler/erase_generics.py（描述符推导 + 签名擦除），修改 generics.py 将泛型函数路径从 deep-copy 改为擦除（struct 保持单态化），symtab/typecheck/llvm_layout 新增 `raw` 内部类型（i8*），LLVM codegen 新增 `_emit_erased_call`（alloca+store+bitcast slot ABI）。case_170 通过：i32/str/bool 三种调用共享同一 `__erased_id` 函数。339/354 language cases 通过；剩余 15 个 failure 属于 Stage 2+ 范畴（Ord 约束、泛型函数值、默认参数泛型）。why：最小链路验证 erased value ABI 可行性。
