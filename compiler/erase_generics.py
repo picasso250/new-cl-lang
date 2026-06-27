@@ -11,9 +11,12 @@ The actual LLVM IR body is emitted by LLVMCodegen when it sees the
 from __future__ import annotations
 
 from compiler.ast import (
+    BinaryOp,
     Block,
+    ExpressionStatement,
     FunctionCall,
     FunctionDeclaration,
+    IfExpr,
     Identifier,
     Param,
     Return,
@@ -72,6 +75,41 @@ def collect_ops_for_func(fn: FunctionDeclaration) -> set[str]:
     if fn.return_type in type_param_names:
         ops.add("size")
 
+    seen: set[int] = set()
+
+    def visit(node):
+        if id(node) in seen:
+            return
+        seen.add(id(node))
+        if isinstance(node, BinaryOp) and node.op in ("<", "<=", ">", ">="):
+            if (isinstance(node.left, Identifier) and isinstance(node.right, Identifier)):
+                left_param = next((p for p in fn.params if p.name == node.left.name), None)
+                right_param = next((p for p in fn.params if p.name == node.right.name), None)
+                if left_param is not None and right_param is not None:
+                    if left_param.type in type_param_names and right_param.type == left_param.type:
+                        ops.add("lt")
+        if not hasattr(node, "__dict__"):
+            return
+        for key, value in node.__dict__.items():
+            if key in {"source_file", "type", "span", "source_span"}:
+                continue
+            if isinstance(value, list):
+                for item in value:
+                    if hasattr(item, "__dict__"):
+                        visit(item)
+                    elif isinstance(item, tuple):
+                        for part in item:
+                            if hasattr(part, "__dict__"):
+                                visit(part)
+            elif isinstance(value, tuple):
+                for item in value:
+                    if hasattr(item, "__dict__"):
+                        visit(item)
+            elif hasattr(value, "__dict__"):
+                visit(value)
+
+    visit(fn.body)
+
     if not ops:
         ops.add("size")
 
@@ -82,6 +120,7 @@ def erase_function(fn: FunctionDeclaration, ops: set[str]) -> FunctionDeclaratio
     """Generate the erased version of a generic function.
 
     The erased function at the AST level:
+    - First param is desc: raw
     - Original T params become raw
     - Return type becomes raw (if it was T), void otherwise
     - No desc parameter at AST level (LLVM codegen adds it)
@@ -89,7 +128,7 @@ def erase_function(fn: FunctionDeclaration, ops: set[str]) -> FunctionDeclaratio
     """
     erased_name = _erased_func_name(fn.name)
 
-    params = []
+    params = [Param("_desc", RAW_TYPE)]
     for param in fn.params:
         if param.type in (fn.type_params or []):
             params.append(Param(param.name, RAW_TYPE, default=param.default))
@@ -98,11 +137,12 @@ def erase_function(fn: FunctionDeclaration, ops: set[str]) -> FunctionDeclaratio
 
     return_type = RAW_TYPE if fn.return_type in (fn.type_params or []) else fn.return_type
 
+    ret_name = fn.params[0].name if fn.params else "_desc"
     erased = FunctionDeclaration(
         name=erased_name,
         params=params,
         return_type=return_type,
-        body=Block([Return(Identifier(fn.params[0].name))]) if fn.params and return_type == RAW_TYPE else Block([]),
+        body=Block([Return(Identifier(ret_name))]) if fn.params and return_type == RAW_TYPE else Block([]),
     )
     # Attach metadata so LLVM codegen can regenerate the body
     erased._erased_template = fn

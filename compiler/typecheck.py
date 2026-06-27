@@ -959,6 +959,8 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                 ret_type, params = funcs[node.name]
                 if ret_type is None:
                     ret_type = resolve_function_return(node.name, node)
+                if getattr(node, "_erased_call", False) and params and getattr(params[0], "type", None) == "raw":
+                    params = params[1:]
                 apply_default_args(node.args, params, node.name, node)
                 for arg, (pname, ptype) in zip(node.args, params):
                     if getattr(node, "_erased_call", False) and ptype == "raw":

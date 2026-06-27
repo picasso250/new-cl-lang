@@ -214,8 +214,39 @@ class FunctionEmitter:
         ) = saved_gc
 
     def emit_function_body(self, fn: FunctionDeclaration):
+        if getattr(fn, "_is_erased_generic", False) and "lt" in set(getattr(fn, "_erased_ops", set())):
+            self.emit_erased_ord_min_body(fn)
+            return
         self.emit_callable_body(fn.body, fn.return_type or "void", f"function {fn.name}",
                                 is_main=fn.name == "main", is_extern=getattr(fn, "is_extern", False))
+
+    def emit_erased_ord_min_body(self, fn: FunctionDeclaration):
+        prev_return_type, prev_is_main = self.ctx.current_return_type, self.ctx.current_is_main
+        self.ctx.current_return_type = fn.return_type or "void"
+        self.ctx.current_is_main = False
+        desc_slot, _desc_type = self.ctx.vars["_desc"]
+        left_slot, _left_type = self.ctx.vars[fn.params[1].name]
+        right_slot, _right_type = self.ctx.vars[fn.params[2].name]
+        desc = self.ctx.builder.load(desc_slot, name="erased.desc.value")
+        left = self.ctx.builder.load(left_slot, name="erased.left.raw")
+        right = self.ctx.builder.load(right_slot, name="erased.right.raw")
+        desc_struct_ty = ir.LiteralStructType([
+            ir.IntType(32),
+            ir.FunctionType(ir.IntType(1), [I8PTR, I8PTR, I8PTR]).as_pointer(),
+        ])
+        desc_ptr = self.ctx.builder.bitcast(desc, desc_struct_ty.as_pointer(), name="erased.desc.ptr")
+        lt_ptr = self.ctx.builder.gep(
+            desc_ptr,
+            [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 1)],
+            inbounds=True,
+            name="erased.desc.lt.ptr",
+        )
+        lt_fn = self.ctx.builder.load(lt_ptr, name="erased.desc.lt")
+        cond = self.ctx.builder.call(lt_fn, [desc, left, right], name="erased.lt")
+        selected = self.ctx.builder.select(cond, left, right, name="erased.min.raw")
+        self.ctx.builder.store(selected, self.ctx.current_return_slot)
+        self.emit_success_return()
+        self.ctx.current_return_type, self.ctx.current_is_main = prev_return_type, prev_is_main
 
     def emit_callable_body(self, body: Block, return_type: str, name: str, is_main: bool = False,
                            is_extern: bool = False):

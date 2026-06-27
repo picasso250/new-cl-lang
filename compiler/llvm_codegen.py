@@ -45,7 +45,7 @@ from compiler.llvm_slice import SliceEmitter
 from compiler.llvm_string import StringEmitter
 from compiler.source_location import line_col_for_node, normalized_source_path, source_module_name
 from compiler.target import TargetSpec, get_target
-from compiler.type_ref import parse_array_type, parse_fn_type, parse_map_type, parse_slice_type, type_key
+from compiler.type_ref import format_type_ref, parse_array_type, parse_fn_type, parse_map_type, parse_slice_type, type_key
 
 
 @dataclass
@@ -1291,7 +1291,12 @@ class LLVMCodegen:
         loads the result after.
         """
         coerced_args = []
-        for arg, (_pname, ptype) in zip(node.args, fn_decl.params):
+        params = list(fn_decl.params)
+        if getattr(fn_decl, "_is_erased_generic", False):
+            desc = self._erased_descriptor_global(fn_decl, getattr(node, "_erased_type_args", []))
+            coerced_args.append(self.builder.bitcast(desc, I8PTR, name="erased.desc"))
+            params = params[1:]
+        for arg, (_pname, ptype) in zip(node.args, params):
             if ptype == "raw" and arg.type != "raw":
                 # Allocate a slot for the concrete value
                 arg_val = self.emit_expr(arg)
@@ -1321,6 +1326,65 @@ class LLVMCodegen:
             ret_ptr = self.builder.bitcast(raw_ret, ret_ll_type.as_pointer(), name="erased.ret.cast")
             return self.builder.load(ret_ptr, name="erased.ret.val")
         return raw_ret
+
+    def _erased_descriptor_type(self, ops: set[str]):
+        fields = [ir.IntType(32)]
+        if "lt" in ops:
+            fields.append(ir.FunctionType(ir.IntType(1), [I8PTR, I8PTR, I8PTR]).as_pointer())
+        return ir.LiteralStructType(fields)
+
+    def _mangle_erased_type(self, typ: str) -> str:
+        import re
+        typ = format_type_ref(typ)
+        return re.sub(r"[^A-Za-z0-9_]+", "_", typ).strip("_") or "anon"
+
+    def _erased_descriptor_global(self, fn_decl, type_args: list[str]):
+        ops = set(getattr(fn_decl, "_erased_ops", set()))
+        desc_type = self._erased_descriptor_type(ops)
+        base_name = getattr(getattr(fn_decl, "_erased_template", None), "name", fn_decl.name)
+        suffix = "_".join(self._mangle_erased_type(t) for t in type_args) or "unit"
+        name = f"__desc_{base_name}_{suffix}"
+        existing = self.module.globals.get(name)
+        if existing is not None:
+            return existing
+        type_arg = format_type_ref(type_args[0]) if type_args else None
+        values = [ir.Constant(ir.IntType(32), self.sizeof_type(type_arg) if type_arg else 0)]
+        if "lt" in ops:
+            values.append(self._erased_lt_function(type_arg).bitcast(desc_type.elements[1]))
+        glob = ir.GlobalVariable(self.module, desc_type, name=name)
+        glob.linkage = "linkonce_odr"
+        glob.unnamed_addr = "unnamed_addr"
+        glob.global_constant = True
+        glob.initializer = ir.Constant(desc_type, values)
+        return glob
+
+    def _erased_lt_function(self, typ: str):
+        name = f"__nc_erased_lt_{self._mangle_erased_type(typ)}"
+        existing = self.module.globals.get(name)
+        if existing is not None:
+            return existing
+        fn_ty = ir.FunctionType(ir.IntType(1), [I8PTR, I8PTR, I8PTR])
+        fn = ir.Function(self.module, fn_ty, name=name)
+        fn.linkage = "linkonce_odr"
+        block = fn.append_basic_block("entry")
+        saved_builder = self.builder
+        self.builder = ir.IRBuilder(block)
+        left_ptr = self.builder.bitcast(fn.args[1], llvm_type(typ).as_pointer(), name="lt.left.ptr")
+        right_ptr = self.builder.bitcast(fn.args[2], llvm_type(typ).as_pointer(), name="lt.right.ptr")
+        left = self.builder.load(left_ptr, name="lt.left")
+        right = self.builder.load(right_ptr, name="lt.right")
+        if typ == "str":
+            cmp_value = self.emit_str_cmp(left, right)
+            result = self.builder.icmp_signed("<", cmp_value, ir.Constant(ir.IntType(32), 0), name="lt.str")
+        elif typ in FLOAT_TYPES:
+            result = self.builder.fcmp_ordered("<", left, right, name="lt.float")
+        elif typ in UNSIGNED_INT_TYPES:
+            result = self.builder.icmp_unsigned("<", left, right, name="lt.uint")
+        else:
+            result = self.builder.icmp_signed("<", left, right, name="lt.int")
+        self.builder.ret(result)
+        self.builder = saved_builder
+        return fn
 
     def emit_fallible_op(self, node: FallibleOp):
         return self.function_emitter.emit_fallible_op(node)

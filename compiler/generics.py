@@ -6,9 +6,10 @@ import copy
 import re
 
 from compiler.ast import (
-    ExpressionStatement, FunctionCall, FunctionDeclaration, GenericFunctionValue, Identifier, IndexAccess,
+    BinaryOp, ExpressionStatement, FunctionCall, FunctionDeclaration, GenericFunctionValue, Identifier, IfExpr, IndexAccess,
     MapLiteral, Program, Return, SizeOfType, StructDecl, StructLiteral,
 )
+from compiler.constraints import ORD_CONSTRAINT
 from compiler.constraints import satisfies_constraint
 from compiler.erase_generics import (
     collect_ops_for_func,
@@ -164,6 +165,61 @@ def monomorphize(program: Program) -> Program:
             return False
         return isinstance(ret_expr, Identifier) and any(ret_expr.name == param.name for param in tmpl.params)
 
+    def _single_tail_expr(tmpl: FunctionDeclaration):
+        stmts = getattr(getattr(tmpl, "body", None), "statements", [])
+        if len(stmts) != 1:
+            return None
+        stmt = stmts[0]
+        if isinstance(stmt, Return):
+            return stmt.expr
+        if isinstance(stmt, ExpressionStatement):
+            return stmt.expr
+        return None
+
+    def _block_identifier_name(block):
+        stmts = getattr(block, "statements", [])
+        if len(stmts) != 1:
+            return None
+        stmt = stmts[0]
+        if isinstance(stmt, Return):
+            expr = stmt.expr
+        elif isinstance(stmt, ExpressionStatement):
+            expr = stmt.expr
+        else:
+            return None
+        return expr.name if isinstance(expr, Identifier) else None
+
+    def can_erase_stage2_ord_min(tmpl: FunctionDeclaration) -> bool:
+        constraints = getattr(tmpl, "type_param_constraints", {}) or {}
+        if len(tmpl.type_params or []) != 1:
+            return False
+        type_param = tmpl.type_params[0]
+        if constraints.get(type_param, "any") != ORD_CONSTRAINT:
+            return False
+        if any(param.default is not None for param in tmpl.params):
+            return False
+        if len(tmpl.params) != 2 or tmpl.return_type != type_param:
+            return False
+        if any(param.type != type_param for param in tmpl.params):
+            return False
+        expr = _single_tail_expr(tmpl)
+        if not isinstance(expr, IfExpr) or expr.else_block is None:
+            return False
+        cond = expr.condition
+        if not isinstance(cond, BinaryOp) or cond.op != "<":
+            return False
+        left_name = cond.left.name if isinstance(cond.left, Identifier) else None
+        right_name = cond.right.name if isinstance(cond.right, Identifier) else None
+        if left_name != tmpl.params[0].name or right_name != tmpl.params[1].name:
+            return False
+        return (
+            _block_identifier_name(expr.then_block) == tmpl.params[0].name
+            and _block_identifier_name(expr.else_block) == tmpl.params[1].name
+        )
+
+    def can_erase(tmpl: FunctionDeclaration) -> bool:
+        return can_erase_stage1(tmpl) or can_erase_stage2_ord_min(tmpl)
+
     def request_struct(base, args):
         if base not in generic_structs:
             if args:
@@ -202,7 +258,7 @@ def monomorphize(program: Program) -> Program:
             if not satisfies_constraint(arg, constraint):
                 raise GenericError(f"generic function {base}: type arg {arg} does not satisfy {constraint}")
 
-        if not can_erase_stage1(tmpl):
+        if not can_erase(tmpl):
             key = (base, tuple(args))
             inst_name = _instance_name(base, args)
             if key in made_funcs:
