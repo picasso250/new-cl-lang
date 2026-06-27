@@ -1328,9 +1328,10 @@ class LLVMCodegen:
         return raw_ret
 
     def _erased_descriptor_type(self, ops: set[str]):
-        fields = [ir.IntType(32)]
-        if "lt" in ops:
-            fields.append(ir.FunctionType(ir.IntType(1), [I8PTR, I8PTR, I8PTR]).as_pointer())
+        fields = [
+            ir.IntType(32),
+            ir.FunctionType(ir.IntType(1), [I8PTR, I8PTR, I8PTR]).as_pointer(),
+        ]
         return ir.LiteralStructType(fields)
 
     def _mangle_erased_type(self, typ: str) -> str:
@@ -1341,16 +1342,15 @@ class LLVMCodegen:
     def _erased_descriptor_global(self, fn_decl, type_args: list[str]):
         ops = set(getattr(fn_decl, "_erased_ops", set()))
         desc_type = self._erased_descriptor_type(ops)
-        base_name = getattr(getattr(fn_decl, "_erased_template", None), "name", fn_decl.name)
         suffix = "_".join(self._mangle_erased_type(t) for t in type_args) or "unit"
-        name = f"__desc_{base_name}_{suffix}"
+        name = f"__nc_typedesc_{suffix}"
         existing = self.module.globals.get(name)
         if existing is not None:
             return existing
         type_arg = format_type_ref(type_args[0]) if type_args else None
         values = [ir.Constant(ir.IntType(32), self.sizeof_type(type_arg) if type_arg else 0)]
-        if "lt" in ops:
-            values.append(self._erased_lt_function(type_arg).bitcast(desc_type.elements[1]))
+        lt_fn = self._erased_lt_function(type_arg) if "lt" in ops else self._erased_lt_trap_function(type_arg)
+        values.append(lt_fn.bitcast(desc_type.elements[1]))
         glob = ir.GlobalVariable(self.module, desc_type, name=name)
         glob.linkage = "linkonce_odr"
         glob.unnamed_addr = "unnamed_addr"
@@ -1383,6 +1383,26 @@ class LLVMCodegen:
         else:
             result = self.builder.icmp_signed("<", left, right, name="lt.int")
         self.builder.ret(result)
+        self.builder = saved_builder
+        return fn
+
+    def _erased_lt_trap_function(self, typ: str):
+        name = f"__nc_erased_lt_trap_{self._mangle_erased_type(typ)}"
+        existing = self.module.globals.get(name)
+        if existing is not None:
+            return existing
+        fn_ty = ir.FunctionType(ir.IntType(1), [I8PTR, I8PTR, I8PTR])
+        fn = ir.Function(self.module, fn_ty, name=name)
+        fn.linkage = "linkonce_odr"
+        block = fn.append_basic_block("entry")
+        saved_builder = self.builder
+        self.builder = ir.IRBuilder(block)
+        trap_ty = ir.FunctionType(ir.VoidType(), [])
+        trap = self.module.globals.get("llvm.trap")
+        if trap is None:
+            trap = ir.Function(self.module, trap_ty, name="llvm.trap")
+        self.builder.call(trap, [])
+        self.builder.ret(ir.Constant(ir.IntType(1), 0))
         self.builder = saved_builder
         return fn
 

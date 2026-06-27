@@ -16,48 +16,17 @@ from compiler.ast import (
     ExpressionStatement,
     FunctionCall,
     FunctionDeclaration,
-    IfExpr,
     Identifier,
     Param,
     Return,
-    StructDecl,
-    StructLiteral,
 )
-from compiler.type_ref import format_type_ref, NamedType, PointerType
 
 
 # Sentinel type name for erased T values (compiler-internal).
 RAW_TYPE = "raw"
 
-# Descriptor struct field names
-DESC_SIZE_FIELD = "size"
-
-
-def _desc_struct_name(base_name: str) -> str:
-    return f"__desc_{base_name}"
-
-
 def _erased_func_name(base_name: str) -> str:
     return f"__erased_{base_name}"
-
-
-def make_descriptor_struct(base_name: str, ops: set[str]) -> StructDecl:
-    """Generate a synthetic StructDecl for the descriptor.
-
-    For Stage 1, only the 'size' field is emitted as i32.
-    Function pointer fields (lt, eq, hash, zero) will be added in later stages.
-    """
-    fields: list[tuple[str, str]] = []
-
-    if "size" in ops:
-        fields.append((DESC_SIZE_FIELD, "i32"))
-
-    # TODO Stage 2+: add lt/eq/hash/zero as function pointer fields
-
-    return StructDecl(
-        name=_desc_struct_name(base_name),
-        fields=fields,
-    )
 
 
 def collect_ops_for_func(fn: FunctionDeclaration) -> set[str]:

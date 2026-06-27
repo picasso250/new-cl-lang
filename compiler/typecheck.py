@@ -47,11 +47,8 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
         "/": "__div__",
         "%": "__mod__",
         "<": "__lt__",
-        "<=": "__le__",
-        ">": "__gt__",
-        ">=": "__ge__",
     }
-    ORDER_OPERATOR_METHODS = {"__lt__", "__le__", "__gt__", "__ge__"}
+    ORDER_OPERATOR_METHODS = {"__lt__"}
     DERIVED_ORDER_FROM_LT = {
         "<=": ("right", True),
         ">": ("right", False),
@@ -883,27 +880,18 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                     return
                 if not (is_numeric_type(node.left.type) and is_numeric_type(node.right.type)):
                     if node.left.type in getattr(symtab, "_structs", {}) and node.right.type == node.left.type:
-                        method_name = OPERATOR_METHODS[node.op]
-                        overload = validate_operator_method(node.left.type, method_name, node)
+                        overload = validate_operator_method(node.left.type, "__lt__", node)
                         if overload is not None:
                             path, receiver_base, _ret_type = overload
-                            node.overload_method = method_name
+                            node.overload_method = "__lt__"
                             node.overload_receiver_path = path
                             node.overload_receiver_base = receiver_base
-                            node.type = "bool"
-                            return
-                        if node.op in DERIVED_ORDER_FROM_LT:
-                            overload = validate_operator_method(node.left.type, "__lt__", node)
-                            if overload is not None:
-                                path, receiver_base, _ret_type = overload
+                            if node.op in DERIVED_ORDER_FROM_LT:
                                 receiver_side, negate = DERIVED_ORDER_FROM_LT[node.op]
-                                node.overload_method = "__lt__"
-                                node.overload_receiver_path = path
-                                node.overload_receiver_base = receiver_base
                                 node.overload_receiver_side = receiver_side
                                 node.overload_negate = negate
-                                node.type = "bool"
-                                return
+                            node.type = "bool"
+                            return
                     fail(f"comparison: expected numeric operands, got {node.left.type} and {node.right.type}", node)
                 require_type(node.right.type, node.left.type, "comparison", node)
                 node.type = "bool"

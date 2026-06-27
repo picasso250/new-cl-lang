@@ -1,5 +1,5 @@
 import io
-# STDOUT: 0
+# STDOUT: 1
 # STDOUT: 1
 
 struct Box { x: i32 }

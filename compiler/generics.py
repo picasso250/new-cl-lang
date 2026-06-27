@@ -13,9 +13,7 @@ from compiler.constraints import ORD_CONSTRAINT
 from compiler.constraints import satisfies_constraint
 from compiler.erase_generics import (
     collect_ops_for_func,
-    erase_call_site,
     erase_function,
-    make_descriptor_struct,
     _erased_func_name,
 )
 from compiler.type_ref import (
@@ -293,11 +291,6 @@ def monomorphize(program: Program) -> Program:
             concrete_funcs[inst.name] = inst
             generated.append(inst)
 
-            # Also generate the descriptor struct (once)
-            desc_struct = make_descriptor_struct(base, ops)
-            desc_struct._generic_origin_kind = "descriptor"
-            desc_struct._generic_origin_name = base
-            generated.append(desc_struct)
         return _erased_func_name(base)
 
     def rewrite_type(t):
