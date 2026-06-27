@@ -1359,6 +1359,8 @@ class LLVMCodegen:
         user_main = self.module.globals.get("main")
         if not user_main or not isinstance(user_main, ir.Function):
             return
+        if not user_main.blocks:
+            return
         for name, ret_ty, arg_tys in [
             ("__nc_scheduler_init", void_ty, [i32_ty]),
             ("__nc_scheduler_shutdown", void_ty, []),
