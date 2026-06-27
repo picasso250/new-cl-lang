@@ -961,8 +961,21 @@ def infer_types(program: "Program", symtab: "SymbolTable", source: str | None = 
                     ret_type = resolve_function_return(node.name, node)
                 apply_default_args(node.args, params, node.name, node)
                 for arg, (pname, ptype) in zip(node.args, params):
+                    if getattr(node, "_erased_call", False) and ptype == "raw":
+                        continue  # raw is compatible with any type for erased calls
                     require_type(arg.type, ptype, f"argument {pname} to {node.name}", arg)
                 node.type = ret_type
+                # For erased calls, substitute type args to get concrete return type
+                if getattr(node, "_erased_call", False):
+                    type_args = getattr(node, "_erased_type_args", [])
+                    if type_args and ret_type == "raw":
+                        fn_node = function_decls.get(node.name)
+                        if fn_node and hasattr(fn_node, "_erased_template"):
+                            tmpl = fn_node._erased_template
+                            if tmpl.type_params and tmpl.return_type in tmpl.type_params:
+                                idx = tmpl.type_params.index(tmpl.return_type)
+                                if idx < len(type_args):
+                                    node.type = type_args[idx]
                 node.is_closure_call = False
                 fn_node = function_decls.get(node.name)
                 node.fallible = bool(getattr(fn_node, "fallible", False))

@@ -1266,6 +1266,11 @@ class LLVMCodegen:
             raise RuntimeError(f"fallible call {node.name} must be lowered through a fallible operator")
         fn = self.module.globals[self.function_symbol(fn_decl)]
         coerced_args = []
+
+        # Erased generic call: allocate slots, store args, pass slot pointers
+        if getattr(node, "_erased_call", False):
+            return self._emit_erased_call(node, fn_decl, fn)
+
         for arg, (_pname, ptype) in zip(node.args, fn_decl.params):
             slice_elem = parse_slice_type(ptype)
             if slice_elem is not None:
@@ -1276,6 +1281,46 @@ class LLVMCodegen:
             else:
                 coerced_args.append(self.emit_coerced_expr(arg, ptype))
         return self.builder.call(fn, coerced_args)
+
+    def _emit_erased_call(self, node: FunctionCall, fn_decl, fn):
+        """Emit a call to an erased generic function with slot ABI.
+
+        For each param of type 'raw', allocates a slot, stores the source
+        value, and passes a bitcast of the slot pointer.
+        For return type 'raw', allocates a ret slot before the call and
+        loads the result after.
+        """
+        coerced_args = []
+        for arg, (_pname, ptype) in zip(node.args, fn_decl.params):
+            if ptype == "raw" and arg.type != "raw":
+                # Allocate a slot for the concrete value
+                arg_val = self.emit_expr(arg)
+                arg_ll_type = llvm_type(arg.type)
+                slot = self.builder.alloca(arg_ll_type, name="erased.slot")
+                self.builder.store(arg_val, slot)
+                slot_ptr = self.builder.bitcast(slot, I8PTR, name="erased.ptr")
+                coerced_args.append(slot_ptr)
+            elif ptype == "raw":
+                coerced_args.append(self.emit_expr(arg))
+            else:
+                slice_elem = parse_slice_type(ptype)
+                if slice_elem is not None:
+                    slice_val = self.emit_coerced_expr(arg, ptype)
+                    coerced_args.append(self.builder.extract_value(slice_val, 0, name="call.slice.ptr"))
+                    coerced_args.append(self.builder.extract_value(slice_val, 1, name="call.slice.len"))
+                    coerced_args.append(self.builder.extract_value(slice_val, 2, name="call.slice.cap"))
+                else:
+                    coerced_args.append(self.emit_coerced_expr(arg, ptype))
+
+        raw_ret = self.builder.call(fn, coerced_args, name="erased.ret")
+
+        # If the return type is raw but the call expects a concrete type,
+        # load the value from the return slot
+        if fn_decl.return_type == "raw" and node.type and node.type != "raw":
+            ret_ll_type = llvm_type(node.type)
+            ret_ptr = self.builder.bitcast(raw_ret, ret_ll_type.as_pointer(), name="erased.ret.cast")
+            return self.builder.load(ret_ptr, name="erased.ret.val")
+        return raw_ret
 
     def emit_fallible_op(self, node: FallibleOp):
         return self.function_emitter.emit_fallible_op(node)

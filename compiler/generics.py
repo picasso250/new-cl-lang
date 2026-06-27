@@ -10,6 +10,13 @@ from compiler.ast import (
     MapLiteral, Program, SizeOfType, StructDecl, StructLiteral,
 )
 from compiler.constraints import satisfies_constraint
+from compiler.erase_generics import (
+    collect_ops_for_func,
+    erase_call_site,
+    erase_function,
+    make_descriptor_struct,
+    _erased_func_name,
+)
 from compiler.type_ref import (
     ArrayTypeRef,
     GenericType,
@@ -170,15 +177,25 @@ def monomorphize(program: Program) -> Program:
         if key in made_funcs:
             return
         made_funcs.add(key)
-        subst = dict(zip(tmpl.type_params, args))
-        inst = _substitute_node(copy.deepcopy(tmpl), subst)
-        inst.name = _instance_name(base, args)
-        inst._generic_origin_kind = "function"
-        inst._generic_origin_name = base
-        inst._generic_constraints = [(param, arg, tmpl.type_param_constraints.get(param, "any"))
-                                     for param, arg in zip(tmpl.type_params, args)]
-        concrete_funcs[inst.name] = inst
-        generated.append(inst)
+
+        # Erasure: generate the erased function once per template (not per type)
+        erased_key = ("__erased__", base)
+        if erased_key not in made_funcs:
+            made_funcs.add(erased_key)
+            ops = collect_ops_for_func(tmpl)
+            inst = erase_function(tmpl, ops)
+            inst._generic_origin_kind = "function"
+            inst._generic_origin_name = base
+            inst._generic_constraints = [(param, "erased", tmpl.type_param_constraints.get(param, "any"))
+                                         for param in tmpl.type_params]
+            concrete_funcs[inst.name] = inst
+            generated.append(inst)
+
+            # Also generate the descriptor struct (once)
+            desc_struct = make_descriptor_struct(base, ops)
+            desc_struct._generic_origin_kind = "descriptor"
+            desc_struct._generic_origin_name = base
+            generated.append(desc_struct)
 
     def rewrite_type(t):
         if t is None:
@@ -229,14 +246,16 @@ def monomorphize(program: Program) -> Program:
                     n.type_args = []
                     return
                 request_func(n.name, args)
-                n.name = _instance_name(n.name, args)
+                n.name = _erased_func_name(n.name)
                 n.type_args = []
+                n._erased_call = True
+                n._erased_type_args = list(args)
         elif isinstance(n, GenericFunctionValue):
             if not n.type_args:
                 return
             args = [rewrite_type(a) for a in n.type_args]
             request_func(n.name, args)
-            n.name = _instance_name(n.name, args)
+            n.name = _erased_func_name(n.name)
             n.type_args = []
         elif isinstance(n, IndexAccess):
             type_args = getattr(n, "generic_type_args_candidate", None)
@@ -246,7 +265,7 @@ def monomorphize(program: Program) -> Program:
                 args = [rewrite_type(a) for a in type_args]
                 request_func(n.obj.name, args)
                 n.__class__ = GenericFunctionValue  # pyright: ignore[reportAttributeAccessIssue]
-                n.name = _instance_name(n.obj.name, args)
+                n.name = _erased_func_name(n.obj.name)
                 n.type_args = []
                 if hasattr(n, "obj"):
                     delattr(n, "obj")

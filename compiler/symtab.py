@@ -121,6 +121,8 @@ def build_symbol_table(program: "Program") -> SymbolTable:
         ErrorHandlerExpr, ErrorMatchExpr
     )
     table = SymbolTable()
+    # Register compiler-internal types
+    table._scopes[0]["raw"] = Symbol("raw", "raw", 0)
 
     def walk_stmts(stmts: list):
         for stmt in stmts:

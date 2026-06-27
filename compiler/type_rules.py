@@ -22,6 +22,10 @@ from compiler.type_ref import (
 
 FLOAT_TYPES = {"f32", "f64"}
 
+# raw is a compiler-internal opaque type for erased generic values.
+# It represents a pointer to desc.size bytes. Not user-writable.
+RAW_TYPE = "raw"
+
 
 class TypeRules:
     def __init__(self, symtab, fail, require_public_qualified):
@@ -171,6 +175,8 @@ class TypeRules:
                     if allow_void_here:
                         return
                     self.fail("size_of: void has no size", node)
+                if name == RAW_TYPE:
+                    return  # raw is an opaque pointer, always sized
                 self.require_public_qualified(name, node)
                 if name in NUMERIC_TYPES or name in {"bool", "str", "rune", "error"}:
                     return
@@ -316,6 +322,9 @@ class TypeRules:
     def validate_generic_constraints(self, stmt):
         constraints = getattr(stmt, "_generic_constraints", None)
         if not constraints:
+            return
+        # Erased generic functions are validated at each call site, not here
+        if getattr(stmt, "_is_erased_generic", False):
             return
         origin_kind = getattr(stmt, "_generic_origin_kind", "function")
         origin_name = getattr(stmt, "_generic_origin_name", getattr(stmt, "name", "<generic>"))

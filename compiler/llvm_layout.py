@@ -76,6 +76,8 @@ def llvm_type(nc_type: str | None):
         return IFACE_TYPES[nc_type]
     if nc_type in ("*void", "?*void"):
         return I8PTR
+    if nc_type == "raw":
+        return I8PTR
     if isinstance(ref, FunctionType):
         arg_types, ret_type = list(ref.params), ref.ret
         call_type = ir.FunctionType(
@@ -122,6 +124,8 @@ class LLVMLayout:
             return 40
         if nc_type == "nc_map" or as_map_type(ref) is not None:
             return 40
+        if nc_type == "raw":
+            return 8
         if isinstance(ref, PointerType):
             return 8
         if isinstance(ref, FunctionType):
